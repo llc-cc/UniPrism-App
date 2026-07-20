@@ -30,6 +30,14 @@ abstract final class AppConfig {
     'WECHAT_LOGIN_ENABLED',
     defaultValue: false,
   );
+  static const _simulatedPhoneLoginRequested = bool.fromEnvironment(
+    'ENABLE_SIMULATED_PHONE_LOGIN',
+    defaultValue: true,
+  );
+  static const simulatedPhoneNumber = String.fromEnvironment(
+    'SIMULATED_PHONE_NUMBER',
+    defaultValue: '18800000000',
+  );
 
   static const privacyVersion = String.fromEnvironment(
     'PRIVACY_VERSION',
@@ -51,6 +59,11 @@ abstract final class AppConfig {
       !kReleaseMode && !isProduction && _developerToolsRequested;
 
   static bool get showDevelopmentSmsCode => developerToolsEnabled;
+
+  /// Simulates SMS delivery only. The development code must still come from a
+  /// non-production backend and the login response still contains a real JWT.
+  static bool get simulatedPhoneLoginEnabled =>
+      developerToolsEnabled && _simulatedPhoneLoginRequested;
 
   static String displayOrPending(String value) =>
       value.trim().isEmpty ? '待主体确认' : value.trim();

@@ -81,6 +81,12 @@ void main() {
     expect(find.text('6 位验证码'), findsOneWidget);
     expect(find.text('收不到验证码？'), findsOneWidget);
     expect(find.text('登录并继续'), findsOneWidget);
+    expect(find.text('开发环境模拟手机号'), findsOneWidget);
+    expect(find.byKey(const ValueKey('simulated-phone-login')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('simulated-phone-login')));
+    await tester.pump();
+    expect(find.text('请先阅读并同意用户服务条款和隐私政策'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());

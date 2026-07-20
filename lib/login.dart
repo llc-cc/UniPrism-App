@@ -154,18 +154,52 @@ class _AppLoginPageState extends State<AppLoginPage> {
         case _AppLoginMethod.password:
           await AuthService.instance.loginWithPassword(_account, _password);
       }
-      if (!mounted) return;
-      TextInput.finishAutofillContext();
-      final navigator = Navigator.of(context);
-      if (navigator.canPop()) {
-        navigator.pop(true);
-      } else {
-        navigator.pushNamedAndRemoveUntil('/home', (route) => false);
-      }
+      if (mounted) _finishLogin();
     } on ApiRequestException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _runSimulatedPhoneLogin() async {
+    if (!_ensureAgreement() || _submitting) return;
+    _phoneController.text = AppConfig.simulatedPhoneNumber;
+    setState(() {
+      _submitting = true;
+      _error = '';
+      _devCodeHint = '';
+    });
+    try {
+      final devCode = await AuthService.instance.sendSmsCodeWithDevCode(
+        AppConfig.simulatedPhoneNumber,
+      );
+      if ((devCode ?? '').isEmpty) {
+        throw const ApiRequestException(
+          '当前后端没有返回开发验证码。请将 API_BASE_URL 指向非生产环境后再使用模拟登录。',
+        );
+      }
+      _codeController.text = devCode!;
+      if (mounted) setState(() => _devCodeHint = '模拟验证码：$devCode');
+      await AuthService.instance.loginWithPhone(
+        AppConfig.simulatedPhoneNumber,
+        devCode,
+      );
+      if (mounted) _finishLogin();
+    } on ApiRequestException catch (error) {
+      if (mounted) setState(() => _error = error.message);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  void _finishLogin() {
+    TextInput.finishAutofillContext();
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop(true);
+    } else {
+      navigator.pushNamedAndRemoveUntil('/home', (route) => false);
     }
   }
 
@@ -302,6 +336,11 @@ class _AppLoginPageState extends State<AppLoginPage> {
                         _buildSmsFields()
                       else
                         _buildPasswordFields(),
+                      if (_method == _AppLoginMethod.sms &&
+                          AppConfig.simulatedPhoneLoginEnabled) ...[
+                        const SizedBox(height: 14),
+                        _buildSimulatedPhoneLogin(),
+                      ],
                       if (_error.isNotEmpty) ...[
                         const SizedBox(height: 12),
                         Text(
@@ -401,6 +440,37 @@ class _AppLoginPageState extends State<AppLoginPage> {
         ),
       ),
     ],
+  );
+
+  Widget _buildSimulatedPhoneLogin() => Container(
+    padding: const EdgeInsets.all(14),
+    decoration: BoxDecoration(
+      color: const Color(0xFFF0EAFF),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFD7C5FF)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('开发环境模拟手机号', style: TextStyle(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 5),
+        Text(
+          '${AppConfig.simulatedPhoneNumber} · 模拟短信送达，登录 Token 仍由后端真实签发。',
+          style: const TextStyle(
+            color: Color(0xFF6D6478),
+            fontSize: 12,
+            height: 1.45,
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          key: const ValueKey('simulated-phone-login'),
+          onPressed: _submitting ? null : _runSimulatedPhoneLogin,
+          icon: const Icon(Icons.science_outlined),
+          label: const Text('使用测试手机号登录'),
+        ),
+      ],
+    ),
   );
 
   Widget _buildPasswordFields() => Column(

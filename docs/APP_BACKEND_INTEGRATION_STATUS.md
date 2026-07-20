@@ -7,6 +7,7 @@
 | 功能 | 使用的后端接口 | APP 状态 |
 | --- | --- | --- |
 | 短信验证码登录 | `/api/miniapp/auth/sms/send`、`/api/miniapp/auth/sms/login` | 已接入 |
+| 开发环境模拟手机号 | 同上；非生产后端返回 `devCode` | 已接入一键测试，仍使用后端真实 Token |
 | 登录态恢复 | `/api/miniapp/auth/me` | 已接入 |
 | 游客/登录测评会话 | `/api/explore/session`、`/api/miniapp/explore/session` | 已接入 |
 | 测评答案保存与恢复 | `/api/explore/discover/answers` | 已接入 |
@@ -35,3 +36,5 @@
 - 报告接口必须使用已登录用户，并且当前探索会话已经完成测评。
 - 公开的专业介绍和课程目录线上接口已验证可访问。
 - APP 不为缺失接口制造假数据；接口异常会显示错误和重试入口。
+- 模拟手机号只模拟短信送达，必须连接允许返回 `devCode` 的非生产后端；不会生成本地假 Token。
+- 可通过 `SIMULATED_PHONE_NUMBER` 指定测试手机号，通过 `ENABLE_SIMULATED_PHONE_LOGIN=false` 关闭入口。
