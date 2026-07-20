@@ -253,6 +253,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('final assessment review restores the gold flip flow', (
+    tester,
+  ) async {
+    await pumpAtSize(
+      tester,
+      const Size(390, 844),
+      FinalAssessmentReviewPage(
+        answers: const [],
+        readyDelay: const Duration(seconds: 1),
+        minimumFilteringDuration: Duration.zero,
+        scoreLoader: () async => {
+          'top15CandidatePool': [
+            {'majorId': 'math', 'name': '数学与应用数学'},
+            {'majorId': 'cs', 'name': '计算机科学与技术'},
+            {'majorId': 'statistics', 'name': '统计学'},
+          ],
+        },
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('gold-flip-deck')), findsOneWidget);
+    expect(find.text('全部测试已完成，即将开启专业匹配筛选'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 1100));
+    await tester.pump(const Duration(milliseconds: 700));
+
+    expect(find.text('数学与应用数学'), findsOneWidget);
+    expect(find.text('计算机科学与技术'), findsOneWidget);
+    expect(find.text('生成报告'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('gold final review fits a compact phone', (tester) async {
+    await pumpAtSize(
+      tester,
+      const Size(320, 568),
+      FinalAssessmentReviewPage(
+        answers: const [],
+        readyDelay: const Duration(days: 1),
+        scoreLoader: () async => const <String, dynamic>{},
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('gold-flip-deck')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('message center exposes local and push notification tests', (
     tester,
   ) async {

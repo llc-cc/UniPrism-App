@@ -669,9 +669,8 @@ class _AssessmentPageState extends State<AssessmentPage> {
         if (!mounted) return;
       }
       if (endOfAll) {
-        await AuthService.instance.completeAssessment(rows);
+        await _showFinalReview(rows);
         if (!mounted) return;
-        Navigator.of(context).pop(true);
         return;
       }
       setState(() => _index += 1);
@@ -694,6 +693,13 @@ class _AssessmentPageState extends State<AssessmentPage> {
             completedStageCount: AssessmentBank.stages.indexOf(_stage) + 1,
             preview: preview,
           ),
+        ),
+      );
+
+  Future<void> _showFinalReview(List<Map<String, dynamic>> answers) =>
+      Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (context) => FinalAssessmentReviewPage(answers: answers),
         ),
       );
 
@@ -734,7 +740,7 @@ class _AssessmentPageState extends State<AssessmentPage> {
                 fit: BoxFit.cover,
                 alignment: Alignment.topCenter,
                 filterQuality: FilterQuality.medium,
-                errorBuilder: (_, __, ___) => const SizedBox.expand(),
+                errorBuilder: (_, _, _) => const SizedBox.expand(),
               ),
             ),
           ),
@@ -1168,6 +1174,491 @@ class _StageFilterPageState extends State<_StageFilterPage>
       ),
     );
   }
+}
+
+class FinalAssessmentReviewPage extends StatefulWidget {
+  const FinalAssessmentReviewPage({
+    super.key,
+    required this.answers,
+    this.scoreLoader,
+    this.readyDelay = const Duration(milliseconds: 1100),
+    this.minimumFilteringDuration = const Duration(milliseconds: 1200),
+  });
+
+  final List<Map<String, dynamic>> answers;
+  final Future<Map<String, dynamic>> Function()? scoreLoader;
+  final Duration readyDelay;
+  final Duration minimumFilteringDuration;
+
+  @override
+  State<FinalAssessmentReviewPage> createState() =>
+      _FinalAssessmentReviewPageState();
+}
+
+enum _FinalReviewPhase { ready, filtering, done }
+
+class _FinalAssessmentReviewPageState extends State<FinalAssessmentReviewPage>
+    with TickerProviderStateMixin {
+  late final AnimationController _deckController;
+  late final AnimationController _revealController;
+  Timer? _autoStartTimer;
+  _FinalReviewPhase _phase = _FinalReviewPhase.ready;
+  List<_StageReviewMajor> _majors = const [];
+  String? _error;
+
+  bool get _isFiltering => _phase == _FinalReviewPhase.filtering;
+  bool get _isDone => _phase == _FinalReviewPhase.done;
+
+  String get _title => switch (_phase) {
+    _FinalReviewPhase.ready => '全部测试已完成，即将开启专业匹配筛选',
+    _FinalReviewPhase.filtering => '正在筛选库内数据，剔除低适配专业，择优排名',
+    _FinalReviewPhase.done =>
+      _majors.isEmpty
+          ? '筛选结束，暂未生成可展示的专业推荐'
+          : '筛选结束，已从筛选库内筛选出契合你的前 TOP ${_majors.length} 个专业方向',
+  };
+
+  String get _subtitle => switch (_phase) {
+    _FinalReviewPhase.ready => '汇总全部测评数据',
+    _FinalReviewPhase.filtering => '本地规则筛选 Top15 候选池',
+    _FinalReviewPhase.done => '全部测试已完成，先保留本地 Top15 候选池',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _deckController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat();
+    _revealController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 620),
+    );
+    _autoStartTimer = Timer(widget.readyDelay, _runFinalReview);
+  }
+
+  @override
+  void dispose() {
+    _autoStartTimer?.cancel();
+    _deckController.dispose();
+    _revealController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _runFinalReview() async {
+    if (_isFiltering) return;
+    setState(() {
+      _phase = _FinalReviewPhase.filtering;
+      _error = null;
+    });
+    try {
+      final results = await Future.wait<dynamic>([
+        widget.scoreLoader?.call() ??
+            AuthService.instance.completeAssessment(widget.answers),
+        Future<void>.delayed(widget.minimumFilteringDuration),
+      ]);
+      final score = Map<String, dynamic>.from(results.first as Map);
+      final majors = _parseMajors(score['top15CandidatePool']);
+      if (!mounted) return;
+      _deckController.stop();
+      setState(() {
+        _majors = majors;
+        _phase = _FinalReviewPhase.done;
+      });
+      await _revealController.forward(from: 0);
+    } on ApiRequestException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _FinalReviewPhase.ready;
+        _error = error.message;
+      });
+      if (!_deckController.isAnimating) _deckController.repeat();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _FinalReviewPhase.ready;
+        _error = '测评结果生成失败，请稍后重试。';
+      });
+      if (!_deckController.isAnimating) _deckController.repeat();
+    }
+  }
+
+  Future<void> _openReport() async {
+    if (!await ensureUserLoggedIn(context) || !mounted) return;
+    await Navigator.of(context).pushNamed('/reports');
+  }
+
+  void _openAllMajors() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => _AllRecommendedMajorsPage(majors: _majors),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final previewMajors = _majors.take(5).toList();
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          const Positioned.fill(child: ColoredBox(color: Colors.white)),
+          Positioned.fill(
+            child: Opacity(
+              opacity: 0.18,
+              child: Image.network(
+                AppAssets.welcomeCampusBackground,
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+                errorBuilder: (_, __, ___) => const SizedBox.expand(),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: AppConstrainedContent(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  AppLayout.pagePadding(context),
+                  AppLayout.isShortHeight(context) ? 16 : 28,
+                  AppLayout.pagePadding(context),
+                  AppLayout.isShortHeight(context) ? 16 : 24,
+                ),
+                child: Column(
+                  children: [
+                    const Spacer(),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: Text(
+                        _title,
+                        key: ValueKey(_title),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFF333333),
+                          fontSize: 18,
+                          height: 1.57,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _subtitle,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF5E5864),
+                        fontSize: 12,
+                        height: 1.9,
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    SizedBox(
+                      height: 178,
+                      width: double.infinity,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 260),
+                        child: _isDone && previewMajors.isNotEmpty
+                            ? ListView.separated(
+                                key: const ValueKey('gold-major-results'),
+                                scrollDirection: Axis.horizontal,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                                itemCount: previewMajors.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(width: 18),
+                                itemBuilder: (context, index) =>
+                                    _GoldRecommendedMajorCard(
+                                      major: previewMajors[index],
+                                      animation: CurvedAnimation(
+                                        parent: _revealController,
+                                        curve: Interval(
+                                          index * 0.08,
+                                          1,
+                                          curve: Curves.easeOutBack,
+                                        ),
+                                      ),
+                                    ),
+                              )
+                            : _GoldFinalReviewDeck(
+                                key: const ValueKey('gold-flip-deck'),
+                                controller: _deckController,
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (_isDone && _majors.isNotEmpty)
+                      TextButton(
+                        onPressed: _openAllMajors,
+                        child: const Text('查看全部'),
+                      )
+                    else
+                      const SizedBox(height: 48),
+                    if (_error != null) ...[
+                      Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFC62828),
+                          fontSize: 12,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    const Spacer(flex: 2),
+                    SizedBox(
+                      width: 190,
+                      child: _AssessmentButton(
+                        label: _isDone
+                            ? '生成报告'
+                            : _error != null
+                            ? '重新筛选'
+                            : _isFiltering
+                            ? '正在筛选…'
+                            : '查看报告',
+                        enabled: _isDone || _error != null,
+                        onPressed: _isDone ? _openReport : _runFinalReview,
+                      ),
+                    ),
+                    if (_isDone) ...[
+                      const SizedBox(height: 15),
+                      const Text(
+                        '当前仅展示本地规则 Top15 候选池；点击生成报告后，报告 Agent 会在 Top15 内选择最终 Top5 并写出详细分析。',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF77717F),
+                          fontSize: 11,
+                          height: 1.55,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GoldFinalReviewDeck extends StatelessWidget {
+  const _GoldFinalReviewDeck({super.key, required this.controller});
+
+  final AnimationController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    const order = [0, 4, 1, 3, 2];
+    const offsets = [-128.0, -64.0, 0.0, 64.0, 128.0];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = math.min(1.0, constraints.maxWidth / 346);
+        return AnimatedBuilder(
+          animation: controller,
+          builder: (context, _) => Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.hardEdge,
+            children: [
+              for (final index in order)
+                _GoldFlipCard(
+                  offset: offsets[index] * scale,
+                  time: controller.value,
+                  glow: index == 2
+                      ? 0.62
+                      : index == 1 || index == 3
+                      ? 0.30
+                      : 0.18,
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _GoldFlipCard extends StatelessWidget {
+  const _GoldFlipCard({
+    required this.offset,
+    required this.time,
+    required this.glow,
+  });
+
+  final double offset;
+  final double time;
+  final double glow;
+
+  @override
+  Widget build(BuildContext context) {
+    final spread = time < 0.34
+        ? 0.0
+        : time < 0.62
+        ? Curves.easeOutCubic.transform((time - 0.34) / 0.28)
+        : 1.0;
+    final scale = time < 0.34
+        ? 0.92 + 0.10 * (time / 0.34)
+        : time < 0.62
+        ? 1.02 - 0.02 * ((time - 0.34) / 0.28)
+        : 1.0;
+    return Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()
+        ..setEntry(3, 2, 0.0012)
+        ..translateByDouble(offset * spread, 0, 0, 1)
+        ..rotateY(time * math.pi * 2)
+        ..scaleByDouble(scale, scale, scale, 1),
+      child: Container(
+        width: 116,
+        height: 168,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          gradient: const RadialGradient(
+            colors: [Color(0xFFFFECAA), Color(0xFFEFC24C), Color(0xFFE0A92E)],
+          ),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.9),
+            width: 3,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFE0A92E).withValues(alpha: glow),
+              blurRadius: 16,
+            ),
+            const BoxShadow(
+              color: Color(0x248F6916),
+              blurRadius: 22,
+              offset: Offset(0, 10),
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.change_history_rounded,
+          size: 48,
+          color: Colors.white.withValues(alpha: 0.82),
+        ),
+      ),
+    );
+  }
+}
+
+class _GoldRecommendedMajorCard extends StatelessWidget {
+  const _GoldRecommendedMajorCard({
+    required this.major,
+    required this.animation,
+  });
+
+  final _StageReviewMajor major;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: animation,
+    child: ScaleTransition(
+      scale: animation,
+      child: Container(
+        width: 112,
+        padding: const EdgeInsets.fromLTRB(10, 24, 10, 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFFFF0B7), Color(0xFFE6B846)],
+          ),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.92),
+            width: 3,
+          ),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x2E906517),
+              blurRadius: 18,
+              offset: Offset(0, 9),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 62,
+              height: 62,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: major.resolvedIconUrl == null
+                  ? const Icon(Icons.school_outlined, color: Color(0xFF9A6A08))
+                  : Image.network(
+                      major.resolvedIconUrl!,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, _, _) => const Icon(
+                        Icons.school_outlined,
+                        color: Color(0xFF9A6A08),
+                      ),
+                    ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              major.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFF6B4800),
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _AllRecommendedMajorsPage extends StatelessWidget {
+  const _AllRecommendedMajorsPage({required this.majors});
+
+  final List<_StageReviewMajor> majors;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFFFFFBF0),
+    appBar: AppBar(
+      title: const Text('全部推荐专业'),
+      centerTitle: true,
+      backgroundColor: const Color(0xFFFFFBF0),
+      surfaceTintColor: Colors.transparent,
+    ),
+    body: AppConstrainedContent(
+      child: GridView.builder(
+        padding: EdgeInsets.fromLTRB(
+          AppLayout.pagePadding(context),
+          18,
+          AppLayout.pagePadding(context),
+          30,
+        ),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 14,
+          mainAxisExtent: 142,
+        ),
+        itemCount: majors.length,
+        itemBuilder: (context, index) => _GoldRecommendedMajorCard(
+          major: majors[index],
+          animation: const AlwaysStoppedAnimation(1),
+        ),
+      ),
+    ),
+  );
 }
 
 List<_StageReviewMajor> _parseMajors(dynamic raw) {
