@@ -14,6 +14,22 @@ Future<void> pumpAtSize(WidgetTester tester, Size size, Widget child) async {
 }
 
 void main() {
+  test('persona card snapshot parses the backend response', () {
+    final snapshot = PersonaCardSnapshot.fromJson({
+      'state': 'completed',
+      'codeTag': 'IA',
+      'title': '探索型创造者',
+      'cardImagePath': '/images/persona/ia.png',
+      'summary': '报告已完成',
+      'reportId': 'report-1',
+    });
+
+    expect(snapshot.isUnlocked, isTrue);
+    expect(snapshot.hasCompletedReport, isTrue);
+    expect(snapshot.title, '探索型创造者');
+    expect(snapshot.reportId, 'report-1');
+  });
+
   testWidgets('app login opens directly on the SMS form', (tester) async {
     await pumpAtSize(tester, const Size(360, 720), const AppLoginPage());
 

@@ -87,9 +87,11 @@ class AppAssets {
 }
 
 class ApiRequestException implements Exception {
-  const ApiRequestException(this.message);
+  const ApiRequestException(this.message, {this.code, this.statusCode});
 
   final String message;
+  final String? code;
+  final int? statusCode;
 
   @override
   String toString() => message;
@@ -176,6 +178,29 @@ class AuthService {
       body: {'account': account, 'password': password},
     );
     await _completeLogin(data);
+  }
+
+  /// Refreshes the locally restored user with the existing backend endpoint.
+  /// Only an explicit 401 clears local auth; temporary network failures keep
+  /// the cached session so offline startup does not log the user out.
+  Future<bool> validateCurrentSession() async {
+    if (!isLoggedIn) return false;
+    try {
+      final data = await _request('GET', '/api/miniapp/auth/me');
+      final user = _map(data['user']);
+      if (user == null) {
+        throw const ApiRequestException('用户资料响应不完整，请稍后重试');
+      }
+      _user = user;
+      await _writeStorage({_userKey: jsonEncode(user)});
+      return true;
+    } on ApiRequestException catch (error) {
+      if (error.statusCode == HttpStatus.unauthorized) {
+        await logout();
+        return false;
+      }
+      rethrow;
+    }
   }
 
   Future<void> _completeLogin(Map<String, dynamic> data) async {
@@ -388,10 +413,49 @@ class AuthService {
     }
   }
 
+  /// Persists the final five-stage score and marks the exploration session as
+  /// completed. This is the same v0.2 endpoint used by the web and mini app.
+  Future<Map<String, dynamic>> completeAssessment(
+    List<Map<String, dynamic>> answers,
+  ) async {
+    final sessionId = await ensureExploreSession();
+    final answerMap = <String, dynamic>{};
+    for (final answer in answers) {
+      final questionId = answer['questionId']?.toString();
+      final value = _map(answer['value']);
+      if (questionId == null || questionId.isEmpty || value == null) continue;
+      answerMap[questionId] = _normalizeAssessmentValue(value);
+    }
+    return _request(
+      'POST',
+      '/api/interest-v020/score',
+      body: {'sessionId': sessionId, 'answers': answerMap},
+      timeout: const Duration(seconds: 60),
+    );
+  }
+
+  Future<PersonaCardSnapshot> loadPersonaCard() async {
+    final sessionId = await ensureExploreSession();
+    final data = await _request(
+      'GET',
+      '/api/interest-v020/persona-card?sessionId=${Uri.encodeQueryComponent(sessionId)}',
+    );
+    return PersonaCardSnapshot.fromJson(data);
+  }
+
+  String resolveAssetUrl(String? path) {
+    final value = path?.trim() ?? '';
+    if (value.isEmpty) return '';
+    final uri = Uri.tryParse(value);
+    if (uri?.hasScheme == true) return value;
+    return '$_baseUrl${value.startsWith('/') ? value : '/$value'}';
+  }
+
   Future<Map<String, dynamic>> _request(
     String method,
     String path, {
     Map<String, dynamic>? body,
+    Duration timeout = const Duration(seconds: 15),
   }) async {
     try {
       final isMiniAppPath = path.startsWith('/api/miniapp/');
@@ -404,11 +468,13 @@ class AuthService {
         ContentType.json.mimeType,
       );
       request.headers.set('Origin', _baseUrl);
-      if (isMiniAppPath)
-        request.headers.set('x-miniapp-client', 'uniprism-weapp');
+      // The existing v0.2 web routes deliberately accept the mini-app JWT and
+      // anonymous identity when this compatibility header is present. Keep it
+      // on every request until feature/app-support exposes APP-specific routes.
+      request.headers.set('x-miniapp-client', 'uniprism-weapp');
       if ((_token ?? '').isNotEmpty)
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
-      if (isMiniAppPath && (_anonymousId ?? '').isNotEmpty) {
+      if ((_anonymousId ?? '').isNotEmpty) {
         request.headers.set('x-anonymous-id', _anonymousId!);
       }
       if (!isMiniAppPath && (_anonymousCookie ?? '').isNotEmpty) {
@@ -423,9 +489,7 @@ class AuthService {
         }
       }
       if (body != null) request.add(utf8.encode(jsonEncode(body)));
-      final response = await request.close().timeout(
-        const Duration(seconds: 15),
-      );
+      final response = await request.close().timeout(timeout);
       for (final cookie in response.cookies) {
         if (cookie.name == 'uniprism_anonymous') {
           await _storeAnonymousCookie('${cookie.name}=${cookie.value}');
@@ -445,7 +509,12 @@ class AuthService {
       if (response.statusCode < 200 ||
           response.statusCode >= 300 ||
           envelope['ok'] == false) {
-        throw ApiRequestException(_errorMessage(envelope));
+        final error = _map(envelope['error']);
+        throw ApiRequestException(
+          _errorMessage(envelope),
+          code: error?['code']?.toString(),
+          statusCode: response.statusCode,
+        );
       }
       return data;
     } on TimeoutException {
@@ -489,10 +558,31 @@ class AuthService {
   }
 
   static String _errorMessage(Map<String, dynamic> response) {
-    return '${response['message'] ?? response['error'] ?? response['msg'] ?? '请求失败，请稍后重试'}';
+    final rawError = response['error'];
+    final error = _map(rawError);
+    return '${error?['message'] ?? response['message'] ?? (rawError is String ? rawError : null) ?? response['msg'] ?? '请求失败，请稍后重试'}';
+  }
+
+  static Map<String, dynamic> _normalizeAssessmentValue(
+    Map<String, dynamic> value,
+  ) {
+    final kind = value['questionKind']?.toString();
+    return {
+      'questionKind': kind == 'scaleGrid' || kind == 'scale'
+          ? 'scale-grid'
+          : kind,
+      if (value['answerMode'] != null) 'answerMode': value['answerMode'],
+      if (value['selectedOptionId'] != null)
+        'selectedOptionId': value['selectedOptionId'],
+      if (value['rankedOptionIds'] is List)
+        'rankedOptionIds': value['rankedOptionIds'],
+      if (value['ratings'] is Map) 'ratings': value['ratings'],
+      if (value['text'] is String) 'text': value['text'],
+    };
   }
 
   static bool _shouldRefreshSession(ApiRequestException error) {
+    if (error.statusCode == HttpStatus.unauthorized) return true;
     final message = error.message.toLowerCase();
     return message.contains('unauthorized') ||
         message.contains('探索会话') ||
@@ -2031,6 +2121,43 @@ class HomeMajorCard {
   );
 }
 
+class PersonaCardSnapshot {
+  const PersonaCardSnapshot({
+    required this.state,
+    this.codeTag,
+    this.title,
+    this.cardImagePath,
+    this.avatarImagePath,
+    this.summary,
+    this.reportId,
+  });
+
+  factory PersonaCardSnapshot.fromJson(Map<String, dynamic> json) =>
+      PersonaCardSnapshot(
+        state: json['state']?.toString() ?? 'locked',
+        codeTag: json['codeTag']?.toString(),
+        title: json['title']?.toString(),
+        cardImagePath: json['cardImagePath']?.toString(),
+        avatarImagePath: json['avatarImagePath']?.toString(),
+        summary: json['summary']?.toString(),
+        reportId: json['reportId']?.toString(),
+      );
+
+  static const locked = PersonaCardSnapshot(state: 'locked');
+
+  final String state;
+  final String? codeTag;
+  final String? title;
+  final String? cardImagePath;
+  final String? avatarImagePath;
+  final String? summary;
+  final String? reportId;
+
+  bool get isUnlocked => state == 'ready' || state == 'completed';
+  bool get hasCompletedReport =>
+      state == 'completed' && (reportId?.isNotEmpty ?? false);
+}
+
 class MainShell extends StatefulWidget {
   const MainShell({super.key, this.initialIndex = 0});
 
@@ -2288,6 +2415,27 @@ class _ProfileTab extends StatefulWidget {
 }
 
 class _ProfileTabState extends State<_ProfileTab> {
+  bool _validatingSession = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AuthService.instance.isLoggedIn) {
+      _validatingSession = true;
+      unawaited(_validateSession());
+    }
+  }
+
+  Future<void> _validateSession() async {
+    try {
+      await AuthService.instance.validateCurrentSession();
+    } on ApiRequestException {
+      // Keep the locally restored session during temporary network failures.
+    } finally {
+      if (mounted) setState(() => _validatingSession = false);
+    }
+  }
+
   Future<void> _openLogin() async {
     await Navigator.of(context).pushNamed<bool>('/login');
     if (mounted) setState(() {});
@@ -2315,6 +2463,13 @@ class _ProfileTabState extends State<_ProfileTab> {
             28,
           ),
           children: [
+            if (_validatingSession) ...[
+              const LinearProgressIndicator(
+                minHeight: 2,
+                color: Color(0xFF6B23FF),
+              ),
+              const SizedBox(height: 10),
+            ],
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
@@ -2468,6 +2623,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<HomeMajorCard> _majorCards = HomeMajorCard.lockedCards;
+  PersonaCardSnapshot _personaCard = PersonaCardSnapshot.locked;
   bool _loading = false;
   bool _showPersona = false;
   int _completedStageCount = 0;
@@ -2509,9 +2665,16 @@ class _HomePageState extends State<HomePage> {
       final cards = await AuthService.instance.loadHomePopularMajors(
         answers: answers,
       );
+      var personaCard = PersonaCardSnapshot.locked;
+      try {
+        personaCard = await AuthService.instance.loadPersonaCard();
+      } on ApiRequestException {
+        // Major recommendations remain usable if persona-card loading fails.
+      }
       if (mounted)
         setState(() {
           _majorCards = cards;
+          _personaCard = personaCard;
           _completedStageCount = completedStages;
           _hasStarted = answers.isNotEmpty;
         });
@@ -2564,6 +2727,7 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       setState(() {
         _majorCards = HomeMajorCard.lockedCards;
+        _personaCard = PersonaCardSnapshot.locked;
         _completedStageCount = 0;
         _hasStarted = false;
       });
@@ -2682,7 +2846,10 @@ class _HomePageState extends State<HomePage> {
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 180),
                 child: _showPersona
-                    ? const _PersonaPreview(key: ValueKey('persona'))
+                    ? _PersonaPreview(
+                        key: const ValueKey('persona'),
+                        snapshot: _personaCard,
+                      )
                     : _PopularMajorList(
                         key: const ValueKey('majors'),
                         cards: _majorCards,
@@ -3674,10 +3841,16 @@ class _UnlockedMajorVisual extends StatelessWidget {
 }
 
 class _PersonaPreview extends StatelessWidget {
-  const _PersonaPreview({super.key});
+  const _PersonaPreview({super.key, required this.snapshot});
+
+  final PersonaCardSnapshot snapshot;
 
   @override
   Widget build(BuildContext context) {
+    final cardImageUrl = AuthService.instance.resolveAssetUrl(
+      snapshot.cardImagePath,
+    );
+    final unlocked = snapshot.isUnlocked;
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 18, 10, 0),
       child: Column(
@@ -3687,32 +3860,60 @@ class _PersonaPreview extends StatelessWidget {
             child: SizedBox(
               width: 250,
               height: 320,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  Transform.rotate(
-                    angle: 0.14,
-                    child: const _PersonaCard(offset: true),
-                  ),
-                  const _PersonaCard(),
-                ],
-              ),
+              child: unlocked && cardImageUrl.isNotEmpty
+                  ? ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(
+                        cardImageUrl,
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => _fallbackCards(),
+                      ),
+                    )
+                  : _fallbackCards(),
             ),
           ),
           const SizedBox(height: 22),
-          const Text(
-            '完成所有测试即可解锁',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          Text(
+            unlocked ? (snapshot.title ?? '你的探索者画像') : '完成所有测试即可解锁',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
-          const Text(
-            '待解锁……',
-            style: TextStyle(fontSize: 14, color: Color(0xFF888888)),
+          Text(
+            unlocked
+                ? (snapshot.summary?.trim().isNotEmpty == true
+                      ? snapshot.summary!
+                      : '测评画像已生成，完整报告生成后可查看更详细的分析。')
+                : '待解锁……',
+            style: const TextStyle(
+              fontSize: 14,
+              height: 1.6,
+              color: Color(0xFF888888),
+            ),
           ),
+          if (unlocked && (snapshot.codeTag?.isNotEmpty ?? false)) ...[
+            const SizedBox(height: 12),
+            Chip(
+              label: Text(snapshot.codeTag!),
+              backgroundColor: const Color(0xFFEDE4FF),
+              side: BorderSide.none,
+              labelStyle: const TextStyle(
+                color: Color(0xFF5A20C8),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  Widget _fallbackCards() => Stack(
+    alignment: Alignment.center,
+    children: [
+      Transform.rotate(angle: 0.14, child: const _PersonaCard(offset: true)),
+      const _PersonaCard(),
+    ],
+  );
 }
 
 class _PersonaCard extends StatelessWidget {

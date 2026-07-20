@@ -458,7 +458,9 @@ class _AssessmentPageState extends State<AssessmentPage> {
     final saved = _answers[_question.id];
     _draft = saved == null
         ? {
-            'questionKind': _question.kind.name,
+            'questionKind': _question.kind == AssessmentQuestionKind.scale
+                ? 'scale-grid'
+                : _question.kind.name,
             'rankedOptionIds': <String>[],
             'ratings': <String, int>{},
             'text': '',
@@ -667,7 +669,9 @@ class _AssessmentPageState extends State<AssessmentPage> {
         if (!mounted) return;
       }
       if (endOfAll) {
-        Navigator.of(context).pop();
+        await AuthService.instance.completeAssessment(rows);
+        if (!mounted) return;
+        Navigator.of(context).pop(true);
         return;
       }
       setState(() => _index += 1);
