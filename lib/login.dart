@@ -2,12 +2,17 @@ part of 'main.dart';
 
 enum _AppLoginMethod { sms, password }
 
+Future<bool> openAppLogin(BuildContext context) async {
+  final result = await Navigator.of(context).pushNamed('/login');
+  return result == true;
+}
+
 /// Returns true when the current operation may continue with an authenticated
 /// user. Callers keep their own route and state instead of being redirected to
 /// a new home page after login.
 Future<bool> ensureUserLoggedIn(BuildContext context) async {
   if (AuthService.instance.isLoggedIn) return true;
-  return await Navigator.of(context).pushNamed<bool>('/login') ?? false;
+  return openAppLogin(context);
 }
 
 class AppLoginPage extends StatefulWidget {

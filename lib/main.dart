@@ -2440,7 +2440,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   }
 
   Future<void> _openLogin() async {
-    await Navigator.of(context).pushNamed<bool>('/login');
+    await openAppLogin(context);
     if (mounted) setState(() {});
   }
 

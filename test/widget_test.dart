@@ -126,6 +126,33 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('profile login button opens the named login route', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        routes: {'/login': (_) => const AppLoginPage()},
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => openAppLogin(context),
+              child: const Text('打开登录'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.text('打开登录'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('手机号登录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('privacy gate blocks app content until consent', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
