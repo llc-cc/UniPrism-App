@@ -13,6 +13,8 @@ part 'assessment.dart';
 part 'compliance.dart';
 part 'login.dart';
 part 'notification_center.dart';
+part 'professional_experience.dart';
+part 'report_backend.dart';
 part 'report_notification.dart';
 part 'responsive_layout.dart';
 
@@ -63,6 +65,7 @@ class UniPrismApp extends StatelessWidget {
         '/basic-profile': (_) => const BasicProfilePage(),
         '/login': (_) => const AppLoginPage(),
         '/assessment': (_) => const AssessmentPage(),
+        '/reports': (_) => const ReportCenterPage(),
         '/home': (_) => const ComplianceGate(),
         '/messages': (_) => const ComplianceGate(initialIndex: 2),
         '/terms': (_) => const LegalDocumentPage(type: LegalDocumentType.terms),
@@ -2202,7 +2205,7 @@ class _MainShellState extends State<MainShell> {
           index: _selectedIndex,
           children: [
             HomePage(onOpenMessages: () => _selectTab(2)),
-            const ModuleIntroPage(config: IntroConfig.major),
+            const ProfessionalExperiencePage(),
             const MessageCenterPage(),
             _ProfileTab(onOpenMessages: () => _selectTab(2)),
           ],
@@ -2535,6 +2538,11 @@ class _ProfileTabState extends State<_ProfileTab> {
                   onTap: widget.onOpenMessages,
                 ),
                 _ProfileMenuItem(
+                  icon: Icons.auto_awesome_outlined,
+                  label: '我的测评报告',
+                  onTap: () => Navigator.of(context).pushNamed('/reports'),
+                ),
+                _ProfileMenuItem(
                   icon: Icons.description_outlined,
                   label: '用户服务条款',
                   onTap: () => Navigator.of(context).pushNamed('/terms'),
@@ -2849,6 +2857,8 @@ class _HomePageState extends State<HomePage> {
                     ? _PersonaPreview(
                         key: const ValueKey('persona'),
                         snapshot: _personaCard,
+                        onOpenReport: () =>
+                            Navigator.of(context).pushNamed('/reports'),
                       )
                     : _PopularMajorList(
                         key: const ValueKey('majors'),
@@ -3841,9 +3851,14 @@ class _UnlockedMajorVisual extends StatelessWidget {
 }
 
 class _PersonaPreview extends StatelessWidget {
-  const _PersonaPreview({super.key, required this.snapshot});
+  const _PersonaPreview({
+    super.key,
+    required this.snapshot,
+    required this.onOpenReport,
+  });
 
   final PersonaCardSnapshot snapshot;
+  final VoidCallback onOpenReport;
 
   @override
   Widget build(BuildContext context) {
@@ -3899,6 +3914,21 @@ class _PersonaPreview extends StatelessWidget {
               labelStyle: const TextStyle(
                 color: Color(0xFF5A20C8),
                 fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (unlocked) ...[
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: onOpenReport,
+                icon: const Icon(Icons.description_outlined),
+                label: Text(snapshot.hasCompletedReport ? '查看完整报告' : '生成完整报告'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  backgroundColor: const Color(0xFF6B23FF),
+                ),
               ),
             ),
           ],

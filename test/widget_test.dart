@@ -30,6 +30,49 @@ void main() {
     expect(snapshot.reportId, 'report-1');
   });
 
+  test('report task parses backend progress and completed content', () {
+    final task = ReportTaskData.fromJson({
+      'exists': true,
+      'reportId': 'report-2',
+      'status': 'completed',
+      'queued': false,
+      'workflowProgress': {
+        'title': '组织专业建议',
+        'description': '正在整理推荐方向',
+        'percent': 88,
+      },
+      'report': {
+        'majorRecommendations': {
+          'majors': [
+            {'name': '数学与应用数学'},
+          ],
+        },
+      },
+    });
+
+    expect(task.isCompleted, isTrue);
+    expect(task.reportId, 'report-2');
+    expect(task.progress.percent, 88);
+    expect(task.report?['majorRecommendations'], isA<Map>());
+  });
+
+  test('math course page keeps backend native-content routing fields', () {
+    final page = MathCoursePageData.fromJson({
+      'id': 'analysis-strict-limit',
+      'stageIndex': 1,
+      'stageTitle': 'Part 2：数学课程介绍',
+      'kind': 'web-experience',
+      'title': '极限的严格定义',
+      'navTitle': '严格定义',
+      'webPageId': 'analysis-strict-limit',
+      'courseId': 'analysis',
+    });
+
+    expect(page.hasNativeContent, isTrue);
+    expect(page.webPageId, 'analysis-strict-limit');
+    expect(page.stageIndex, 1);
+  });
+
   testWidgets('app login opens directly on the SMS form', (tester) async {
     await pumpAtSize(tester, const Size(360, 720), const AppLoginPage());
 
@@ -131,6 +174,50 @@ void main() {
     expect(find.text('专业方向探索报告'), findsOneWidget);
     expect(find.text('探索型创造者'), findsOneWidget);
     expect(find.text('数字媒体艺术'), findsOneWidget);
+  });
+
+  testWidgets('generated report view renders real backend sections', (
+    tester,
+  ) async {
+    await pumpAtSize(
+      tester,
+      const Size(390, 844),
+      Scaffold(
+        body: SingleChildScrollView(
+          child: GeneratedReportView(
+            reportId: 'report-real',
+            report: const {
+              'personalityAndCareerAnalysis': {
+                'hollandType': {
+                  'code': 'IA',
+                  'title': '研究型探索者',
+                  'reason': '喜欢理解复杂问题背后的规律。',
+                },
+                'careerTendencyAnalysis': {
+                  'title': '职业倾向分析',
+                  'body': '适合需要分析和持续学习的环境。',
+                },
+              },
+              'majorRecommendations': {
+                'title': '专业推荐',
+                'majors': [
+                  {'name': '数学与应用数学', 'personalizedReason': '与你的分析兴趣和抽象思维相匹配。'},
+                ],
+              },
+              'comprehensiveAdvice': {
+                'title': '发展建议',
+                'developmentAdvice': '先体验核心课程，再验证长期投入意愿。',
+              },
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('研究型探索者'), findsOneWidget);
+    expect(find.text('数学与应用数学'), findsOneWidget);
+    expect(find.text('发展建议'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('message center exposes local and push notification tests', (
