@@ -4,14 +4,27 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+part 'app_config.dart';
 part 'assessment.dart';
+part 'compliance.dart';
+part 'login.dart';
+part 'notification_center.dart';
+part 'report_notification.dart';
+part 'responsive_layout.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations(const [
+    DeviceOrientation.portraitUp,
+  ]);
+  await ReportNotificationService.instance.initialize();
   await AuthService.instance.restore();
+  await ComplianceService.instance.restore();
+  await AppMessageCenter.instance.restore();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -20,6 +33,9 @@ Future<void> main() async {
     ),
   );
   runApp(const UniPrismApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    ReportNotificationService.instance.handlePendingLaunch();
+  });
 }
 
 class UniPrismApp extends StatelessWidget {
@@ -28,6 +44,7 @@ class UniPrismApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       title: '万有棱镜',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
@@ -39,13 +56,25 @@ class UniPrismApp extends StatelessWidget {
       routes: {
         // Temporarily bypass the cold-start welcome screen and open the main
         // experience immediately.
-        '/': (_) => const HomePage(),
-        '/intro/interest': (_) => const ModuleIntroPage(config: IntroConfig.interest),
+        '/': (_) => const ComplianceGate(),
+        '/intro/interest': (_) =>
+            const ModuleIntroPage(config: IntroConfig.interest),
         '/intro/major': (_) => const ModuleIntroPage(config: IntroConfig.major),
         '/basic-profile': (_) => const BasicProfilePage(),
-        '/login': (_) => const LoginPage(),
+        '/login': (_) => const AppLoginPage(),
         '/assessment': (_) => const AssessmentPage(),
-        '/home': (_) => const HomePage(),
+        '/home': (_) => const ComplianceGate(),
+        '/messages': (_) => const ComplianceGate(initialIndex: 2),
+        '/terms': (_) => const LegalDocumentPage(type: LegalDocumentType.terms),
+        '/privacy': (_) =>
+            const LegalDocumentPage(type: LegalDocumentType.privacy),
+        '/help-feedback': (_) => const HelpAndFeedbackPage(),
+        '/about': (_) => const AboutAndFilingPage(),
+        '/account-security': (_) => const AccountSecurityPage(),
+        if (AppConfig.developerToolsEnabled) ...{
+          '/landscape-test': (_) => const LandscapeTestPage(),
+          '/report-notification-demo': (_) => const ReportGenerationDemoPage(),
+        },
       },
     );
   }
@@ -70,7 +99,7 @@ class AuthService {
   AuthService._();
 
   static final instance = AuthService._();
-  static const _baseUrl = 'https://uniprism.cn';
+  static String get _baseUrl => AppConfig.apiBaseUrl;
   static const _tokenKey = 'uniprism.token';
   static const _userKey = 'uniprism.user';
   static const _anonymousIdKey = 'uniprism.anonymousId';
@@ -91,7 +120,8 @@ class AuthService {
   String get displayName {
     final user = _user;
     if (user == null) return '';
-    return '${user['name'] ?? user['wechatNickname'] ?? user['phone'] ?? ''}'.trim();
+    return '${user['name'] ?? user['wechatNickname'] ?? user['phone'] ?? ''}'
+        .trim();
   }
 
   Future<void> restore() async {
@@ -111,11 +141,19 @@ class AuthService {
   }
 
   Future<void> sendSmsCode(String phone) async {
-    await _request('POST', '/api/miniapp/auth/sms/send', body: {'phone': phone});
+    await _request(
+      'POST',
+      '/api/miniapp/auth/sms/send',
+      body: {'phone': phone},
+    );
   }
 
   Future<String?> sendSmsCodeWithDevCode(String phone) async {
-    final data = await _request('POST', '/api/miniapp/auth/sms/send', body: {'phone': phone});
+    final data = await _request(
+      'POST',
+      '/api/miniapp/auth/sms/send',
+      body: {'phone': phone},
+    );
     return data['devCode']?.toString();
   }
 
@@ -125,6 +163,22 @@ class AuthService {
       '/api/miniapp/auth/sms/login',
       body: {'phone': phone, 'code': code},
     );
+    await _completeLogin(data);
+  }
+
+  Future<void> loginWithPassword(String account, String password) async {
+    if (!AppConfig.passwordLoginEnabled) {
+      throw const ApiRequestException('账号密码登录尚未接入服务端');
+    }
+    final data = await _request(
+      'POST',
+      AppConfig.passwordLoginPath,
+      body: {'account': account, 'password': password},
+    );
+    await _completeLogin(data);
+  }
+
+  Future<void> _completeLogin(Map<String, dynamic> data) async {
     final token = data['token']?.toString();
     final user = _map(data['user']);
     if (token == null || token.isEmpty || user == null) {
@@ -136,6 +190,17 @@ class AuthService {
     await ensureExploreSession(forceNew: true);
   }
 
+  Future<void> logout() async {
+    _token = null;
+    _user = null;
+    _exploreSessionId = null;
+    await _writeStorage({
+      _tokenKey: null,
+      _userKey: null,
+      _exploreSessionIdKey: null,
+    });
+  }
+
   Future<String> ensureExploreSession({bool forceNew = false}) async {
     final existing = _exploreSessionId;
     if (!forceNew && existing != null && existing.isNotEmpty) return existing;
@@ -143,9 +208,7 @@ class AuthService {
     final session = await _request(
       'POST',
       isLoggedIn ? '/api/miniapp/explore/session' : '/api/explore/session',
-      body: {
-        if ((_anonymousId ?? '').isNotEmpty) 'anonymousId': _anonymousId,
-      },
+      body: {if ((_anonymousId ?? '').isNotEmpty) 'anonymousId': _anonymousId},
     );
     final sessionId = session['sessionId']?.toString();
     if (sessionId == null || sessionId.isEmpty) {
@@ -186,7 +249,9 @@ class AuthService {
   }) async {
     final sessionId = await ensureExploreSession();
 
-    final clarity = status == 'status-checking' || status == 'status-late' ? 'clarity-area' : 'clarity-none';
+    final clarity = status == 'status-checking' || status == 'status-late'
+        ? 'clarity-area'
+        : 'clarity-none';
     final displayFields = {
       'name': name,
       'gender': gender == 'gender-male' ? '男' : '女',
@@ -221,7 +286,9 @@ class AuthService {
     );
   }
 
-  Future<List<HomeMajorCard>> loadHomePopularMajors({List<Map<String, dynamic>>? answers}) async {
+  Future<List<HomeMajorCard>> loadHomePopularMajors({
+    List<Map<String, dynamic>>? answers,
+  }) async {
     var sessionId = await ensureExploreSession();
     final currentAnswers = answers ?? await loadAssessmentAnswers();
     Map<String, dynamic> data;
@@ -244,7 +311,9 @@ class AuthService {
     if (rawCards is! List) return HomeMajorCard.lockedCards;
     final cards = rawCards
         .whereType<Map>()
-        .map((value) => HomeMajorCard.fromJson(_map(value) ?? <String, dynamic>{}))
+        .map(
+          (value) => HomeMajorCard.fromJson(_map(value) ?? <String, dynamic>{}),
+        )
         .toList();
     return cards.isEmpty ? HomeMajorCard.lockedCards : cards;
   }
@@ -254,7 +323,10 @@ class AuthService {
     if (sessionId == null || sessionId.isEmpty) return <Map<String, dynamic>>[];
     Map<String, dynamic> data;
     try {
-      data = await _request('GET', '/api/explore/discover/answers?sessionId=$sessionId');
+      data = await _request(
+        'GET',
+        '/api/explore/discover/answers?sessionId=$sessionId',
+      );
     } on ApiRequestException catch (error) {
       if (!_shouldRefreshSession(error)) rethrow;
       await ensureExploreSession(forceNew: true);
@@ -299,17 +371,14 @@ class AuthService {
     final answerMap = <String, dynamic>{
       for (final answer in answers)
         if (answer['questionId'] != null)
-          '${answer['questionId']}': _map(answer['value']) ?? <String, dynamic>{},
+          '${answer['questionId']}':
+              _map(answer['value']) ?? <String, dynamic>{},
     };
     Future<Map<String, dynamic>> requestPreview() => _request(
-          'POST',
-          '/api/interest-v020/stage-preview',
-          body: {
-            'sessionId': sessionId,
-            'stageId': stageId,
-            'answers': answerMap,
-          },
-        );
+      'POST',
+      '/api/interest-v020/stage-preview',
+      body: {'sessionId': sessionId, 'stageId': stageId, 'answers': answerMap},
+    );
     try {
       return await requestPreview();
     } on ApiRequestException catch (error) {
@@ -326,25 +395,37 @@ class AuthService {
   }) async {
     try {
       final isMiniAppPath = path.startsWith('/api/miniapp/');
-      final request = await _httpClient.openUrl(method, Uri.parse('$_baseUrl$path'));
-      request.headers.set(HttpHeaders.contentTypeHeader, ContentType.json.mimeType);
+      final request = await _httpClient.openUrl(
+        method,
+        Uri.parse('$_baseUrl$path'),
+      );
+      request.headers.set(
+        HttpHeaders.contentTypeHeader,
+        ContentType.json.mimeType,
+      );
       request.headers.set('Origin', _baseUrl);
-      if (isMiniAppPath) request.headers.set('x-miniapp-client', 'uniprism-weapp');
-      if ((_token ?? '').isNotEmpty) request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
+      if (isMiniAppPath)
+        request.headers.set('x-miniapp-client', 'uniprism-weapp');
+      if ((_token ?? '').isNotEmpty)
+        request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $_token');
       if (isMiniAppPath && (_anonymousId ?? '').isNotEmpty) {
         request.headers.set('x-anonymous-id', _anonymousId!);
       }
       if (!isMiniAppPath && (_anonymousCookie ?? '').isNotEmpty) {
         final separator = _anonymousCookie!.indexOf('=');
         if (separator > 0) {
-          request.cookies.add(Cookie(
-            _anonymousCookie!.substring(0, separator),
-            _anonymousCookie!.substring(separator + 1),
-          ));
+          request.cookies.add(
+            Cookie(
+              _anonymousCookie!.substring(0, separator),
+              _anonymousCookie!.substring(separator + 1),
+            ),
+          );
         }
       }
       if (body != null) request.add(utf8.encode(jsonEncode(body)));
-      final response = await request.close().timeout(const Duration(seconds: 15));
+      final response = await request.close().timeout(
+        const Duration(seconds: 15),
+      );
       for (final cookie in response.cookies) {
         if (cookie.name == 'uniprism_anonymous') {
           await _storeAnonymousCookie('${cookie.name}=${cookie.value}');
@@ -353,13 +434,17 @@ class AuthService {
       final responseText = await utf8.decodeStream(response);
       dynamic decoded;
       try {
-        decoded = responseText.isEmpty ? <String, dynamic>{} : jsonDecode(responseText);
+        decoded = responseText.isEmpty
+            ? <String, dynamic>{}
+            : jsonDecode(responseText);
       } catch (_) {
         throw const ApiRequestException('服务器返回了无法识别的数据');
       }
       final envelope = _map(decoded) ?? <String, dynamic>{};
       final data = _map(envelope['data']) ?? envelope;
-      if (response.statusCode < 200 || response.statusCode >= 300 || envelope['ok'] == false) {
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          envelope['ok'] == false) {
         throw ApiRequestException(_errorMessage(envelope));
       }
       return data;
@@ -380,7 +465,8 @@ class AuthService {
 
   static Future<Map<String, dynamic>> _readStorage() async {
     try {
-      return (await _storageChannel.invokeMapMethod<String, dynamic>('read')) ?? <String, dynamic>{};
+      return (await _storageChannel.invokeMapMethod<String, dynamic>('read')) ??
+          <String, dynamic>{};
     } on MissingPluginException {
       return <String, dynamic>{};
     }
@@ -408,7 +494,9 @@ class AuthService {
 
   static bool _shouldRefreshSession(ApiRequestException error) {
     final message = error.message.toLowerCase();
-    return message.contains('unauthorized') || message.contains('探索会话') || message.contains('session');
+    return message.contains('unauthorized') ||
+        message.contains('探索会话') ||
+        message.contains('session');
   }
 
   static String _statusLabel(String value) {
@@ -438,65 +526,70 @@ class LaunchPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final horizontal = math.max(24.0, size.width * 0.064);
+    final availableWidth = math.min(size.width, AppLayout.phoneContentMaxWidth);
+    final horizontal = math.max(20.0, availableWidth * 0.064);
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 28),
-          child: Column(
-            children: [
-              SizedBox(height: _clamp(size.height * 0.12, 76, 122)),
-              const Text(
-                '在选择专业前，提前了解\n学什么、做什么、你想要什么',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF333333),
-                  fontSize: 17,
-                  height: 1.65,
-                  fontWeight: FontWeight.w700,
+        child: AppConstrainedContent(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(horizontal, 0, horizontal, 28),
+            child: Column(
+              children: [
+                SizedBox(height: _clamp(size.height * 0.12, 76, 122)),
+                const Text(
+                  '在选择专业前，提前了解\n学什么、做什么、你想要什么',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF333333),
+                    fontSize: 17,
+                    height: 1.65,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              SizedBox(height: _clamp(size.height * 0.075, 48, 72)),
-              SizedBox(
-                width: math.min(size.width - 32, 342),
-                height: 192,
-                child: Image.asset(
-                  AppAssets.launchHero,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox.expand(),
+                SizedBox(height: _clamp(size.height * 0.075, 48, 72)),
+                SizedBox(
+                  width: math.min(size.width - 32, 342),
+                  height: 192,
+                  child: Image.asset(
+                    AppAssets.launchHero,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const SizedBox.expand(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 22),
-              const Text(
-                '在一万种可能中，看清独属于你的道路！',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFF222222),
-                  fontSize: 13,
-                  height: 1.6,
-                  fontWeight: FontWeight.w500,
+                const SizedBox(height: 22),
+                const Text(
+                  '在一万种可能中，看清独属于你的道路！',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF222222),
+                    fontSize: 13,
+                    height: 1.6,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: 220,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PrimaryButton(
-                      label: '开始体验',
-                      onPressed: () => Navigator.of(context).pushNamed('/intro/interest'),
-                    ),
-                    const SizedBox(height: 16),
-                    OutlineActionButton(
-                      label: '登录',
-                      onPressed: () => Navigator.of(context).pushNamed('/login'),
-                    ),
-                  ],
+                const Spacer(),
+                SizedBox(
+                  width: 220,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PrimaryButton(
+                        label: '开始体验',
+                        onPressed: () =>
+                            Navigator.of(context).pushNamed('/intro/interest'),
+                      ),
+                      const SizedBox(height: 16),
+                      OutlineActionButton(
+                        label: '登录',
+                        onPressed: () =>
+                            Navigator.of(context).pushNamed('/login'),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -518,7 +611,8 @@ class _ModuleIntroPageState extends State<ModuleIntroPage> {
   Timer? _autoPlayTimer;
   int _activeIndex = 0;
 
-  List<IntroSlide> get _visibleSlides => widget.config.slides.take(_activeIndex + 1).toList();
+  List<IntroSlide> get _visibleSlides =>
+      widget.config.slides.take(_activeIndex + 1).toList();
 
   bool get _isReady => _activeIndex >= widget.config.slides.length - 1;
 
@@ -562,7 +656,9 @@ class _ModuleIntroPageState extends State<ModuleIntroPage> {
       return;
     }
 
-    final nextRoute = widget.config.type == IntroType.interest ? '/intro/major' : '/basic-profile';
+    final nextRoute = widget.config.type == IntroType.interest
+        ? '/intro/major'
+        : '/basic-profile';
     Navigator.of(context).pushReplacementNamed(nextRoute);
   }
 
@@ -570,63 +666,81 @@ class _ModuleIntroPageState extends State<ModuleIntroPage> {
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
     final theme = widget.config.theme;
-    final carouselWidth = math.min(size.width * 0.69, 270.0);
+    final availableWidth = math.min(size.width, AppLayout.phoneContentMaxWidth);
+    final carouselWidth = math.min(
+      availableWidth * (AppLayout.isCompactWidth(context) ? 0.66 : 0.69),
+      270.0,
+    );
+    final buttonInset = math.max(24.0, (availableWidth - 220) / 2);
 
     return Scaffold(
       body: Stack(
         children: [
           IntroBackdrop(theme: theme),
           SafeArea(
-            child: Column(
-              children: [
-                _IntroHeader(
-                  title: widget.config.navTitle,
-                  onBack: () => Navigator.of(context).maybePop(),
-                ),
-                SizedBox(height: _clamp(size.height * 0.036, 22, 34)),
-                IntroCarousel(
-                  controller: _pageController,
-                  slides: widget.config.slides,
-                  activeIndex: _activeIndex,
-                  theme: theme,
-                  width: carouselWidth,
-                  onChanged: _onPageChanged,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  widget.config.sectionTitle,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: theme.accent,
-                    fontSize: 19,
-                    height: 1.35,
-                    fontWeight: FontWeight.w800,
+            child: AppConstrainedContent(
+              child: Column(
+                children: [
+                  _IntroHeader(
+                    title: widget.config.navTitle,
+                    onBack: () => Navigator.of(context).maybePop(),
                   ),
-                ),
-                const SizedBox(height: 14),
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: math.max(46, size.width * 0.13)),
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: TimelineList(
-                        slides: _visibleSlides,
-                        activeIndex: _activeIndex,
-                        theme: theme,
+                  SizedBox(height: _clamp(size.height * 0.036, 22, 34)),
+                  IntroCarousel(
+                    controller: _pageController,
+                    slides: widget.config.slides,
+                    activeIndex: _activeIndex,
+                    theme: theme,
+                    width: carouselWidth,
+                    onChanged: _onPageChanged,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    widget.config.sectionTitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: theme.accent,
+                      fontSize: 19,
+                      height: 1.35,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: math.max(28, availableWidth * 0.12),
+                      ),
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: TimelineList(
+                          slides: _visibleSlides,
+                          activeIndex: _activeIndex,
+                          theme: theme,
+                        ),
                       ),
                     ),
                   ),
-                ),
-                Padding(
-                  padding: EdgeInsets.fromLTRB(86, 12, 86, 32 + MediaQuery.paddingOf(context).bottom),
-                  child: PrimaryButton(
-                    label: _isReady ? widget.config.primaryLabel : '下一步',
-                    onPressed: _handlePrimaryAction,
-                    backgroundColor: _isReady ? theme.activeButton : theme.mutedButton,
-                    shadowColor: _isReady ? theme.activeShadow : Colors.transparent,
+                  Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      buttonInset,
+                      12,
+                      buttonInset,
+                      32 + MediaQuery.paddingOf(context).bottom,
+                    ),
+                    child: PrimaryButton(
+                      label: _isReady ? widget.config.primaryLabel : '下一步',
+                      onPressed: _handlePrimaryAction,
+                      backgroundColor: _isReady
+                          ? theme.activeButton
+                          : theme.mutedButton,
+                      shadowColor: _isReady
+                          ? theme.activeShadow
+                          : Colors.transparent,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -730,14 +844,21 @@ class IntroCarousel extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   border: Border.all(color: Colors.white, width: 5),
-                  boxShadow: [BoxShadow(color: theme.accent.withOpacity(0.12), blurRadius: 18, offset: const Offset(0, 8))],
+                  boxShadow: [
+                    BoxShadow(
+                      color: theme.accent.withOpacity(0.12),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
                 ),
                 child: ClipRect(
                   child: PageView.builder(
                     controller: controller,
                     itemCount: slides.length,
                     onPageChanged: onChanged,
-                    itemBuilder: (context, index) => _RemoteSlideImage(slide: slides[index], theme: theme),
+                    itemBuilder: (context, index) =>
+                        _RemoteSlideImage(slide: slides[index], theme: theme),
                   ),
                 ),
               ),
@@ -768,7 +889,13 @@ class _CarouselStackCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border.all(color: Colors.white, width: 5),
-          boxShadow: [BoxShadow(color: theme.accent.withOpacity(0.1), blurRadius: 16, offset: const Offset(0, 6))],
+          boxShadow: [
+            BoxShadow(
+              color: theme.accent.withOpacity(0.1),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: Image.network(
           imageUrl,
@@ -797,12 +924,21 @@ class _RemoteSlideImage extends StatelessWidget {
         if (progress == null) return child;
         return ColoredBox(
           color: theme.timelineSoft,
-          child: Center(child: CircularProgressIndicator(color: theme.accent, strokeWidth: 2)),
+          child: Center(
+            child: CircularProgressIndicator(
+              color: theme.accent,
+              strokeWidth: 2,
+            ),
+          ),
         );
       },
       errorBuilder: (context, error, stackTrace) => ColoredBox(
         color: theme.timelineSoft,
-        child: Icon(Icons.image_not_supported_outlined, color: theme.accent, size: 30),
+        child: Icon(
+          Icons.image_not_supported_outlined,
+          color: theme.accent,
+          size: 30,
+        ),
       ),
     );
   }
@@ -859,7 +995,12 @@ class TimelineList extends StatelessWidget {
 }
 
 class TimelineItem extends StatelessWidget {
-  const TimelineItem({super.key, required this.text, required this.isActive, required this.theme});
+  const TimelineItem({
+    super.key,
+    required this.text,
+    required this.isActive,
+    required this.theme,
+  });
 
   final String text;
   final bool isActive;
@@ -873,7 +1014,10 @@ class TimelineItem extends StatelessWidget {
       tween: Tween(begin: 0, end: 1),
       builder: (context, value, child) => Opacity(
         opacity: value,
-        child: Transform.translate(offset: Offset(0, (1 - value) * 8), child: child),
+        child: Transform.translate(
+          offset: Offset(0, (1 - value) * 8),
+          child: child,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.only(bottom: 10),
@@ -918,9 +1062,7 @@ class IntroBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white,
-      ),
+      decoration: BoxDecoration(color: Colors.white),
       child: Stack(
         children: [
           Positioned.fill(
@@ -929,7 +1071,8 @@ class IntroBackdrop extends StatelessWidget {
               fit: BoxFit.cover,
               alignment: Alignment.topCenter,
               filterQuality: FilterQuality.medium,
-              errorBuilder: (context, error, stackTrace) => const SizedBox.expand(),
+              errorBuilder: (context, error, stackTrace) =>
+                  const SizedBox.expand(),
             ),
           ),
           Positioned.fill(
@@ -938,7 +1081,10 @@ class IntroBackdrop extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.bottomLeft,
                   end: Alignment.topRight,
-                  colors: [theme.overlayColor.withOpacity(0.38), theme.overlayColor.withOpacity(0)],
+                  colors: [
+                    theme.overlayColor.withOpacity(0.38),
+                    theme.overlayColor.withOpacity(0),
+                  ],
                   stops: const [0.03, 0.64],
                 ),
               ),
@@ -968,9 +1114,14 @@ class PrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: BoxDecoration(color: shadowColor, borderRadius: BorderRadius.circular(11)),
+      decoration: BoxDecoration(
+        color: shadowColor,
+        borderRadius: BorderRadius.circular(11),
+      ),
       child: Padding(
-        padding: EdgeInsets.only(bottom: shadowColor == Colors.transparent ? 0 : 4),
+        padding: EdgeInsets.only(
+          bottom: shadowColor == Colors.transparent ? 0 : 4,
+        ),
         child: SizedBox(
           height: 50,
           width: double.infinity,
@@ -980,8 +1131,13 @@ class PrimaryButton extends StatelessWidget {
               elevation: 0,
               backgroundColor: backgroundColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
-              textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(11),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: Text(label),
           ),
@@ -992,7 +1148,11 @@ class PrimaryButton extends StatelessWidget {
 }
 
 class OutlineActionButton extends StatelessWidget {
-  const OutlineActionButton({super.key, required this.label, required this.onPressed});
+  const OutlineActionButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+  });
 
   final String label;
   final VoidCallback onPressed;
@@ -1007,7 +1167,9 @@ class OutlineActionButton extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFF6B23FF),
           side: const BorderSide(color: Color(0xFFD8D8D8), width: 1.2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(11)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(11),
+          ),
           textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
         ),
         child: Text(label),
@@ -1103,14 +1265,21 @@ class _LoginPageState extends State<LoginPage> {
       _devCodeHint = '';
     });
     try {
-      final devCode = await AuthService.instance.sendSmsCodeWithDevCode(_phone);
+      final devCode = AppConfig.showDevelopmentSmsCode
+          ? await AuthService.instance.sendSmsCodeWithDevCode(_phone)
+          : await (() async {
+              await AuthService.instance.sendSmsCode(_phone);
+              return null;
+            })();
       if (!mounted) return;
       if (devCode != null && devCode.isNotEmpty) {
         _codeController.text = devCode;
         setState(() => _devCodeHint = '开发验证码：$devCode');
       }
       _startCooldown();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('验证码已发送')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('验证码已发送')));
     } on ApiRequestException catch (error) {
       if (mounted) setState(() => _error = error.message);
     } finally {
@@ -1150,9 +1319,19 @@ class _LoginPageState extends State<LoginPage> {
         children: [
           const IntroBackdrop(theme: IntroTheme.interest),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(28, 8, 28, 28),
-              child: _view == _LoginView.landing ? _buildLanding() : _buildPhoneLogin(),
+            child: AppConstrainedContent(
+              maxWidth: AppLayout.dialogContentMaxWidth,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  AppLayout.pagePadding(context),
+                  8,
+                  AppLayout.pagePadding(context),
+                  28,
+                ),
+                child: _view == _LoginView.landing
+                    ? _buildLanding()
+                    : _buildPhoneLogin(),
+              ),
             ),
           ),
         ],
@@ -1164,11 +1343,25 @@ class _LoginPageState extends State<LoginPage> {
     return Column(
       children: [
         const Spacer(flex: 3),
-        const Icon(Icons.change_history_rounded, size: 64, color: Color(0xFF6B23FF)),
+        const Icon(
+          Icons.change_history_rounded,
+          size: 64,
+          color: Color(0xFF6B23FF),
+        ),
         const SizedBox(height: 18),
-        const Text('万有棱镜', style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Color(0xFF262626))),
+        const Text(
+          '万有棱镜',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF262626),
+          ),
+        ),
         const SizedBox(height: 10),
-        const Text('告别专业迷茫，从容规划未来', style: TextStyle(fontSize: 15, color: Color(0xFF666666))),
+        const Text(
+          '告别专业迷茫，从容规划未来',
+          style: TextStyle(fontSize: 15, color: Color(0xFF666666)),
+        ),
         const Spacer(flex: 4),
         SizedBox(
           width: double.infinity,
@@ -1180,8 +1373,13 @@ class _LoginPageState extends State<LoginPage> {
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF6B23FF),
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1207,9 +1405,17 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
         const SizedBox(height: 42),
-        const Text('手机号登录', textAlign: TextAlign.center, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+        const Text(
+          '手机号登录',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+        ),
         const SizedBox(height: 10),
-        const Text('验证码登录，首次使用将自动创建账号', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Color(0xFF666666))),
+        const Text(
+          '验证码登录，首次使用将自动创建账号',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 14, color: Color(0xFF666666)),
+        ),
         const SizedBox(height: 42),
         TextField(
           controller: _phoneController,
@@ -1224,31 +1430,52 @@ class _LoginPageState extends State<LoginPage> {
           maxLength: 6,
           decoration: _loginInputDecoration('6 位验证码').copyWith(
             suffixIcon: TextButton(
-              onPressed: _sendingCode || _cooldown > 0 || !_isValidPhone ? null : _sendCode,
-              child: Text(_cooldown > 0 ? '${_cooldown}s' : (_sendingCode ? '发送中' : '获取验证码')),
+              onPressed: _sendingCode || _cooldown > 0 || !_isValidPhone
+                  ? null
+                  : _sendCode,
+              child: Text(
+                _cooldown > 0
+                    ? '${_cooldown}s'
+                    : (_sendingCode ? '发送中' : '获取验证码'),
+              ),
             ),
           ),
         ),
         if (_devCodeHint.isNotEmpty) ...[
           const SizedBox(height: 8),
-          Text(_devCodeHint, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: Color(0xFF6B23FF))),
+          Text(
+            _devCodeHint,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFF6B23FF)),
+          ),
         ],
         if (_error.isNotEmpty) ...[
           const SizedBox(height: 14),
-          Text(_error, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: Color(0xFFC62828))),
+          Text(
+            _error,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, color: Color(0xFFC62828)),
+          ),
         ],
         const SizedBox(height: 24),
         SizedBox(
           height: 50,
           child: FilledButton(
-            onPressed: _loggingIn || !_isValidPhone || !_isValidCode ? null : _login,
+            onPressed: _loggingIn || !_isValidPhone || !_isValidCode
+                ? null
+                : _login,
             style: FilledButton.styleFrom(
               backgroundColor: const Color(0xFF6B23FF),
               disabledBackgroundColor: const Color(0xFFD7C9FF),
               foregroundColor: Colors.white,
               disabledForegroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: Text(_loggingIn ? '登录中...' : '登录'),
           ),
@@ -1267,8 +1494,14 @@ class _LoginPageState extends State<LoginPage> {
       filled: true,
       fillColor: Colors.white,
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: const BorderSide(color: Color(0xFF9761FF), width: 1.5),
@@ -1294,15 +1527,41 @@ class _LoginPageState extends State<LoginPage> {
           ),
         ),
         const SizedBox(width: 4),
-        const Expanded(
-          child: Text(
-            '我已阅读并同意《用户服务条款》和《隐私政策》',
-            style: TextStyle(color: Color(0xFF777777), fontSize: 12, height: 1.5),
+        Expanded(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text(
+                '我已阅读并同意',
+                style: TextStyle(color: Color(0xFF777777), fontSize: 12),
+              ),
+              _agreementLink('《用户服务条款》', '/terms'),
+              const Text(
+                '和',
+                style: TextStyle(color: Color(0xFF777777), fontSize: 12),
+              ),
+              _agreementLink('《隐私政策》', '/privacy'),
+            ],
           ),
         ),
       ],
     );
   }
+
+  Widget _agreementLink(String label, String route) => InkWell(
+    onTap: () => Navigator.of(context).pushNamed(route),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Color(0xFF6B23FF),
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ),
+  );
 }
 
 class BasicProfilePage extends StatefulWidget {
@@ -1355,7 +1614,8 @@ class _BasicProfilePageState extends State<BasicProfilePage> {
 
   void _chooseStatus(String value) => setState(() => _status = value);
 
-  void _chooseReferralSource(String value) => setState(() => _referralSource = value);
+  void _chooseReferralSource(String value) =>
+      setState(() => _referralSource = value);
 
   Future<void> _continue() async {
     if (!_canContinue || _submitting) return;
@@ -1376,7 +1636,9 @@ class _BasicProfilePageState extends State<BasicProfilePage> {
       Navigator.of(context).pushReplacementNamed('/home');
     } on ApiRequestException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -1385,68 +1647,82 @@ class _BasicProfilePageState extends State<BasicProfilePage> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final buttonColor = _canContinue && !_submitting ? const Color(0xFF6B23FF) : const Color(0xFFD7C9FF);
+    final buttonColor = _canContinue && !_submitting
+        ? const Color(0xFF6B23FF)
+        : const Color(0xFFD7C9FF);
 
     return Scaffold(
       body: Stack(
         children: [
           const IntroBackdrop(theme: IntroTheme.interest),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28),
-              child: Column(
-                children: [
-                  SizedBox(height: _clamp(size.height * 0.095, 62, 92)),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    child: Column(
-                      key: ValueKey(_stepIndex),
-                      children: [
-                        Text(
-                          _profileStepTitle(_stepIndex),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Color(0xFF333333),
-                            fontSize: 18,
-                            height: 1.55,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        if (_profileStepSubtitle(_stepIndex) case final subtitle?) ...[
-                          const SizedBox(height: 15),
+            child: AppConstrainedContent(
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: AppLayout.pagePadding(context),
+                ),
+                child: Column(
+                  children: [
+                    SizedBox(height: _clamp(size.height * 0.095, 62, 92)),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: Column(
+                        key: ValueKey(_stepIndex),
+                        children: [
                           Text(
-                            subtitle,
+                            _profileStepTitle(_stepIndex),
                             textAlign: TextAlign.center,
                             style: const TextStyle(
                               color: Color(0xFF333333),
-                              fontSize: 17,
-                              height: 1.35,
-                              fontWeight: FontWeight.w500,
+                              fontSize: 18,
+                              height: 1.55,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
+                          if (_profileStepSubtitle(_stepIndex)
+                              case final subtitle?) ...[
+                            const SizedBox(height: 15),
+                            Text(
+                              subtitle,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFF333333),
+                                fontSize: 17,
+                                height: 1.35,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: _clamp(size.height * 0.048, 28, 44)),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: _buildStepFields(),
                       ),
                     ),
-                  ),
-                  Padding(
-                    padding: EdgeInsets.fromLTRB(54, 16, 54, 32 + MediaQuery.paddingOf(context).bottom),
-                    child: ProfilePrimaryButton(
-                      label: _submitting ? '保存中...' : (_stepIndex == 3 ? '进入主页' : '下一步'),
-                      isEnabled: _canContinue && !_submitting,
-                      backgroundColor: buttonColor,
-                      onPressed: _continue,
+                    SizedBox(height: _clamp(size.height * 0.048, 28, 44)),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: _buildStepFields(),
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        AppLayout.isCompactWidth(context) ? 12 : 36,
+                        16,
+                        AppLayout.isCompactWidth(context) ? 12 : 36,
+                        32 + MediaQuery.paddingOf(context).bottom,
+                      ),
+                      child: ProfilePrimaryButton(
+                        label: _submitting
+                            ? '保存中...'
+                            : (_stepIndex == 3 ? '进入主页' : '下一步'),
+                        isEnabled: _canContinue && !_submitting,
+                        backgroundColor: buttonColor,
+                        onPressed: _continue,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1463,7 +1739,10 @@ class _BasicProfilePageState extends State<BasicProfilePage> {
           children: [
             const ProfileFieldLabel('你的昵称'),
             const SizedBox(height: 12),
-            ProfileTextField(controller: _nameController, hintText: '请输入姓名或者昵称'),
+            ProfileTextField(
+              controller: _nameController,
+              hintText: '请输入姓名或者昵称',
+            ),
             const SizedBox(height: 26),
             const ProfileFieldLabel('阁下的性别是？'),
             const SizedBox(height: 12),
@@ -1508,14 +1787,18 @@ class _BasicProfilePageState extends State<BasicProfilePage> {
         return Column(
           key: const ValueKey('invite'),
           children: [
-            ProfileTextField(controller: _inviteCodeController, hintText: '请输入您的邀请码'),
+            ProfileTextField(
+              controller: _inviteCodeController,
+              hintText: '请输入您的邀请码',
+            ),
           ],
         );
     }
   }
 }
 
-String _profileStepTitle(int index) => index == 3 ? '（可选）您是否有对应的邀请码' : '初次见面，我们该怎么称呼你？';
+String _profileStepTitle(int index) =>
+    index == 3 ? '（可选）您是否有对应的邀请码' : '初次见面，我们该怎么称呼你？';
 
 String? _profileStepSubtitle(int index) {
   switch (index) {
@@ -1540,13 +1823,22 @@ class ProfileFieldLabel extends StatelessWidget {
     return Text(
       label,
       textAlign: TextAlign.center,
-      style: const TextStyle(color: Color(0xFF333333), fontSize: 17, height: 1.35, fontWeight: FontWeight.w500),
+      style: const TextStyle(
+        color: Color(0xFF333333),
+        fontSize: 17,
+        height: 1.35,
+        fontWeight: FontWeight.w500,
+      ),
     );
   }
 }
 
 class ProfileTextField extends StatelessWidget {
-  const ProfileTextField({super.key, required this.controller, required this.hintText});
+  const ProfileTextField({
+    super.key,
+    required this.controller,
+    required this.hintText,
+  });
 
   final TextEditingController controller;
   final String hintText;
@@ -1557,16 +1849,29 @@ class ProfileTextField extends StatelessWidget {
       controller: controller,
       maxLength: 40,
       textAlign: TextAlign.center,
-      style: const TextStyle(color: Color(0xFF18181B), fontSize: 15, fontWeight: FontWeight.w500),
+      style: const TextStyle(
+        color: Color(0xFF18181B),
+        fontSize: 15,
+        fontWeight: FontWeight.w500,
+      ),
       decoration: InputDecoration(
         counterText: '',
         hintText: hintText,
         hintStyle: const TextStyle(color: Color(0xFFB8B8B8), fontSize: 14),
         filled: true,
         fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 24,
+          vertical: 15,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(0xFF9761FF), width: 1.5),
@@ -1577,7 +1882,12 @@ class ProfileTextField extends StatelessWidget {
 }
 
 class ProfileChoiceList extends StatelessWidget {
-  const ProfileChoiceList({super.key, required this.options, required this.selectedValue, required this.onSelected});
+  const ProfileChoiceList({
+    super.key,
+    required this.options,
+    required this.selectedValue,
+    required this.onSelected,
+  });
 
   final List<(String, String)> options;
   final String selectedValue;
@@ -1601,7 +1911,12 @@ class ProfileChoiceList extends StatelessWidget {
 }
 
 class ProfileChoiceButton extends StatelessWidget {
-  const ProfileChoiceButton({super.key, required this.label, required this.selected, required this.onPressed});
+  const ProfileChoiceButton({
+    super.key,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
 
   final String label;
   final bool selected;
@@ -1617,9 +1932,17 @@ class ProfileChoiceButton extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xFF333333),
           backgroundColor: selected ? const Color(0xFFF0E8FF) : Colors.white,
-          side: BorderSide(color: selected ? const Color(0xFF9761FF) : Colors.transparent, width: 1.5),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          textStyle: TextStyle(fontSize: 14, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+          side: BorderSide(
+            color: selected ? const Color(0xFF9761FF) : Colors.transparent,
+            width: 1.5,
+          ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          textStyle: TextStyle(
+            fontSize: 14,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
         ),
         child: Text(label, textAlign: TextAlign.center),
       ),
@@ -1654,7 +1977,9 @@ class ProfilePrimaryButton extends StatelessWidget {
           disabledBackgroundColor: backgroundColor,
           foregroundColor: Colors.white,
           disabledForegroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
           textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
         child: Text(label),
@@ -1685,11 +2010,14 @@ class HomeMajorCard {
     // Match the mini-program normalizer: an explicit `locked: false` from
     // the stage recommendation API is authoritative even when a card does
     // not carry a detail-page majorId yet.
-    final locked = json['locked'] is bool ? json['locked'] as bool : json['majorId'] == null;
+    final locked = json['locked'] is bool
+        ? json['locked'] as bool
+        : json['majorId'] == null;
     return HomeMajorCard(
       rank: rank,
       locked: locked,
-      starCount: int.tryParse('${json['starCount'] ?? ''}') ?? math.max(1, 6 - rank),
+      starCount:
+          int.tryParse('${json['starCount'] ?? ''}') ?? math.max(1, 6 - rank),
       majorId: json['majorId']?.toString(),
       name: json['name']?.toString(),
       iconPath: json['iconPath']?.toString(),
@@ -1697,13 +2025,442 @@ class HomeMajorCard {
   }
 
   static List<HomeMajorCard> get lockedCards => List<HomeMajorCard>.generate(
-        5,
-        (index) => HomeMajorCard(rank: index + 1, locked: true, starCount: 5 - index),
-      );
+    5,
+    (index) =>
+        HomeMajorCard(rank: index + 1, locked: true, starCount: 5 - index),
+  );
+}
+
+class MainShell extends StatefulWidget {
+  const MainShell({super.key, this.initialIndex = 0});
+
+  final int initialIndex;
+
+  @override
+  State<MainShell> createState() => _MainShellState();
+}
+
+class _MainShellState extends State<MainShell> {
+  late int _selectedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedIndex = widget.initialIndex.clamp(0, 3);
+  }
+
+  @override
+  void didUpdateWidget(MainShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialIndex != widget.initialIndex) {
+      _selectedIndex = widget.initialIndex.clamp(0, 3);
+    }
+  }
+
+  void _selectTab(int index) {
+    if (_selectedIndex == index) return;
+    setState(() => _selectedIndex = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: _selectedIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selectedIndex != 0) _selectTab(0);
+      },
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            HomePage(onOpenMessages: () => _selectTab(2)),
+            const ModuleIntroPage(config: IntroConfig.major),
+            const MessageCenterPage(),
+            _ProfileTab(onOpenMessages: () => _selectTab(2)),
+          ],
+        ),
+        bottomNavigationBar: AppBottomNavigationBar(
+          selectedIndex: _selectedIndex,
+          onSelected: _selectTab,
+        ),
+      ),
+    );
+  }
+}
+
+class AppBottomNavigationBar extends StatelessWidget {
+  const AppBottomNavigationBar({
+    super.key,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  static const _items = [
+    _BottomNavigationItem(
+      label: '兴趣探索',
+      icon: Icons.explore_outlined,
+      selectedIcon: Icons.explore_rounded,
+    ),
+    _BottomNavigationItem(
+      label: '专业体验',
+      icon: Icons.school_outlined,
+      selectedIcon: Icons.school_rounded,
+    ),
+    _BottomNavigationItem(
+      label: '消息',
+      icon: Icons.chat_bubble_outline_rounded,
+      selectedIcon: Icons.chat_bubble_rounded,
+    ),
+    _BottomNavigationItem(
+      label: '我的',
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = AppLayout.isCompactWidth(context);
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFECEAF0), width: 0.8)),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x0D000000),
+            blurRadius: 12,
+            offset: Offset(0, -3),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        minimum: EdgeInsets.only(top: compact ? 5 : 7, bottom: 3),
+        child: SizedBox(
+          height: compact ? 51 : 55,
+          child: AnimatedBuilder(
+            animation: AppMessageCenter.instance,
+            builder: (context, _) => Row(
+              children: List.generate(_items.length, (index) {
+                final item = _items[index];
+                return Expanded(
+                  child: _BottomNavigationButton(
+                    key: ValueKey('main-tab-$index'),
+                    item: item,
+                    selected: selectedIndex == index,
+                    unreadCount: index == 2
+                        ? AppMessageCenter.instance.unreadCount
+                        : 0,
+                    compact: compact,
+                    onTap: () => onSelected(index),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomNavigationItem {
+  const _BottomNavigationItem({
+    required this.label,
+    required this.icon,
+    required this.selectedIcon,
+  });
+
+  final String label;
+  final IconData icon;
+  final IconData selectedIcon;
+}
+
+class _BottomNavigationButton extends StatelessWidget {
+  const _BottomNavigationButton({
+    super.key,
+    required this.item,
+    required this.selected,
+    required this.unreadCount,
+    required this.compact,
+    required this.onTap,
+  });
+
+  final _BottomNavigationItem item;
+  final bool selected;
+  final int unreadCount;
+  final bool compact;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const activeColor = Color(0xFF6B23FF);
+    const inactiveColor = Color(0xFF8A8790);
+    final color = selected ? activeColor : inactiveColor;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: item.label,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 30,
+        containedInkWell: true,
+        highlightShape: BoxShape.rectangle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    child: Icon(
+                      selected ? item.selectedIcon : item.icon,
+                      key: ValueKey(selected),
+                      size: compact ? 22 : 24,
+                      color: color,
+                    ),
+                  ),
+                  if (unreadCount > 0)
+                    Positioned(
+                      right: -10,
+                      top: -7,
+                      child: Container(
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF426F),
+                          borderRadius: BorderRadius.circular(9),
+                          border: Border.all(color: Colors.white, width: 1.2),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          unreadCount > 99 ? '99+' : '$unreadCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            height: 1,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              SizedBox(height: compact ? 2 : 3),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  item.label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: compact ? 10 : 11,
+                    height: 1,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileTab extends StatefulWidget {
+  const _ProfileTab({required this.onOpenMessages});
+
+  final VoidCallback onOpenMessages;
+
+  @override
+  State<_ProfileTab> createState() => _ProfileTabState();
+}
+
+class _ProfileTabState extends State<_ProfileTab> {
+  Future<void> _openLogin() async {
+    await Navigator.of(context).pushNamed<bool>('/login');
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = AuthService.instance;
+    final name = auth.displayName;
+    final horizontalPadding = AppLayout.pagePadding(context);
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F6FA),
+      appBar: AppBar(
+        title: const Text('我的'),
+        centerTitle: true,
+        backgroundColor: const Color(0xFFF7F6FA),
+        surfaceTintColor: Colors.transparent,
+      ),
+      body: AppConstrainedContent(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            12,
+            horizontalPadding,
+            28,
+          ),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFEDE4FF),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.person_rounded,
+                      color: Color(0xFF6B23FF),
+                      size: 32,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name.isEmpty ? '登录万有棱镜' : name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          auth.isLoggedIn ? '继续探索你的专业方向' : '登录后同步测评进度与报告',
+                          style: const TextStyle(
+                            color: Color(0xFF8A8790),
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!auth.isLoggedIn)
+                    FilledButton(
+                      onPressed: _openLogin,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF6B23FF),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('登录'),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            _ProfileMenuCard(
+              children: [
+                _ProfileMenuItem(
+                  icon: Icons.notifications_none_rounded,
+                  label: '消息通知',
+                  onTap: widget.onOpenMessages,
+                ),
+                _ProfileMenuItem(
+                  icon: Icons.description_outlined,
+                  label: '用户服务条款',
+                  onTap: () => Navigator.of(context).pushNamed('/terms'),
+                ),
+                _ProfileMenuItem(
+                  icon: Icons.privacy_tip_outlined,
+                  label: '隐私政策',
+                  onTap: () => Navigator.of(context).pushNamed('/privacy'),
+                ),
+                _ProfileMenuItem(
+                  icon: Icons.security_rounded,
+                  label: '账号与安全',
+                  onTap: () =>
+                      Navigator.of(context).pushNamed('/account-security'),
+                ),
+                _ProfileMenuItem(
+                  icon: Icons.support_agent_rounded,
+                  label: '帮助与反馈',
+                  onTap: () =>
+                      Navigator.of(context).pushNamed('/help-feedback'),
+                ),
+                _ProfileMenuItem(
+                  icon: Icons.info_outline_rounded,
+                  label: '关于万有棱镜',
+                  onTap: () => Navigator.of(context).pushNamed('/about'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileMenuCard extends StatelessWidget {
+  const _ProfileMenuCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(18),
+    clipBehavior: Clip.antiAlias,
+    child: Column(
+      children: [
+        for (var index = 0; index < children.length; index++) ...[
+          children[index],
+          if (index != children.length - 1)
+            const Divider(height: 1, indent: 54, color: Color(0xFFF0EEF3)),
+        ],
+      ],
+    ),
+  );
+}
+
+class _ProfileMenuItem extends StatelessWidget {
+  const _ProfileMenuItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    onTap: onTap,
+    leading: Icon(icon, color: const Color(0xFF6B23FF)),
+    title: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+    trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFFB2AEB8)),
+  );
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key});
+  const HomePage({super.key, this.onOpenMessages});
+
+  final VoidCallback? onOpenMessages;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -1739,18 +2496,25 @@ class _HomePageState extends State<HomePage> {
       for (final answer in answers) {
         final questionId = answer['questionId']?.toString();
         final value = answer['value'];
-        if (questionId != null && value is Map) answerMap[questionId] = Map<String, dynamic>.from(value);
+        if (questionId != null && value is Map)
+          answerMap[questionId] = Map<String, dynamic>.from(value);
       }
       final completedStages = AssessmentBank.stages.where((stage) {
         final questions = AssessmentBank.questionsFor(stage.id);
-        return questions.every((question) => _isAssessmentAnswerComplete(question, answerMap[question.id]));
+        return questions.every(
+          (question) =>
+              _isAssessmentAnswerComplete(question, answerMap[question.id]),
+        );
       }).length;
-      final cards = await AuthService.instance.loadHomePopularMajors(answers: answers);
-      if (mounted) setState(() {
-        _majorCards = cards;
-        _completedStageCount = completedStages;
-        _hasStarted = answers.isNotEmpty;
-      });
+      final cards = await AuthService.instance.loadHomePopularMajors(
+        answers: answers,
+      );
+      if (mounted)
+        setState(() {
+          _majorCards = cards;
+          _completedStageCount = completedStages;
+          _hasStarted = answers.isNotEmpty;
+        });
     } catch (_) {
       // The locked state is a complete and intentional first-visit state.
     } finally {
@@ -1759,16 +2523,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showComingSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('该功能将在后续页面接入。')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('该功能将在后续页面接入。')));
   }
 
   void _openMajor(HomeMajorCard card) {
     if (card.locked) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('完成对应阶段测评后即可解锁。')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('完成对应阶段测评后即可解锁。')));
       return;
     }
     _showComingSoon();
@@ -1782,8 +2546,14 @@ class _HomePageState extends State<HomePage> {
         title: const Text('确认重来'),
         content: const Text('确定要重新开始测评吗？当前阶段的答题进度将从头计算。'),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('重来')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('重来'),
+          ),
         ],
       ),
     );
@@ -1799,7 +2569,10 @@ class _HomePageState extends State<HomePage> {
       });
       await _loadMajorCards();
     } on ApiRequestException catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
     } finally {
       if (mounted) setState(() => _restarting = false);
     }
@@ -1807,65 +2580,642 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final horizontalPadding = AppLayout.pagePadding(context);
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         centerTitle: true,
-        title: const Text('兴趣探索', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        title: const Text(
+          '兴趣探索',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+        actions: [
+          _MessageCenterButton(onPressed: widget.onOpenMessages),
+          const SizedBox(width: 6),
+        ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadMajorCards,
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(15, 18, 15, 28),
-          children: [
-            _HomeHero(
-              completedStages: _completedStageCount,
-              hasStarted: _hasStarted,
-              restarting: _restarting,
-              onRestart: _restartAssessment,
-              onStart: () async {
-                try {
-                  await AuthService.instance.ensureExploreSession();
-                  if (!mounted) return;
-                  await Navigator.of(context).pushNamed('/assessment');
-                  _loadMajorCards();
-                } on ApiRequestException catch (error) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
-                } catch (_) {
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('启动测评失败，请稍后重试')),
-                  );
-                }
-              },
+      body: AppConstrainedContent(
+        maxWidth: AppLayout.homeContentMaxWidth,
+        child: RefreshIndicator(
+          onRefresh: _loadMajorCards,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              18,
+              horizontalPadding,
+              28,
             ),
-            const SizedBox(height: 20),
-            _HomeTabs(
-              showPersona: _showPersona,
-              onChanged: (showPersona) => setState(() => _showPersona = showPersona),
-            ),
-            const SizedBox(height: 18),
-            if (_loading) const LinearProgressIndicator(minHeight: 2, color: Colors.black),
-            if (_loading) const SizedBox(height: 14),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: _showPersona
-                  ? const _PersonaPreview(key: ValueKey('persona'))
-                  : _PopularMajorList(
-                      key: const ValueKey('majors'),
-                      cards: _majorCards,
-                      onTap: _openMajor,
+            children: [
+              _HomeHero(
+                completedStages: _completedStageCount,
+                hasStarted: _hasStarted,
+                restarting: _restarting,
+                onRestart: _restartAssessment,
+                onStart: () async {
+                  try {
+                    await AuthService.instance.ensureExploreSession();
+                    if (!mounted) return;
+                    await Navigator.of(context).pushNamed('/assessment');
+                    _loadMajorCards();
+                  } on ApiRequestException catch (error) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text(error.message)));
+                  } catch (_) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('启动测评失败，请稍后重试')),
+                    );
+                  }
+                },
+              ),
+              if (AppConfig.developerToolsEnabled) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).pushNamed('/report-notification-demo'),
+                    icon: const Icon(Icons.notifications_active_outlined),
+                    label: const Text('报告生成通知测试'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      foregroundColor: const Color(0xFF5420BF),
+                      side: const BorderSide(color: Color(0xFFB99AFF)),
                     ),
-            ),
-          ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () =>
+                        Navigator.of(context).pushNamed('/landscape-test'),
+                    icon: const Icon(Icons.sports_esports_rounded),
+                    label: const Text('横屏贪吃蛇'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      foregroundColor: const Color(0xFF5420BF),
+                      side: const BorderSide(color: Color(0xFFB99AFF)),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              _HomeTabs(
+                showPersona: _showPersona,
+                onChanged: (showPersona) =>
+                    setState(() => _showPersona = showPersona),
+              ),
+              const SizedBox(height: 18),
+              if (_loading)
+                const LinearProgressIndicator(
+                  minHeight: 2,
+                  color: Colors.black,
+                ),
+              if (_loading) const SizedBox(height: 14),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: _showPersona
+                    ? const _PersonaPreview(key: ValueKey('persona'))
+                    : _PopularMajorList(
+                        key: const ValueKey('majors'),
+                        cards: _majorCards,
+                        onTap: _openMajor,
+                      ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+/// A route-scoped landscape mini game. Leaving it returns the app to its
+/// portrait-only home experience.
+class LandscapeTestPage extends StatefulWidget {
+  const LandscapeTestPage({super.key});
+
+  @override
+  State<LandscapeTestPage> createState() => _LandscapeTestPageState();
+}
+
+class _LandscapeTestPageState extends State<LandscapeTestPage> {
+  static const _columns = 28;
+  static const _rows = 16;
+  static const _tickDuration = Duration(milliseconds: 145);
+
+  final math.Random _random = math.Random();
+  final List<math.Point<int>> _snake = [];
+  Timer? _timer;
+  late math.Point<int> _food;
+  _SnakeDirection _direction = _SnakeDirection.right;
+  _SnakeDirection _pendingDirection = _SnakeDirection.right;
+  int _score = 0;
+  int _bestScore = 0;
+  bool _paused = false;
+  bool _gameOver = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    _resetGame();
+    _timer = Timer.periodic(_tickDuration, (_) => _moveSnake());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
+    super.dispose();
+  }
+
+  void _resetGame() {
+    _snake
+      ..clear()
+      ..addAll(const [
+        math.Point<int>(8, 8),
+        math.Point<int>(7, 8),
+        math.Point<int>(6, 8),
+        math.Point<int>(5, 8),
+      ]);
+    _direction = _SnakeDirection.right;
+    _pendingDirection = _SnakeDirection.right;
+    _score = 0;
+    _paused = false;
+    _gameOver = false;
+    _placeFood();
+  }
+
+  void _restartGame() => setState(_resetGame);
+
+  void _placeFood() {
+    do {
+      _food = math.Point<int>(
+        _random.nextInt(_columns),
+        _random.nextInt(_rows),
+      );
+    } while (_snake.contains(_food));
+  }
+
+  void _moveSnake() {
+    if (!mounted || _paused || _gameOver) return;
+    _direction = _pendingDirection;
+    final head = _snake.first;
+    final delta = switch (_direction) {
+      _SnakeDirection.up => const math.Point<int>(0, -1),
+      _SnakeDirection.down => const math.Point<int>(0, 1),
+      _SnakeDirection.left => const math.Point<int>(-1, 0),
+      _SnakeDirection.right => const math.Point<int>(1, 0),
+    };
+    final next = math.Point<int>(head.x + delta.x, head.y + delta.y);
+    final hitWall =
+        next.x < 0 || next.x >= _columns || next.y < 0 || next.y >= _rows;
+    final willEat = next == _food;
+    final bodyToCheck = willEat ? _snake : _snake.take(_snake.length - 1);
+    if (hitWall || bodyToCheck.contains(next)) {
+      setState(() {
+        _gameOver = true;
+        _bestScore = math.max(_bestScore, _score);
+      });
+      return;
+    }
+
+    setState(() {
+      _snake.insert(0, next);
+      if (willEat) {
+        _score += 10;
+        _bestScore = math.max(_bestScore, _score);
+        _placeFood();
+      } else {
+        _snake.removeLast();
+      }
+    });
+  }
+
+  void _changeDirection(_SnakeDirection next) {
+    if (_gameOver) return;
+    final opposite = switch (_direction) {
+      _SnakeDirection.up => _SnakeDirection.down,
+      _SnakeDirection.down => _SnakeDirection.up,
+      _SnakeDirection.left => _SnakeDirection.right,
+      _SnakeDirection.right => _SnakeDirection.left,
+    };
+    if (next != opposite) _pendingDirection = next;
+  }
+
+  void _handleSwipe(DragEndDetails details) {
+    final velocity = details.velocity.pixelsPerSecond;
+    if (velocity.distance < 120) return;
+    if (velocity.dx.abs() > velocity.dy.abs()) {
+      _changeDirection(
+        velocity.dx > 0 ? _SnakeDirection.right : _SnakeDirection.left,
+      );
+    } else {
+      _changeDirection(
+        velocity.dy > 0 ? _SnakeDirection.down : _SnakeDirection.up,
+      );
+    }
+  }
+
+  Future<void> _leaveGame() async {
+    _timer?.cancel();
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+    ]);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0D1C),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compactHeight = constraints.maxHeight < 360;
+            final edge = compactHeight ? 6.0 : 12.0;
+            final controlWidth = (constraints.maxWidth * 0.27)
+                .clamp(168.0, 210.0)
+                .toDouble();
+            final showHint = constraints.maxWidth >= 700;
+            return AppConstrainedContent(
+              maxWidth: 1200,
+              alignment: Alignment.center,
+              child: Padding(
+                padding: EdgeInsets.all(edge),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          SizedBox(
+                            height: compactHeight ? 34 : 40,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  tooltip: '返回主页',
+                                  onPressed: _leaveGame,
+                                  color: Colors.white,
+                                  icon: const Icon(
+                                    Icons.arrow_back_ios_new_rounded,
+                                    size: 19,
+                                  ),
+                                ),
+                                const Text(
+                                  '贪吃蛇',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (showHint)
+                                  const Text(
+                                    '滑动游戏区域或使用方向键',
+                                    style: TextStyle(
+                                      color: Color(0xFFAAA5C1),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: compactHeight ? 4 : 8),
+                          Expanded(
+                            child: Center(
+                              child: AspectRatio(
+                                aspectRatio: _columns / _rows,
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onPanEnd: _handleSwipe,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        CustomPaint(
+                                          painter: _SnakeBoardPainter(
+                                            snake: List.unmodifiable(_snake),
+                                            food: _food,
+                                            columns: _columns,
+                                            rows: _rows,
+                                          ),
+                                        ),
+                                        if (_paused || _gameOver)
+                                          ColoredBox(
+                                            color: Colors.black.withOpacity(
+                                              0.52,
+                                            ),
+                                            child: Center(
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Text(
+                                                    _gameOver ? '游戏结束' : '已暂停',
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 26,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                    ),
+                                                  ),
+                                                  if (_gameOver) ...[
+                                                    const SizedBox(height: 8),
+                                                    Text(
+                                                      '本局得分 $_score',
+                                                      style: const TextStyle(
+                                                        color: Color(
+                                                          0xFFD8D3E8,
+                                                        ),
+                                                        fontSize: 14,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(width: compactHeight ? 8 : 14),
+                    SizedBox(
+                      width: controlWidth,
+                      child: _SnakeControlPanel(
+                        score: _score,
+                        bestScore: _bestScore,
+                        paused: _paused,
+                        gameOver: _gameOver,
+                        compact: compactHeight,
+                        onDirection: _changeDirection,
+                        onPause: () => setState(() => _paused = !_paused),
+                        onRestart: _restartGame,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+enum _SnakeDirection { up, down, left, right }
+
+class _SnakeControlPanel extends StatelessWidget {
+  const _SnakeControlPanel({
+    required this.score,
+    required this.bestScore,
+    required this.paused,
+    required this.gameOver,
+    required this.compact,
+    required this.onDirection,
+    required this.onPause,
+    required this.onRestart,
+  });
+
+  final int score;
+  final int bestScore;
+  final bool paused;
+  final bool gameOver;
+  final bool compact;
+  final ValueChanged<_SnakeDirection> onDirection;
+  final VoidCallback onPause;
+  final VoidCallback onRestart;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: EdgeInsets.all(compact ? 9 : 14),
+    decoration: BoxDecoration(
+      color: const Color(0xFF18172D),
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFF302D4C)),
+    ),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _SnakeScore(label: '得分', value: score),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _SnakeScore(label: '最高', value: bestScore),
+            ),
+          ],
+        ),
+        if (!compact) const Spacer(),
+        _SnakeDirectionButton(
+          icon: Icons.keyboard_arrow_up_rounded,
+          onPressed: () => onDirection(_SnakeDirection.up),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _SnakeDirectionButton(
+              icon: Icons.keyboard_arrow_left_rounded,
+              onPressed: () => onDirection(_SnakeDirection.left),
+            ),
+            const SizedBox(width: 46),
+            _SnakeDirectionButton(
+              icon: Icons.keyboard_arrow_right_rounded,
+              onPressed: () => onDirection(_SnakeDirection.right),
+            ),
+          ],
+        ),
+        _SnakeDirectionButton(
+          icon: Icons.keyboard_arrow_down_rounded,
+          onPressed: () => onDirection(_SnakeDirection.down),
+        ),
+        if (!compact) const Spacer(),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: gameOver ? null : onPause,
+                icon: Icon(
+                  paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  size: 18,
+                ),
+                label: AppButtonLabel(paused ? '继续' : '暂停'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Color(0xFF716A98)),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                onPressed: onRestart,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF6B23FF),
+                ),
+                child: AppButtonLabel(gameOver ? '再来' : '重开'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _SnakeScore extends StatelessWidget {
+  const _SnakeScore({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(vertical: 9),
+    decoration: BoxDecoration(
+      color: const Color(0xFF24213E),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFFAAA5C1), fontSize: 11),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '$value',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 19,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _SnakeDirectionButton extends StatelessWidget {
+  const _SnakeDirectionButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 46,
+    height: 42,
+    child: IconButton.filled(
+      onPressed: onPressed,
+      style: IconButton.styleFrom(
+        backgroundColor: const Color(0xFF302B53),
+        foregroundColor: Colors.white,
+        highlightColor: const Color(0xFF7A46FF),
+      ),
+      icon: Icon(icon, size: 27),
+    ),
+  );
+}
+
+class _SnakeBoardPainter extends CustomPainter {
+  const _SnakeBoardPainter({
+    required this.snake,
+    required this.food,
+    required this.columns,
+    required this.rows,
+  });
+
+  final List<math.Point<int>> snake;
+  final math.Point<int> food;
+  final int columns;
+  final int rows;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cellWidth = size.width / columns;
+    final cellHeight = size.height / rows;
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()..color = const Color(0xFF121126),
+    );
+
+    final gridPaint = Paint()
+      ..color = const Color(0xFF25223D)
+      ..strokeWidth = 0.7;
+    for (var column = 1; column < columns; column++) {
+      final x = column * cellWidth;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+    for (var row = 1; row < rows; row++) {
+      final y = row * cellHeight;
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+    }
+
+    final foodCenter = Offset(
+      (food.x + 0.5) * cellWidth,
+      (food.y + 0.5) * cellHeight,
+    );
+    canvas.drawCircle(
+      foodCenter,
+      math.min(cellWidth, cellHeight) * 0.31,
+      Paint()..color = const Color(0xFFFF5D8F),
+    );
+    canvas.drawCircle(
+      foodCenter,
+      math.min(cellWidth, cellHeight) * 0.43,
+      Paint()..color = const Color(0x33FF5D8F),
+    );
+
+    for (var index = snake.length - 1; index >= 0; index--) {
+      final segment = snake[index];
+      final inset = index == 0 ? 1.4 : 2.0;
+      final rect = Rect.fromLTWH(
+        segment.x * cellWidth + inset,
+        segment.y * cellHeight + inset,
+        cellWidth - inset * 2,
+        cellHeight - inset * 2,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          rect,
+          Radius.circular(math.min(cellWidth, cellHeight) * 0.28),
+        ),
+        Paint()
+          ..color = index == 0
+              ? const Color(0xFFB486FF)
+              : Color.lerp(
+                  const Color(0xFF7047E8),
+                  const Color(0xFF48C9B0),
+                  index / math.max(1, snake.length - 1),
+                )!,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SnakeBoardPainter oldDelegate) =>
+      oldDelegate.snake != snake || oldDelegate.food != food;
 }
 
 class _HomeHero extends StatelessWidget {
@@ -1915,20 +3265,32 @@ class _HomeHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final stageIndex = completedStages < 0
         ? 0
-        : (completedStages > AssessmentBank.stages.length ? AssessmentBank.stages.length : completedStages);
+        : (completedStages > AssessmentBank.stages.length
+              ? AssessmentBank.stages.length
+              : completedStages);
     final isComplete = stageIndex == AssessmentBank.stages.length;
-    final activeStage = isComplete ? AssessmentBank.stages.last : AssessmentBank.stages[stageIndex];
+    final activeStage = isComplete
+        ? AssessmentBank.stages.last
+        : AssessmentBank.stages[stageIndex];
     final copy = _stageCopy[activeStage.id] ?? _stageCopy['interest']!;
     final imageBlur = (7.0 - stageIndex * 1.4).clamp(0.0, 7.0).toDouble();
     final imageOpacity = (0.48 + stageIndex * 0.104).clamp(0.0, 1.0).toDouble();
     final title = isComplete ? '测评完成' : copy.title;
-    final subtitle = isComplete ? '你的专业方向已生成' : hasStarted ? copy.subtitle : '找到真正适合你的专业方向';
-    final buttonLabel = isComplete ? '查看结果' : hasStarted ? '继续' : '开始探索';
+    final subtitle = isComplete
+        ? '你的专业方向已生成'
+        : hasStarted
+        ? copy.subtitle
+        : '找到真正适合你的专业方向';
+    final buttonLabel = isComplete
+        ? '查看结果'
+        : hasStarted
+        ? '继续'
+        : '开始探索';
     final stageLabel = isComplete
         ? '阶段五：结果揭晓'
         : !hasStarted
-            ? '阶段一：探索未开始'
-            : '阶段 ${stageIndex + 1}：${copy.stageText}';
+        ? '阶段一：探索未开始'
+        : '阶段 ${stageIndex + 1}：${copy.stageText}';
     return SizedBox(
       height: 195,
       child: ClipRRect(
@@ -1945,7 +3307,10 @@ class _HomeHero extends StatelessWidget {
               child: Opacity(
                 opacity: imageOpacity,
                 child: ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: imageBlur, sigmaY: imageBlur),
+                  imageFilter: ImageFilter.blur(
+                    sigmaX: imageBlur,
+                    sigmaY: imageBlur,
+                  ),
                   child: Image.network(
                     _HomePageState._heroVisual,
                     fit: BoxFit.contain,
@@ -1961,7 +3326,13 @@ class _HomeHero extends StatelessWidget {
                 children: [
                   SizedBox(
                     width: 150,
-                    child: Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 2),
                   SizedBox(
@@ -1970,7 +3341,11 @@ class _HomeHero extends StatelessWidget {
                       subtitle,
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, height: 1.35, color: Color(0x99000000)),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: Color(0x99000000),
+                      ),
                     ),
                   ),
                   const Spacer(),
@@ -1985,7 +3360,10 @@ class _HomeHero extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(horizontal: 20),
                             backgroundColor: Colors.black,
                             shape: const StadiumBorder(),
-                            textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            textStyle: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           child: Text(buttonLabel),
                         ),
@@ -1994,13 +3372,21 @@ class _HomeHero extends StatelessWidget {
                       SizedBox(
                         height: 37,
                         child: OutlinedButton(
-                          onPressed: restarting ? null : () => unawaited(onRestart()),
+                          onPressed: restarting
+                              ? null
+                              : () => unawaited(onRestart()),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 13),
                             foregroundColor: Colors.black,
-                            side: const BorderSide(color: Colors.black, width: 1),
+                            side: const BorderSide(
+                              color: Colors.black,
+                              width: 1,
+                            ),
                             shape: const StadiumBorder(),
-                            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                            textStyle: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                           child: Text(restarting ? '重置中' : '重来'),
                         ),
@@ -2008,7 +3394,13 @@ class _HomeHero extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 11),
-                  Text(stageLabel, style: const TextStyle(fontSize: 12, color: Color(0xFF222222))),
+                  Text(
+                    stageLabel,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF222222),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -2041,16 +3433,28 @@ class _HomeTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        _HomeTab(label: '热门专业推荐', active: !showPersona, onPressed: () => onChanged(false)),
+        _HomeTab(
+          label: '热门专业推荐',
+          active: !showPersona,
+          onPressed: () => onChanged(false),
+        ),
         const SizedBox(width: 8),
-        _HomeTab(label: '我的人格画像', active: showPersona, onPressed: () => onChanged(true)),
+        _HomeTab(
+          label: '我的人格画像',
+          active: showPersona,
+          onPressed: () => onChanged(true),
+        ),
       ],
     );
   }
 }
 
 class _HomeTab extends StatelessWidget {
-  const _HomeTab({required this.label, required this.active, required this.onPressed});
+  const _HomeTab({
+    required this.label,
+    required this.active,
+    required this.onPressed,
+  });
 
   final String label;
   final bool active;
@@ -2064,11 +3468,16 @@ class _HomeTab extends StatelessWidget {
         onPressed: onPressed,
         style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(horizontal: 11),
-          side: BorderSide(color: active ? Colors.black : const Color(0xFF111111)),
+          side: BorderSide(
+            color: active ? Colors.black : const Color(0xFF111111),
+          ),
           foregroundColor: active ? Colors.white : Colors.black,
           backgroundColor: active ? Colors.black : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          textStyle: TextStyle(fontSize: 13, fontWeight: active ? FontWeight.w700 : FontWeight.w500),
+          textStyle: TextStyle(
+            fontSize: 13,
+            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+          ),
         ),
         child: Text(label),
       ),
@@ -2077,7 +3486,11 @@ class _HomeTab extends StatelessWidget {
 }
 
 class _PopularMajorList extends StatelessWidget {
-  const _PopularMajorList({super.key, required this.cards, required this.onTap});
+  const _PopularMajorList({
+    super.key,
+    required this.cards,
+    required this.onTap,
+  });
 
   final List<HomeMajorCard> cards;
   final ValueChanged<HomeMajorCard> onTap;
@@ -2135,7 +3548,10 @@ class _PopularMajorCard extends StatelessWidget {
                 ),
                 child: card.locked
                     ? const Center(child: _LockBadge())
-                    : _UnlockedMajorVisual(name: card.name ?? '', imageUrl: _imageUrl),
+                    : _UnlockedMajorVisual(
+                        name: card.name ?? '',
+                        imageUrl: _imageUrl,
+                      ),
               ),
               const SizedBox(height: 10),
               // The stars describe this major, so keep them next to its
@@ -2145,15 +3561,27 @@ class _PopularMajorCard extends StatelessWidget {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   Text(
-                    card.locked ? '待解锁TOP${card.rank}' : '${card.name ?? '专业'} TOP${card.rank}',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF333333)),
+                    card.locked
+                        ? '待解锁TOP${card.rank}'
+                        : '${card.name ?? '专业'} TOP${card.rank}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF333333),
+                    ),
                   ),
                   Text(
                     List<String>.filled(
-                      card.starCount < 1 ? 1 : (card.starCount > 5 ? 5 : card.starCount),
+                      card.starCount < 1
+                          ? 1
+                          : (card.starCount > 5 ? 5 : card.starCount),
                       '★',
                     ).join(),
-                    style: const TextStyle(color: Color(0xFFFFA000), fontSize: 17, height: 1),
+                    style: const TextStyle(
+                      color: Color(0xFFFFA000),
+                      fontSize: 17,
+                      height: 1,
+                    ),
                   ),
                 ],
               ),
@@ -2173,7 +3601,10 @@ class _LockBadge extends StatelessWidget {
     return Container(
       width: 58,
       height: 58,
-      decoration: const BoxDecoration(color: Color(0xFFF0F0F0), shape: BoxShape.circle),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF0F0F0),
+        shape: BoxShape.circle,
+      ),
       child: const Icon(Icons.lock, color: Colors.black, size: 25),
     );
   }
@@ -2209,7 +3640,13 @@ class _UnlockedMajorVisual extends StatelessWidget {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(6),
-              boxShadow: [BoxShadow(color: const Color(0xFF105652).withOpacity(0.14), blurRadius: 10, offset: const Offset(0, 5))],
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF105652).withOpacity(0.14),
+                  blurRadius: 10,
+                  offset: const Offset(0, 5),
+                ),
+              ],
             ),
             child: imageUrl == null
                 ? _fallback()
@@ -2225,11 +3662,15 @@ class _UnlockedMajorVisual extends StatelessWidget {
   }
 
   Widget _fallback() => Center(
-        child: Text(
-          name.isEmpty ? '专业' : name.substring(0, 1),
-          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Color(0xFF6B23FF)),
-        ),
-      );
+    child: Text(
+      name.isEmpty ? '专业' : name.substring(0, 1),
+      style: const TextStyle(
+        fontSize: 28,
+        fontWeight: FontWeight.w800,
+        color: Color(0xFF6B23FF),
+      ),
+    ),
+  );
 }
 
 class _PersonaPreview extends StatelessWidget {
@@ -2249,16 +3690,25 @@ class _PersonaPreview extends StatelessWidget {
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  Transform.rotate(angle: 0.14, child: const _PersonaCard(offset: true)),
+                  Transform.rotate(
+                    angle: 0.14,
+                    child: const _PersonaCard(offset: true),
+                  ),
                   const _PersonaCard(),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 22),
-          const Text('完成所有测试即可解锁', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          const Text(
+            '完成所有测试即可解锁',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+          ),
           const SizedBox(height: 8),
-          const Text('待解锁……', style: TextStyle(fontSize: 14, color: Color(0xFF888888))),
+          const Text(
+            '待解锁……',
+            style: TextStyle(fontSize: 14, color: Color(0xFF888888)),
+          ),
         ],
       ),
     );
@@ -2281,20 +3731,40 @@ class _PersonaCard extends StatelessWidget {
           color: const Color(0xFF03111B),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: const Color(0xFFB98521), width: 2),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.17), blurRadius: 12, offset: const Offset(0, 8))],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.17),
+              blurRadius: 12,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
         child: offset
             ? const SizedBox.shrink()
             : Column(
                 children: [
                   const SizedBox(height: 14),
-                  const Text('万有棱镜', style: TextStyle(color: Color(0xFFBA8A28), fontSize: 10, fontWeight: FontWeight.w700)),
+                  const Text(
+                    '万有棱镜',
+                    style: TextStyle(
+                      color: Color(0xFFBA8A28),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const Spacer(),
                   Container(
                     width: 80,
                     height: 80,
-                    decoration: const BoxDecoration(color: Color(0xFFD9EFD8), shape: BoxShape.circle),
-                    child: const Icon(Icons.person, color: Color(0xFF03111B), size: 53),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFD9EFD8),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.person,
+                      color: Color(0xFF03111B),
+                      size: 53,
+                    ),
                   ),
                   const Spacer(),
                   const SizedBox(height: 24),
@@ -2306,7 +3776,11 @@ class _PersonaCard extends StatelessWidget {
 }
 
 class PlaceholderPage extends StatelessWidget {
-  const PlaceholderPage({super.key, required this.title, required this.subtitle});
+  const PlaceholderPage({
+    super.key,
+    required this.title,
+    required this.subtitle,
+  });
 
   final String title;
   final String subtitle;
@@ -2318,7 +3792,11 @@ class PlaceholderPage extends StatelessWidget {
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
-          child: Text(subtitle, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16, height: 1.6)),
+          child: Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, height: 1.6),
+          ),
         ),
       ),
     );
@@ -2359,23 +3837,28 @@ class IntroConfig {
     theme: IntroTheme.interest,
     slides: [
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/interest-stage-01.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/interest-stage-01.png',
         text: '从你的兴趣线索与思考方式出发，开启专业方向的初步探索',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-02.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-02.png',
         text: '我们从你的兴趣爱好入手，一步步发掘你的天赋与热爱',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-03.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-03.png',
         text: '在这个过程中，你会看到更清晰的自我不断浮现',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/interest-stage-04b.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/interest-stage-04b.png',
         text: '除了你的能力，我们也考虑你的需求和偏好；为你精准匹配',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-05.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260705-pure/exact/interest-stage-05.png',
         text: '最终系统会为你提供推荐专业 Top 5，以及一份详细的人格报告',
       ),
     ],
@@ -2389,23 +3872,28 @@ class IntroConfig {
     theme: IntroTheme.major,
     slides: [
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-extra.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-extra.png',
         text: '走近不同专业的学习场景，感受它们是否与你的期待相契合',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-02.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-02.png',
         text: '先看看这个专业都学什么，能做什么；是不是你喜欢的类型',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-03.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-03.png',
         text: '通过实际的课程介绍，看看这些内容你是否适应',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-04b.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-04b.png',
         text: '同一个专业，不同的发展道路；哪一条是你的 Top 1？',
       ),
       IntroSlide(
-        imageUrl: 'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-05.png',
+        imageUrl:
+            'https://assets.uniprism.cn/images/explore/discover/figma/welcome-20260701/exact/pro-stage-05.png',
         text: '最后，代入这个专业最真实的工作场景；提前看到若干年后的自己',
       ),
     ],

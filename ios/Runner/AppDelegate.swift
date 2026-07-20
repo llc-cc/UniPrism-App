@@ -19,7 +19,7 @@ import UIKit
     )
     channel.setMethodCallHandler { call, result in
       let defaults = UserDefaults.standard
-      let keys = ["uniprism.token", "uniprism.user", "uniprism.anonymousId", "uniprism.anonymousCookie", "uniprism.exploreSessionId"]
+      let keys = ["uniprism.token", "uniprism.user", "uniprism.anonymousId", "uniprism.anonymousCookie", "uniprism.exploreSessionId", "uniprism.privacyAcceptedVersion"]
 
       switch call.method {
       case "read":

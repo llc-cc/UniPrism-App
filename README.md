@@ -1,6 +1,13 @@
-# uniprism_app
+# 万有棱镜 App
 
-A new Flutter project.
+万有棱镜 Flutter 客户端项目。
+
+## 项目文档
+
+- [App 上线准备与运营资料总表（合并版）](docs/APP_LAUNCH_OPERATIONS_REQUIREMENTS.md)
+- [App 开发上线前准备清单](docs/APP_DEVELOPMENT_LAUNCH_PREPARATION.md)
+- [提前为运营准备的资料](docs/PROMOTION_HANDOFF_GUIDE.md)
+- [登录、账号找回与微信登录后端需求](docs/AUTH_BACKEND_REQUIREMENTS.md)
 
 ## Getting Started
 
