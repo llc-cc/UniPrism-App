@@ -118,6 +118,7 @@ class AuthService {
   String? _anonymousId;
   String? _anonymousCookie;
   String? _exploreSessionId;
+  Future<String>? _exploreSessionRequest;
 
   bool get isLoggedIn => (_token ?? '').isNotEmpty;
   String? get token => _token;
@@ -219,12 +220,25 @@ class AuthService {
   }
 
   Future<void> logout() async {
+    final pendingSessionRequest = _exploreSessionRequest;
+    if (pendingSessionRequest != null) {
+      try {
+        await pendingSessionRequest;
+      } catch (_) {
+        // Logout must still complete if a background session request failed.
+      }
+    }
     _token = null;
     _user = null;
+    _anonymousId = null;
+    _anonymousCookie = null;
     _exploreSessionId = null;
+    _exploreSessionRequest = null;
     await _writeStorage({
       _tokenKey: null,
       _userKey: null,
+      _anonymousIdKey: null,
+      _anonymousCookieKey: null,
       _exploreSessionIdKey: null,
     });
   }
@@ -233,22 +247,68 @@ class AuthService {
     final existing = _exploreSessionId;
     if (!forceNew && existing != null && existing.isNotEmpty) return existing;
 
+    final pending = _exploreSessionRequest;
+    if (pending != null) return pending;
+
+    final request = _createExploreSession();
+    _exploreSessionRequest = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_exploreSessionRequest, request)) {
+        _exploreSessionRequest = null;
+      }
+    }
+  }
+
+  Future<String> _createExploreSession() async {
     final session = await _request(
       'POST',
-      isLoggedIn ? '/api/miniapp/explore/session' : '/api/explore/session',
+      // Assessment routes are shared with the web client. The production
+      // deployment still authenticates these routes with the signed anonymous
+      // cookie, even when a mini-app bearer token is present. Keep assessment
+      // sessions anonymous here, then bind them to the user only when a full
+      // report is requested.
+      '/api/explore/session',
       body: {if ((_anonymousId ?? '').isNotEmpty) 'anonymousId': _anonymousId},
     );
     final sessionId = session['sessionId']?.toString();
     if (sessionId == null || sessionId.isEmpty) {
       throw const ApiRequestException('无法创建探索会话，请重试');
     }
-    _exploreSessionId = sessionId;
-    await _writeStorage({_exploreSessionIdKey: sessionId});
-
     final returnedAnonymousId = session['anonymousId']?.toString();
     if (returnedAnonymousId != null && returnedAnonymousId.isNotEmpty) {
       _anonymousId = returnedAnonymousId;
-      await _writeStorage({_anonymousIdKey: returnedAnonymousId});
+    }
+    _exploreSessionId = sessionId;
+    await _writeStorage({
+      _exploreSessionIdKey: sessionId,
+      if (returnedAnonymousId != null && returnedAnonymousId.isNotEmpty)
+        _anonymousIdKey: returnedAnonymousId,
+    });
+    return sessionId;
+  }
+
+  Future<String> bindExploreSessionToCurrentUser() async {
+    if (!isLoggedIn) {
+      throw const ApiRequestException(
+        '请先登录后再生成完整报告',
+        statusCode: HttpStatus.unauthorized,
+      );
+    }
+    final currentSessionId = await ensureExploreSession();
+    final session = await _request(
+      'POST',
+      '/api/miniapp/explore/session',
+      body: {if ((_anonymousId ?? '').isNotEmpty) 'anonymousId': _anonymousId},
+    );
+    final sessionId = session['sessionId']?.toString();
+    if (sessionId == null || sessionId.isEmpty) {
+      throw const ApiRequestException('无法绑定探索会话，请重试');
+    }
+    if (sessionId != currentSessionId) {
+      _exploreSessionId = sessionId;
+      await _writeStorage({_exploreSessionIdKey: sessionId});
     }
     return sessionId;
   }
@@ -421,7 +481,7 @@ class AuthService {
   Future<Map<String, dynamic>> completeAssessment(
     List<Map<String, dynamic>> answers,
   ) async {
-    final sessionId = await ensureExploreSession();
+    var sessionId = await ensureExploreSession();
     final answerMap = <String, dynamic>{};
     for (final answer in answers) {
       final questionId = answer['questionId']?.toString();
@@ -429,20 +489,35 @@ class AuthService {
       if (questionId == null || questionId.isEmpty || value == null) continue;
       answerMap[questionId] = _normalizeAssessmentValue(value);
     }
-    return _request(
+    Future<Map<String, dynamic>> requestScore() => _request(
       'POST',
       '/api/interest-v020/score',
       body: {'sessionId': sessionId, 'answers': answerMap},
       timeout: const Duration(seconds: 60),
     );
+    try {
+      return await requestScore();
+    } on ApiRequestException catch (error) {
+      if (!_shouldRefreshSession(error)) rethrow;
+      sessionId = await ensureExploreSession(forceNew: true);
+      return requestScore();
+    }
   }
 
   Future<PersonaCardSnapshot> loadPersonaCard() async {
-    final sessionId = await ensureExploreSession();
-    final data = await _request(
+    var sessionId = await ensureExploreSession();
+    Future<Map<String, dynamic>> requestPersonaCard() => _request(
       'GET',
       '/api/interest-v020/persona-card?sessionId=${Uri.encodeQueryComponent(sessionId)}',
     );
+    Map<String, dynamic> data;
+    try {
+      data = await requestPersonaCard();
+    } on ApiRequestException catch (error) {
+      if (!_shouldRefreshSession(error)) rethrow;
+      sessionId = await ensureExploreSession(forceNew: true);
+      data = await requestPersonaCard();
+    }
     return PersonaCardSnapshot.fromJson(data);
   }
 
@@ -589,6 +664,7 @@ class AuthService {
     final message = error.message.toLowerCase();
     return message.contains('unauthorized') ||
         message.contains('探索会话') ||
+        message.contains('会话') ||
         message.contains('session');
   }
 
@@ -3866,26 +3942,34 @@ class _PersonaPreview extends StatelessWidget {
       snapshot.cardImagePath,
     );
     final unlocked = snapshot.isUnlocked;
+    final lockedDeckWidth = math.min(
+      MediaQuery.sizeOf(context).width - 54,
+      320.0,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 18, 10, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Center(
-            child: SizedBox(
-              width: 250,
-              height: 320,
-              child: unlocked && cardImageUrl.isNotEmpty
-                  ? ClipRRect(
+            child: unlocked && cardImageUrl.isNotEmpty
+                ? SizedBox(
+                    width: 250,
+                    height: 320,
+                    child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: Image.network(
                         cardImageUrl,
                         fit: BoxFit.contain,
                         errorBuilder: (_, __, ___) => _fallbackCards(),
                       ),
-                    )
-                  : _fallbackCards(),
-            ),
+                    ),
+                  )
+                : SizedBox(
+                    width: lockedDeckWidth,
+                    height: lockedDeckWidth * 1.18,
+                    child: _fallbackCards(),
+                  ),
           ),
           const SizedBox(height: 22),
           Text(
@@ -3937,73 +4021,396 @@ class _PersonaPreview extends StatelessWidget {
     );
   }
 
-  Widget _fallbackCards() => Stack(
-    alignment: Alignment.center,
-    children: [
-      Transform.rotate(angle: 0.14, child: const _PersonaCard(offset: true)),
-      const _PersonaCard(),
-    ],
-  );
+  Widget _fallbackCards() => const LockedPersonaDeck();
 }
 
-class _PersonaCard extends StatelessWidget {
-  const _PersonaCard({this.offset = false});
-
-  final bool offset;
+class LockedPersonaDeck extends StatelessWidget {
+  const LockedPersonaDeck({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Transform.translate(
-      offset: Offset(offset ? 22 : 0, offset ? 7 : 0),
-      child: Container(
-        width: 210,
-        height: 284,
-        decoration: BoxDecoration(
-          color: const Color(0xFF03111B),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFB98521), width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.17),
-              blurRadius: 12,
-              offset: const Offset(0, 8),
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final width = constraints.maxWidth;
+      final cardWidth = width * 0.7;
+      final cardHeight = cardWidth * (317 / 238);
+      final frontLeft = width * 0.075;
+      final top = width * 0.025;
+      final backWidth = cardWidth * 0.88;
+      final backHeight = cardHeight * 0.88;
+
+      return CustomPaint(
+        painter: const _LockedPersonaDeckBackgroundPainter(),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: frontLeft,
+              top: top + cardHeight + width * 0.012,
+              width: cardWidth,
+              height: cardHeight * 0.24,
+              child: _LockedPersonaReflection(cardHeight: cardHeight),
+            ),
+            Positioned(
+              left: frontLeft + cardWidth * 0.36,
+              top: top + cardHeight * 0.09,
+              width: backWidth,
+              height: backHeight,
+              child: Transform.rotate(
+                angle: 0.11,
+                alignment: Alignment.topCenter,
+                child: const _LockedPersonaCard(rear: true),
+              ),
+            ),
+            Positioned(
+              left: frontLeft,
+              top: top,
+              width: cardWidth,
+              height: cardHeight,
+              child: const _LockedPersonaCard(),
             ),
           ],
         ),
-        child: offset
-            ? const SizedBox.shrink()
-            : Column(
-                children: [
-                  const SizedBox(height: 14),
-                  const Text(
-                    '万有棱镜',
-                    style: TextStyle(
-                      color: Color(0xFFBA8A28),
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFD9EFD8),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.person,
-                      color: Color(0xFF03111B),
-                      size: 53,
-                    ),
-                  ),
-                  const Spacer(),
-                  const SizedBox(height: 24),
-                ],
+      );
+    },
+  );
+}
+
+class _LockedPersonaReflection extends StatelessWidget {
+  const _LockedPersonaReflection({required this.cardHeight});
+
+  final double cardHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShaderMask(
+      blendMode: BlendMode.dstIn,
+      shaderCallback: (bounds) => const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0x70000000), Color(0x22000000), Color(0x00000000)],
+        stops: [0, 0.48, 1],
+      ).createShader(bounds),
+      child: Opacity(
+        opacity: 0.34,
+        child: ClipRect(
+          child: OverflowBox(
+            alignment: Alignment.topCenter,
+            minHeight: cardHeight,
+            maxHeight: cardHeight,
+            child: Transform(
+              alignment: Alignment.center,
+              transform: Matrix4.diagonal3Values(1, -1, 1),
+              child: SizedBox(
+                height: cardHeight,
+                child: const CustomPaint(
+                  painter: _LockedPersonaCardPainter(rear: false),
+                ),
               ),
+            ),
+          ),
+        ),
       ),
     );
   }
+}
+
+class _LockedPersonaCard extends StatelessWidget {
+  const _LockedPersonaCard({this.rear = false});
+
+  final bool rear;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: rear ? 0.12 : 0.2),
+            blurRadius: rear ? 12 : 18,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: CustomPaint(painter: _LockedPersonaCardPainter(rear: rear)),
+    );
+  }
+}
+
+class _LockedPersonaDeckBackgroundPainter extends CustomPainter {
+  const _LockedPersonaDeckBackgroundPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final dotPaint = Paint()..color = const Color(0xFFE9E9E9);
+    final spacing = size.width * 0.025;
+    final radius = math.max(0.7, size.width * 0.0032);
+    for (var row = 0; row < 11; row++) {
+      for (var column = 0; column < 9; column++) {
+        final fade = 1 - (column / 12);
+        dotPaint.color = const Color(0xFFE2E2E2).withValues(alpha: 0.64 * fade);
+        canvas.drawCircle(
+          Offset(
+            size.width * 0.74 + column * spacing,
+            size.height * 0.19 + row * spacing,
+          ),
+          radius,
+          dotPaint,
+        );
+      }
+    }
+    for (var row = 0; row < 6; row++) {
+      for (var column = 0; column < 8; column++) {
+        dotPaint.color = const Color(0xFFE5E5E5).withValues(alpha: 0.42);
+        canvas.drawCircle(
+          Offset(
+            -size.width * 0.02 + column * spacing,
+            size.height * 0.76 + row * spacing,
+          ),
+          radius,
+          dotPaint,
+        );
+      }
+    }
+
+    final shadowRect = Rect.fromCenter(
+      center: Offset(size.width * 0.48, size.height * 0.91),
+      width: size.width * 0.7,
+      height: size.height * 0.085,
+    );
+    canvas.drawOval(
+      shadowRect,
+      Paint()
+        ..shader = const RadialGradient(
+          colors: [Color(0x3B55606A), Color(0x0055606A)],
+        ).createShader(shadowRect),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _LockedPersonaCardPainter extends CustomPainter {
+  const _LockedPersonaCardPainter({required this.rear});
+
+  final bool rear;
+
+  static const _surface = Color(0xFF020D16);
+  static const _gold = Color(0xFFC0823C);
+  static const _brightGold = Color(0xFFD79A44);
+  static const _teal = Color(0xFF0F7C7E);
+  static const _avatar = Color(0xFFDDEFD7);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final radius = size.width * 0.055;
+    final outer = RRect.fromRectAndRadius(
+      Offset.zero & size,
+      Radius.circular(radius),
+    );
+    canvas.drawRRect(outer, Paint()..color = _surface);
+    canvas.drawRRect(
+      outer.deflate(size.width * 0.009),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.009
+        ..color = const Color(0xFF06131C),
+    );
+    canvas.drawRRect(
+      outer.deflate(size.width * 0.022),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.0048
+        ..color = _gold,
+    );
+    canvas.drawRRect(
+      outer.deflate(size.width * 0.038),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.004
+        ..color = _teal,
+    );
+
+    final surface = Rect.fromLTWH(
+      size.width * 0.084,
+      size.height * 0.085,
+      size.width * 0.832,
+      size.height * 0.83,
+    );
+    canvas.drawRect(surface, Paint()..color = _surface);
+    canvas.drawRect(
+      surface.deflate(size.width * 0.022),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = size.width * 0.004
+        ..color = _teal.withValues(alpha: 0.84),
+    );
+    _drawSurfaceDetails(canvas, surface, size.width);
+    _drawBrand(canvas, size);
+    _drawAvatar(canvas, surface);
+    if (!rear) _drawStars(canvas, surface, size.width);
+  }
+
+  void _drawSurfaceDetails(Canvas canvas, Rect rect, double width) {
+    final line = Paint()
+      ..color = _gold
+      ..strokeWidth = math.max(1, width * 0.004)
+      ..style = PaintingStyle.stroke;
+    final short = width * 0.105;
+    final inset = width * 0.01;
+    for (final corner in <Offset>[
+      rect.topLeft,
+      rect.topRight,
+      rect.bottomLeft,
+      rect.bottomRight,
+    ]) {
+      final right = corner.dx > rect.center.dx;
+      final bottom = corner.dy > rect.center.dy;
+      final start = Offset(
+        corner.dx + (right ? -inset : inset),
+        corner.dy + (bottom ? -inset : inset),
+      );
+      canvas.drawLine(
+        start,
+        Offset(start.dx + (right ? -short : short), start.dy),
+        line,
+      );
+      canvas.drawLine(
+        start,
+        Offset(start.dx, start.dy + (bottom ? -short : short)),
+        line,
+      );
+    }
+
+    final segmentY = rect.top;
+    canvas.drawLine(
+      Offset(rect.left, segmentY),
+      Offset(rect.left + rect.width * 0.21, segmentY),
+      line,
+    );
+    canvas.drawLine(
+      Offset(rect.left + rect.width * 0.23, segmentY),
+      Offset(rect.left + rect.width * 0.41, segmentY),
+      Paint()
+        ..color = _teal
+        ..strokeWidth = line.strokeWidth,
+    );
+    canvas.drawLine(
+      Offset(rect.right - rect.width * 0.21, segmentY),
+      Offset(rect.right, segmentY),
+      line,
+    );
+  }
+
+  void _drawBrand(Canvas canvas, Size size) {
+    final width = size.width * 0.49;
+    final height = math.max(size.height * 0.088, 22.0);
+    final left = (size.width - width) / 2;
+    final path = Path()
+      ..moveTo(left + width * 0.12, 0)
+      ..lineTo(left + width * 0.88, 0)
+      ..lineTo(left + width, height / 2)
+      ..lineTo(left + width * 0.88, height)
+      ..lineTo(left + width * 0.12, height)
+      ..lineTo(left, height / 2)
+      ..close();
+    canvas.drawPath(path, Paint()..color = _surface);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1, size.width * 0.004)
+        ..color = _gold,
+    );
+
+    final markCenter = Offset(left + width * 0.27, height * 0.51);
+    canvas.save();
+    canvas.translate(markCenter.dx, markCenter.dy);
+    canvas.rotate(math.pi / 4);
+    canvas.drawRect(
+      Rect.fromCenter(
+        center: Offset.zero,
+        width: size.width * 0.046,
+        height: size.width * 0.046,
+      ),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1, size.width * 0.005)
+        ..color = _brightGold,
+    );
+    canvas.restore();
+
+    final painter = TextPainter(
+      text: TextSpan(
+        text: '万有棱镜',
+        style: TextStyle(
+          color: _brightGold,
+          fontSize: size.width * 0.052,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+    )..layout();
+    painter.paint(
+      canvas,
+      Offset(left + width * 0.38, (height - painter.height) / 2),
+    );
+  }
+
+  void _drawAvatar(Canvas canvas, Rect surface) {
+    final radius = surface.width * 0.218;
+    final center = Offset(
+      surface.center.dx,
+      surface.top + surface.height * 0.53,
+    );
+    final avatarPath = Path()
+      ..addOval(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawPath(avatarPath, Paint()..color = _avatar);
+    canvas.save();
+    canvas.clipPath(avatarPath);
+    canvas.drawCircle(
+      Offset(center.dx, center.dy - radius * 0.27),
+      radius * 0.235,
+      Paint()..color = _surface,
+    );
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(center.dx, center.dy + radius * 0.82),
+        width: radius * 1.64,
+        height: radius * 1.45,
+      ),
+      Paint()..color = _surface,
+    );
+    canvas.restore();
+  }
+
+  void _drawStars(Canvas canvas, Rect surface, double width) {
+    final paint = Paint()..color = _gold.withValues(alpha: 0.28);
+    const points = <Offset>[
+      Offset(0.08, 0.24),
+      Offset(0.84, 0.19),
+      Offset(0.73, 0.74),
+      Offset(0.18, 0.82),
+      Offset(0.9, 0.56),
+      Offset(0.31, 0.13),
+    ];
+    for (final point in points) {
+      canvas.drawCircle(
+        Offset(
+          surface.left + surface.width * point.dx,
+          surface.top + surface.height * point.dy,
+        ),
+        math.max(0.6, width * 0.003),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LockedPersonaCardPainter oldDelegate) =>
+      oldDelegate.rear != rear;
 }
 
 class PlaceholderPage extends StatelessWidget {

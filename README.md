@@ -6,9 +6,7 @@
 
 - [App 上线准备与运营资料总表（合并版）](docs/APP_LAUNCH_OPERATIONS_REQUIREMENTS.md)
 - [App 开发上线前准备清单](docs/APP_DEVELOPMENT_LAUNCH_PREPARATION.md)
-- [提前为运营准备的资料](docs/PROMOTION_HANDOFF_GUIDE.md)
-- [登录、账号找回与微信登录后端需求](docs/AUTH_BACKEND_REQUIREMENTS.md)
-- [APP 后端对接状态](docs/APP_BACKEND_INTEGRATION_STATUS.md)
+- [Android、iOS 上线办理与资料清单](docs/Androrid、ios.md)
 
 ## Getting Started
 

@@ -87,7 +87,7 @@ extension AuthServiceReportApi on AuthService {
         statusCode: HttpStatus.unauthorized,
       );
     }
-    final sessionId = await ensureExploreSession();
+    final sessionId = await bindExploreSessionToCurrentUser();
     final data = await _request(
       'POST',
       '/api/miniapp/reports/generate',
