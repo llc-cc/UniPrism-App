@@ -9,8 +9,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 part 'app_config.dart';
+part 'agent_experience.dart';
 part 'assessment.dart';
 part 'compliance.dart';
+part 'content_source_test.dart';
+part 'github_content_source_test.dart';
+part 'unified_content_answer_test.dart';
 part 'login.dart';
 part 'notification_center.dart';
 part 'professional_experience.dart';
@@ -65,6 +69,8 @@ class UniPrismApp extends StatelessWidget {
         '/basic-profile': (_) => const BasicProfilePage(),
         '/login': (_) => const AppLoginPage(),
         '/assessment': (_) => const AssessmentPage(),
+        '/agent': (_) => const AgentExperiencePage(),
+        '/agent-subscriptions': (_) => const AgentSubscriptionsPage(),
         '/reports': (_) => const ReportCenterPage(),
         '/home': (_) => const ComplianceGate(),
         '/messages': (_) => const ComplianceGate(initialIndex: 2),
@@ -75,6 +81,10 @@ class UniPrismApp extends StatelessWidget {
         '/about': (_) => const AboutAndFilingPage(),
         '/account-security': (_) => const AccountSecurityPage(),
         if (AppConfig.developerToolsEnabled) ...{
+          '/content-source-test': (_) => const ZhihuContentTestPage(),
+          '/github-content-source-test': (_) => const GitHubContentTestPage(),
+          '/unified-content-answer-test': (_) =>
+              const UnifiedContentAnswerTestPage(),
           '/landscape-test': (_) => const LandscapeTestPage(),
           '/report-notification-demo': (_) => const ReportGenerationDemoPage(),
         },
@@ -123,6 +133,19 @@ class AuthService {
   bool get isLoggedIn => (_token ?? '').isNotEmpty;
   String? get token => _token;
   String? get exploreSessionId => _exploreSessionId;
+  String get agentChatStorageScope {
+    final userId = _user?['id']?.toString().trim() ?? '';
+    if (isLoggedIn && userId.isNotEmpty) return 'user:$userId';
+
+    final anonymousId = (_anonymousId ?? '').trim();
+    if (anonymousId.isNotEmpty) return 'guest:$anonymousId';
+
+    final sessionId = (_exploreSessionId ?? '').trim();
+    if (sessionId.isNotEmpty) return 'guest-session:$sessionId';
+
+    return 'guest-device';
+  }
+
   String get displayName {
     final user = _user;
     if (user == null) return '';
@@ -2708,6 +2731,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<HomeMajorCard> _majorCards = HomeMajorCard.lockedCards;
   PersonaCardSnapshot _personaCard = PersonaCardSnapshot.locked;
+  List<String> _agentInterestTags = const [];
   bool _loading = false;
   bool _showPersona = false;
   int _completedStageCount = 0;
@@ -2725,6 +2749,85 @@ class _HomePageState extends State<HomePage> {
     _loadMajorCards();
   }
 
+  void _openZhihuContentTest() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ZhihuContentTestPage(
+          recommendedMajors: _currentRecommendedMajorNames,
+        ),
+      ),
+    );
+  }
+
+  List<String> get _currentRecommendedMajorNames => _majorCards
+      .where((card) => !card.locked)
+      .map((card) => card.name?.trim() ?? '')
+      .where((name) => name.isNotEmpty)
+      .toSet()
+      .take(5)
+      .toList(growable: false);
+
+  List<String> _buildAgentInterestTags(
+    Map<String, Map<String, dynamic>> answers,
+    PersonaCardSnapshot persona,
+  ) {
+    final tags = <String>[];
+    final personaTitle = persona.title?.trim() ?? '';
+    final personaCode = persona.codeTag?.trim() ?? '';
+    if (personaTitle.isNotEmpty) tags.add(personaTitle);
+    if (personaCode.isNotEmpty) tags.add(personaCode);
+
+    for (final question in AssessmentBank.questionsFor('interest')) {
+      final value = answers[question.id];
+      if (value == null) continue;
+      final optionIds = <String>[
+        if ('${value['selectedOptionId'] ?? ''}'.isNotEmpty)
+          '${value['selectedOptionId']}',
+        if (value['rankedOptionIds'] is List)
+          ...(value['rankedOptionIds'] as List).map((item) => '$item'),
+      ];
+      for (final optionId in optionIds) {
+        for (final option in question.options) {
+          if (option.id == optionId) {
+            tags.add(option.label);
+            break;
+          }
+        }
+      }
+      final customText = '${value['text'] ?? ''}'.trim();
+      if (customText.isNotEmpty) tags.add(customText);
+    }
+
+    return tags
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .map((item) => item.length <= 40 ? item : item.substring(0, 40))
+        .toSet()
+        .take(10)
+        .toList(growable: false);
+  }
+
+  void _openGitHubContentTest() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => GitHubContentTestPage(
+          recommendedMajors: _currentRecommendedMajorNames,
+        ),
+      ),
+    );
+  }
+
+  void _openUnifiedContentAnswerTest() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => UnifiedContentAnswerTestPage(
+          recommendedMajors: _currentRecommendedMajorNames,
+          interests: _agentInterestTags,
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadMajorCards() async {
     setState(() => _loading = true);
     try {
@@ -2736,8 +2839,9 @@ class _HomePageState extends State<HomePage> {
       for (final answer in answers) {
         final questionId = answer['questionId']?.toString();
         final value = answer['value'];
-        if (questionId != null && value is Map)
+        if (questionId != null && value is Map) {
           answerMap[questionId] = Map<String, dynamic>.from(value);
+        }
       }
       final completedStages = AssessmentBank.stages.where((stage) {
         final questions = AssessmentBank.questionsFor(stage.id);
@@ -2755,34 +2859,20 @@ class _HomePageState extends State<HomePage> {
       } on ApiRequestException {
         // Major recommendations remain usable if persona-card loading fails.
       }
-      if (mounted)
+      if (mounted) {
         setState(() {
           _majorCards = cards;
           _personaCard = personaCard;
+          _agentInterestTags = _buildAgentInterestTags(answerMap, personaCard);
           _completedStageCount = completedStages;
           _hasStarted = answers.isNotEmpty;
         });
+      }
     } catch (_) {
       // The locked state is a complete and intentional first-visit state.
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  void _showComingSoon() {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('该功能将在后续页面接入。')));
-  }
-
-  void _openMajor(HomeMajorCard card) {
-    if (card.locked) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('完成对应阶段测评后即可解锁。')));
-      return;
-    }
-    _showComingSoon();
   }
 
   Future<void> _restartAssessment() async {
@@ -2812,6 +2902,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _majorCards = HomeMajorCard.lockedCards;
         _personaCard = PersonaCardSnapshot.locked;
+        _agentInterestTags = const [];
         _completedStageCount = 0;
         _hasStarted = false;
       });
@@ -2881,7 +2972,54 @@ class _HomePageState extends State<HomePage> {
                   }
                 },
               ),
+              if (AppConfig.agentFeatureVisible) ...[
+                const SizedBox(height: 16),
+                _AgentHomeEntry(
+                  onTap: () => Navigator.of(context).pushNamed('/agent'),
+                ),
+              ],
               if (AppConfig.developerToolsEnabled) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openZhihuContentTest,
+                    icon: const Icon(Icons.travel_explore_rounded),
+                    label: const Text('推荐专业 × 知乎真实性测试'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      foregroundColor: const Color(0xFF5420BF),
+                      side: const BorderSide(color: Color(0xFFB99AFF)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openGitHubContentTest,
+                    icon: const Icon(Icons.code_rounded),
+                    label: const Text('推荐专业 × GitHub真实性测试'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      foregroundColor: const Color(0xFF24292F),
+                      side: const BorderSide(color: Color(0xFF8C959F)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: _openUnifiedContentAnswerTest,
+                    icon: const Icon(Icons.auto_awesome_rounded),
+                    label: const Text('推荐专业 × Agent统一回答测试'),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      backgroundColor: const Color(0xFF6A52A3),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
@@ -2939,7 +3077,6 @@ class _HomePageState extends State<HomePage> {
                     : _PopularMajorList(
                         key: const ValueKey('majors'),
                         cards: _majorCards,
-                        onTap: _openMajor,
                       ),
               ),
             ],
@@ -3739,21 +3876,16 @@ class _HomeTab extends StatelessWidget {
 }
 
 class _PopularMajorList extends StatelessWidget {
-  const _PopularMajorList({
-    super.key,
-    required this.cards,
-    required this.onTap,
-  });
+  const _PopularMajorList({super.key, required this.cards});
 
   final List<HomeMajorCard> cards;
-  final ValueChanged<HomeMajorCard> onTap;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         for (final card in cards) ...[
-          _PopularMajorCard(card: card, onTap: () => onTap(card)),
+          PopularMajorCard(card: card),
           if (card != cards.last) const SizedBox(height: 10),
         ],
       ],
@@ -3761,11 +3893,10 @@ class _PopularMajorList extends StatelessWidget {
   }
 }
 
-class _PopularMajorCard extends StatelessWidget {
-  const _PopularMajorCard({required this.card, required this.onTap});
+class PopularMajorCard extends StatelessWidget {
+  const PopularMajorCard({super.key, required this.card});
 
   final HomeMajorCard card;
-  final VoidCallback onTap;
 
   String? get _imageUrl {
     final path = card.iconPath;
@@ -3780,66 +3911,62 @@ class _PopularMajorCard extends StatelessWidget {
       elevation: 2.5,
       shadowColor: Colors.black.withOpacity(0.16),
       borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(10, 10, 18, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                height: 123,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  gradient: LinearGradient(
-                    colors: card.locked
-                        ? const [Color(0xFFF0F0F0), Color(0xFFF7F7F7)]
-                        : const [Color(0xFF2AA5AB), Color(0xFF8DE5BF)],
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 10, 18, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              height: 123,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  colors: card.locked
+                      ? const [Color(0xFFF0F0F0), Color(0xFFF7F7F7)]
+                      : const [Color(0xFF2AA5AB), Color(0xFF8DE5BF)],
+                ),
+              ),
+              child: card.locked
+                  ? const Center(child: _LockBadge())
+                  : _UnlockedMajorVisual(
+                      name: card.name ?? '',
+                      imageUrl: _imageUrl,
+                    ),
+            ),
+            const SizedBox(height: 10),
+            // The stars describe this major, so keep them next to its
+            // title rather than anchoring them to the far side of the card.
+            Wrap(
+              spacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(
+                  card.locked
+                      ? '待解锁TOP${card.rank}'
+                      : '${card.name ?? '专业'} TOP${card.rank}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF333333),
                   ),
                 ),
-                child: card.locked
-                    ? const Center(child: _LockBadge())
-                    : _UnlockedMajorVisual(
-                        name: card.name ?? '',
-                        imageUrl: _imageUrl,
-                      ),
-              ),
-              const SizedBox(height: 10),
-              // The stars describe this major, so keep them next to its
-              // title rather than anchoring them to the far side of the card.
-              Wrap(
-                spacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Text(
-                    card.locked
-                        ? '待解锁TOP${card.rank}'
-                        : '${card.name ?? '专业'} TOP${card.rank}',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF333333),
-                    ),
+                Text(
+                  List<String>.filled(
+                    card.starCount < 1
+                        ? 1
+                        : (card.starCount > 5 ? 5 : card.starCount),
+                    '★',
+                  ).join(),
+                  style: const TextStyle(
+                    color: Color(0xFFFFA000),
+                    fontSize: 17,
+                    height: 1,
                   ),
-                  Text(
-                    List<String>.filled(
-                      card.starCount < 1
-                          ? 1
-                          : (card.starCount > 5 ? 5 : card.starCount),
-                      '★',
-                    ).join(),
-                    style: const TextStyle(
-                      color: Color(0xFFFFA000),
-                      fontSize: 17,
-                      height: 1,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

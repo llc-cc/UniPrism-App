@@ -18,6 +18,18 @@ abstract final class AppConfig {
     'ENABLE_DEVELOPER_TOOLS',
     defaultValue: true,
   );
+  static const agentEnabled = bool.fromEnvironment(
+    'AGENT_ENABLED',
+    defaultValue: false,
+  );
+  static const _agentMockRequested = bool.fromEnvironment(
+    'AGENT_MOCK_ENABLED',
+    defaultValue: true,
+  );
+  static const contentSourceTestApiBaseUrl = String.fromEnvironment(
+    'CONTENT_SOURCE_TEST_API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:3000',
+  );
   static const passwordLoginEnabled = bool.fromEnvironment(
     'PASSWORD_LOGIN_ENABLED',
     defaultValue: false,
@@ -30,15 +42,6 @@ abstract final class AppConfig {
     'WECHAT_LOGIN_ENABLED',
     defaultValue: false,
   );
-  static const _simulatedPhoneLoginRequested = bool.fromEnvironment(
-    'ENABLE_SIMULATED_PHONE_LOGIN',
-    defaultValue: true,
-  );
-  static const simulatedPhoneNumber = String.fromEnvironment(
-    'SIMULATED_PHONE_NUMBER',
-    defaultValue: '18800000000',
-  );
-
   static const privacyVersion = String.fromEnvironment(
     'PRIVACY_VERSION',
     defaultValue: '2026-07-20',
@@ -58,12 +61,12 @@ abstract final class AppConfig {
   static bool get developerToolsEnabled =>
       !kReleaseMode && !isProduction && _developerToolsRequested;
 
-  static bool get showDevelopmentSmsCode => developerToolsEnabled;
+  static bool get agentMockEnabled =>
+      developerToolsEnabled && _agentMockRequested && !agentEnabled;
 
-  /// Simulates SMS delivery only. The development code must still come from a
-  /// non-production backend and the login response still contains a real JWT.
-  static bool get simulatedPhoneLoginEnabled =>
-      developerToolsEnabled && _simulatedPhoneLoginRequested;
+  static bool get agentFeatureVisible => agentEnabled || developerToolsEnabled;
+
+  static bool get showDevelopmentSmsCode => developerToolsEnabled;
 
   static String displayOrPending(String value) =>
       value.trim().isEmpty ? '待主体确认' : value.trim();

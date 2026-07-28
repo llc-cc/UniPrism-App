@@ -56,6 +56,81 @@ void main() {
     expect(task.report?['majorRecommendations'], isA<Map>());
   });
 
+  test('agent reply keeps source cards and confirmation separate', () {
+    final reply = AgentChatReply.fromJson({
+      'conversationId': 'conversation-1',
+      'text': '找到两条内容，并生成订阅预览。',
+      'cards': [
+        {
+          'id': 'content-1',
+          'title': '人工智能专业体验',
+          'excerpt': '授权摘要',
+          'source': {
+            'id': 'source-1',
+            'name': '授权来源',
+            'url': 'https://example.com/content-1',
+          },
+          'contentType': 'major_experience',
+          'recommendationReason': '与你的兴趣相关',
+          'publishedAt': '2026-07-22T10:00:00+08:00',
+        },
+      ],
+      'pendingAction': {
+        'type': 'create_subscription',
+        'previewId': 'preview-1',
+        'requiresConfirmation': true,
+        'subscription': {
+          'name': 'AI 专业探索',
+          'topics': ['人工智能'],
+          'sourceScope': ['authorized'],
+          'contentScope': ['major_experience'],
+          'frequency': 'daily',
+          'pushTime': '20:00',
+          'quietHours': ['22:00', '07:30'],
+          'maxItems': 3,
+        },
+      },
+    });
+
+    expect(reply.cards.single.source.name, '授权来源');
+    expect(reply.subscriptionDraft?.previewId, 'preview-1');
+    expect(reply.subscriptionDraft?.pushTime, '20:00');
+  });
+
+  test('Zhihu content test result keeps AI plan and real source separate', () {
+    final result = ZhihuContentTestResult.fromJson({
+      'provider': 'zhihu-official-open-platform',
+      'userQuestion': '人工智能专业就业前景',
+      'searchQuery': '人工智能专业 就业前景',
+      'queryPlan': {
+        'intentSummary': '了解专业就业方向',
+        'matchedInterests': ['人工智能', '就业'],
+        'model': 'deepseek-v4-flash',
+      },
+      'retrievedAt': '2026-07-23T08:00:00.000Z',
+      'items': [
+        {
+          'id': 'answer-1',
+          'title': '人工智能专业毕业后能做什么？',
+          'contentText': '知乎官方接口返回的内容摘要。',
+          'url': 'https://www.zhihu.com/question/1/answer/1',
+          'contentType': 'Answer',
+          'authorName': '知乎作者',
+          'editTime': '2026-07-22T08:00:00.000Z',
+          'commentCount': 8,
+          'voteUpCount': 42,
+          'rankingScore': 0.98,
+        },
+      ],
+    });
+
+    expect(result.searchQuery, '人工智能专业 就业前景');
+    expect(result.model, 'deepseek-v4-flash');
+    expect(result.matchedInterests, ['人工智能', '就业']);
+    expect(result.items.single.title, '人工智能专业毕业后能做什么？');
+    expect(result.items.single.voteUpCount, 42);
+  });
+
   test('math course page keeps backend native-content routing fields', () {
     final page = MathCoursePageData.fromJson({
       'id': 'analysis-strict-limit',
@@ -81,12 +156,8 @@ void main() {
     expect(find.text('6 位验证码'), findsOneWidget);
     expect(find.text('收不到验证码？'), findsOneWidget);
     expect(find.text('登录并继续'), findsOneWidget);
-    expect(find.text('开发环境模拟手机号'), findsOneWidget);
-    expect(find.byKey(const ValueKey('simulated-phone-login')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('simulated-phone-login')));
-    await tester.pump();
-    expect(find.text('请先阅读并同意用户服务条款和隐私政策'), findsOneWidget);
+    expect(find.text('开发环境模拟手机号'), findsNothing);
+    expect(find.byKey(const ValueKey('simulated-phone-login')), findsNothing);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -121,6 +192,28 @@ void main() {
     await tester.pump();
 
     expect(find.text('selected-3'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('popular major cards are display-only', (tester) async {
+    await pumpAtSize(
+      tester,
+      const Size(390, 844),
+      Scaffold(body: PopularMajorCard(card: HomeMajorCard.lockedCards.first)),
+    );
+
+    final firstCardTitle = find.text('待解锁TOP1');
+    expect(firstCardTitle, findsOneWidget);
+    expect(
+      find.ancestor(of: firstCardTitle, matching: find.byType(InkWell)),
+      findsNothing,
+    );
+
+    await tester.tap(firstCardTitle);
+    await tester.pump();
+    expect(find.byType(SnackBar), findsNothing);
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -197,6 +290,41 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('agent demo clearly labels mock data and requires confirmation', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 844), const AgentExperiencePage());
+
+    expect(find.text('内部演示模式 · 未连接知乎、小红书或真实推送'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-message-input')), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-input')),
+      '每天晚上八点推送人工智能专业内容',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-send-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('演示数据'), findsWidgets);
+    expect(find.text('确认创建订阅'), findsOneWidget);
+
+    await tester.scrollUntilVisible(
+      find.text('确认创建订阅'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认创建订阅'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('已确认'), findsOneWidget);
+    expect(find.textContaining('内部演示订阅已创建'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('report result page renders the simulated report', (
     tester,
   ) async {
@@ -250,6 +378,24 @@ void main() {
     expect(find.text('研究型探索者'), findsOneWidget);
     expect(find.text('数学与应用数学'), findsOneWidget);
     expect(find.text('发展建议'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Zhihu content test displays stage-recommended majors', (
+    tester,
+  ) async {
+    await pumpAtSize(
+      tester,
+      const Size(390, 844),
+      const ZhihuContentTestPage(
+        recommendedMajors: ['人工智能', '计算机科学与技术', '人工智能'],
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('zhihu-recommended-majors')), findsOneWidget);
+    expect(find.text('人工智能'), findsOneWidget);
+    expect(find.text('计算机科学与技术'), findsOneWidget);
+    expect(find.text('补充兴趣标签（用逗号分隔）'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
