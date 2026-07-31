@@ -1,6 +1,7 @@
 """加载并渲染 UniPrism 运行时浏览器 Agent 使用的受控 Skill。"""
 
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import yaml
 from pydantic import BaseModel, Field
@@ -25,6 +26,16 @@ DIMENSION_NAMES = {
     "dormitory": "宿舍",
     "cafeteria": "食堂",
     "student_club": "社团",
+}
+
+DIMENSION_QUERY_TERMS = {
+    "school": "校园体验 学习氛围",
+    "major": "专业选择 培养方向",
+    "course": "课程 选课 学习压力",
+    "employment": "就业 实习 升学",
+    "dormitory": "宿舍 住宿 校区",
+    "cafeteria": "食堂 餐饮",
+    "student_club": "社团 学生活动",
 }
 
 
@@ -98,11 +109,25 @@ def render_community_agent_task(
 ) -> str:
     """只渲染公开业务参数，不读取或拼接任何环境密钥。"""
 
+    query = f"{task.institution_name} {DIMENSION_QUERY_TERMS[task.dimension]}"
+    if task.platform == "zhihu":
+        start_url = (
+            "https://www.zhihu.com/search?type=content&q="
+            f"{quote_plus(query)}"
+        )
+    else:
+        # 贴吧首期从学校吧公开列表进入，再由 Agent 在站内定位当前维度。
+        start_url = (
+            "https://tieba.baidu.com/f?ie=utf-8&kw="
+            f"{quote_plus(task.institution_name)}"
+        )
+
     return "\n".join([
         f"执行 Skill：{skill.name}（{skill.version}）。",
         f"学校：{task.institution_name}（{task.institution_code}）。",
         f"平台：{PLATFORM_NAMES[task.platform]}（{task.platform}）。",
         f"维度：{DIMENSION_NAMES[task.dimension]}（{task.dimension}）。",
+        f"起始公开搜索页：{start_url}",
         f"本任务最多提交 {max_candidates} 条真实公开证据。",
         "必须实际打开来源页面后，调用 submit_community_evidence 提交。",
         "达到候选上限或触发 Skill 停止条件时结束任务。",

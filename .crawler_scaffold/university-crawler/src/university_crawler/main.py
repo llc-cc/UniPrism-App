@@ -7,7 +7,13 @@ from typing import Any
 
 from university_crawler.automation import fetch_university_automation_enabled
 from university_crawler.config import Settings, load_sources
-from university_crawler.community_runner import run_community_pilot
+from university_crawler.community_runner import (
+    CommunityRunResult,
+    DimensionArgument,
+    DiscoveryMode,
+    PlatformArgument,
+    run_community_pilot,
+)
 from university_crawler.crawler import crawl_source
 from university_crawler.ingestion import upload_documents
 from university_crawler.models import CrawledDocument
@@ -83,6 +89,39 @@ async def run(source_code: str | None, scheduled: bool = False) -> int:
     return 0
 
 
+async def run_community(
+    settings: Settings,
+    *,
+    platform: PlatformArgument,
+    discovery_mode: DiscoveryMode,
+    dimension: DimensionArgument,
+    scheduled: bool = False,
+) -> CommunityRunResult:
+    """社区 Agent 与官网采集共用总开关，后台关闭后不会产生新的浏览任务。"""
+
+    if scheduled:
+        try:
+            automation_enabled = await fetch_university_automation_enabled(settings)
+        except Exception:
+            return CommunityRunResult(
+                exit_code=3,
+                state="AUTOMATION_CONTROL_UNAVAILABLE",
+                counts={},
+            )
+        if not automation_enabled:
+            return CommunityRunResult(
+                exit_code=0,
+                state="AUTOMATION_DISABLED",
+                counts={},
+            )
+    return await run_community_pilot(
+        settings,
+        platform=platform,
+        discovery_mode=discovery_mode,
+        dimension=dimension,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="UniPrism university public-content crawler")
     parser.add_argument("--source", help="只运行一个已启用的来源 code")
@@ -104,6 +143,27 @@ def main() -> None:
         help="社区试点平台",
     )
     parser.add_argument(
+        "--discovery-mode",
+        choices=["agent", "search_api"],
+        default="agent",
+        help="社区发现方式；默认由 DeepSeek + Browser Use Agent 自动浏览",
+    )
+    parser.add_argument(
+        "--dimension",
+        choices=[
+            "all",
+            "school",
+            "major",
+            "course",
+            "employment",
+            "dormitory",
+            "cafeteria",
+            "student_club",
+        ],
+        default="all",
+        help="只运行一个社区维度；默认运行七个维度",
+    )
+    parser.add_argument(
         "--scheduled",
         action="store_true",
         help="定时模式：先检查管理端高校自动采集总开关",
@@ -111,7 +171,13 @@ def main() -> None:
     args = parser.parse_args()
     if args.community:
         result = asyncio.run(
-            run_community_pilot(Settings(), platform=args.platform)
+            run_community(
+                Settings(),
+                platform=args.platform,
+                discovery_mode=args.discovery_mode,
+                dimension=args.dimension,
+                scheduled=args.scheduled,
+            )
         )
         print(
             f"社区采集状态：{result.state}；阶段统计：{result.counts}",

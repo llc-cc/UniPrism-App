@@ -38,6 +38,7 @@ async def upload_community_evidence(
     platform: CommunityPlatform,
     run_id: str,
     query: str,
+    agent_metadata: dict[str, Any] | None = None,
     settings: Settings,
     transport: httpx.AsyncBaseTransport | None = None,
     retry_delay: RetryDelay = asyncio.sleep,
@@ -68,6 +69,9 @@ async def upload_community_evidence(
                 "query": query,
                 "documents": [_document_payload(item) for item in batch],
             }
+            if agent_metadata is not None:
+                # 只上传可审计统计，不上传模型思维链或浏览器会话数据。
+                payload["agentMetadata"] = agent_metadata
             for attempt in range(3):
                 try:
                     response = await client.post(endpoint, json=payload)

@@ -97,5 +97,6 @@ def test_task_rendering_contains_scope_without_secrets(tmp_path: Path) -> None:
     assert "知乎" in text
     assert "课程" in text
     assert "30" in text
+    assert "https://www.zhihu.com/search?" in text
     assert "DEEPSEEK_API_KEY" not in text
     assert "CRAWLER_BACKEND_TOKEN" not in text

@@ -88,6 +88,46 @@ class CommunityIngestionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, 1)
 
+    async def test_agent_metadata_is_forwarded_to_backend(self) -> None:
+        received_metadata = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal received_metadata
+            received_metadata = json.loads(request.content)["agentMetadata"]
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "data": {
+                        "createdCount": 1,
+                        "updatedCount": 0,
+                        "unchangedCount": 0,
+                        "rejectedCount": 0,
+                        "failedCount": 0,
+                    },
+                },
+            )
+
+        await upload_community_evidence(
+            [candidate(1)],
+            platform="zhihu",
+            run_id="agent-run-0001",
+            query="北京大学课程",
+            agent_metadata={
+                "mode": "agent",
+                "skillVersion": "uniprism-community-v1",
+                "steps": 12,
+            },
+            settings=Settings(
+                crawler_community_ingest_url="http://backend.test/community",
+                crawler_backend_token="token",
+            ),
+            transport=httpx.MockTransport(handler),
+        )
+
+        self.assertEqual(received_metadata["mode"], "agent")
+        self.assertEqual(received_metadata["steps"], 12)
+
 
 async def _completed_wait() -> None:
     return None
