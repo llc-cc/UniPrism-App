@@ -1,0 +1,26 @@
+[Unit]
+Description=UniPrism Beijing University public community evidence pilot
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/uniprism-crawler/app/.env
+
+[Service]
+Type=oneshot
+User=uniprism-crawler
+Group=uniprism-crawler
+WorkingDirectory=/opt/uniprism-crawler/app
+EnvironmentFile=/opt/uniprism-crawler/app/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/uniprism-crawler/venv/bin/python -m university_crawler.main --community --institution peking-university --platform all
+TimeoutStartSec=2h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
