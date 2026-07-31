@@ -26,6 +26,15 @@ class CommunityDiscoveryPlan(BaseModel):
     dimensions: list[CommunityDimension] = Field(min_length=1)
 
 
+class CommunityAgentTask(BaseModel):
+    """一个平台和一个维度组成独立任务，便于失败隔离和统计。"""
+
+    institution_code: Literal["peking-university"]
+    institution_name: Literal["北京大学"]
+    platform: CommunityPlatform
+    dimension: CommunityDimension
+
+
 class DiscoveredLink(BaseModel):
     platform: CommunityPlatform
     dimension: CommunityDimension

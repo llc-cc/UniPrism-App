@@ -24,6 +24,22 @@ class Settings(BaseSettings):
     community_request_delay_seconds: float = Field(default=3.0, ge=1.0, le=30.0)
     crawler_community_ingest_url: str = ""
     crawler_contact: str = "crawler-contact-not-configured"
+    community_agent_enabled: bool = False
+    community_agent_model: str = ""
+    community_agent_max_steps: int = Field(default=40, ge=5, le=80)
+    community_agent_max_candidates: int = Field(default=30, ge=1, le=100)
+    community_agent_task_delay_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=60.0,
+    )
+    community_agent_browser_headless: bool = True
+    community_agent_skill_path: str = (
+        "skills/uniprism-university-community-crawler/SKILL.md"
+    )
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = ""
+    deepseek_dialogue_model: str = "deepseek-chat"
 
 
 class SeedPage(BaseModel):
