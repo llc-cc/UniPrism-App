@@ -33,6 +33,10 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Agent implementation workspaces and review ledgers are local-only.
+/.worktrees/
+/.superpowers/
+
 # Symbolication related
 app.*.symbols
 
