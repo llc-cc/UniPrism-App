@@ -58,12 +58,20 @@ python -m university_crawler.main --scheduled
 
 ## 北京大学社区证据试点
 
-首期只发现知乎和百度贴吧的匿名公开页面，覆盖学校、专业、课程、就业、宿舍、食堂、社团七个维度。它不会登录账号、点击“展开全部评论”、绕过验证码或保存用户身份；遇到登录墙、验证码和跨域跳转会记录阻断数量后跳过。
+首期由 DeepSeek 驱动 Browser Use，在知乎和百度贴吧的公开页面内完成
+搜索、打开候选页、相关性判断、翻页和结构化提交，覆盖学校、专业、课程、
+就业、宿舍、食堂、社团七个维度。它不会登录账号、绕过验证码、使用代理
+隐藏 IP 或保存用户身份；遇到登录墙、验证码和访问限制会记录阻断数量后跳过。
 
-在服务器 `.env` 配置搜索服务凭据、后端地址和透明联系标识：
+在服务器 `.env` 配置模型、后端地址和独立运行目录。部署脚本可以复用同一台
+服务器主后端已有的 DeepSeek 配置：
 
 ```text
-BRAVE_SEARCH_API_KEY="由 Brave Search API 控制台提供"
+COMMUNITY_AGENT_ENABLED="true"
+DEEPSEEK_API_KEY="DeepSeek Key"
+DEEPSEEK_BASE_URL="可选；为空时使用官方地址"
+DEEPSEEK_DIALOGUE_MODEL="deepseek-chat"
+COMMUNITY_AGENT_RUNTIME_DIR="/opt/uniprism-crawler/runtime/browser-use"
 CRAWLER_COMMUNITY_INGEST_URL="http://127.0.0.1:3000/api/internal/content-ingestion/community"
 CRAWLER_CONTACT="你的运维联系邮箱或网页"
 ```
@@ -74,7 +82,12 @@ CRAWLER_CONTACT="你的运维联系邮箱或网页"
 python -m university_crawler.main \
   --community \
   --institution peking-university \
-  --platform all
+  --platform all \
+  --discovery-mode agent \
+  --dimension all
 ```
 
-缺少搜索凭据时命令返回 `DISCOVERY_NOT_CONFIGURED` 和退出码 `4`，不会伪造“没有结果”的成功状态。所有非垃圾候选进入人工审核，审核前不能参与 App 推荐或问答。
+定时任务还必须追加 `--scheduled`，这样管理端总开关关闭或控制接口不可用时
+会安全跳过。缺少 Agent 开关、Skill 或 DeepSeek Key 时命令返回明确的
+`AGENT_*` 状态和非零退出码，不会伪造“没有结果”的成功状态。所有非垃圾
+候选进入人工审核，审核前不能参与 App 推荐或问答。

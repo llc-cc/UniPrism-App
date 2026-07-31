@@ -11,12 +11,14 @@ Group=uniprism-crawler
 WorkingDirectory=/opt/uniprism-crawler/app
 EnvironmentFile=/opt/uniprism-crawler/app/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/uniprism-crawler/venv/bin/python -m university_crawler.main --community --institution peking-university --platform all
+Environment=COMMUNITY_AGENT_RUNTIME_DIR=/opt/uniprism-crawler/runtime/browser-use
+ExecStart=/opt/uniprism-crawler/venv/bin/python -m university_crawler.main --community --institution peking-university --platform all --discovery-mode agent --dimension all --scheduled
 TimeoutStartSec=2h
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
+ReadWritePaths=/opt/uniprism-crawler/runtime
 UMask=0077
 Nice=10
 StandardOutput=journal

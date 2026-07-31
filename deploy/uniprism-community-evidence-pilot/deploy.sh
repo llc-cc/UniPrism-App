@@ -24,7 +24,7 @@ for required in \
   }
 done
 
-echo "[1/7] 创建可恢复备份"
+echo "[1/8] 创建可恢复备份"
 install -d -m 0700 "${BACKUP_ROOT}"
 backend_candidates=(
   "prisma/schema.prisma"
@@ -37,7 +37,7 @@ backend_candidates=(
   "lib/adminCommunityEvidence.ts"
   "scripts/workers/community-evidence-analysis-worker.ts"
 )
-crawler_candidates=("src" ".env.example" "README.md")
+crawler_candidates=("src" "skills" "pyproject.toml" ".env.example" "README.md")
 backend_paths=()
 crawler_paths=()
 for path in "${backend_candidates[@]}"; do
@@ -51,12 +51,18 @@ done
 ((${#crawler_paths[@]} == 0)) || tar -czf "${BACKUP_ROOT}/crawler-before.tar.gz" \
   -C "${CRAWLER_APP}" "${crawler_paths[@]}"
 
-echo "[2/7] 叠加本次社区试点代码"
+echo "[2/8] 叠加本次社区 Agent 代码"
 tar -xzf "${BUNDLE_ROOT}/backend.tar.gz" -C "${BACKEND_ROOT}"
 tar -xzf "${BUNDLE_ROOT}/crawler.tar.gz" -C "${CRAWLER_APP}"
 chown -R uniprism-crawler:uniprism-crawler "${CRAWLER_APP}"
 
-echo "[3/7] 补充非敏感环境配置"
+echo "[3/8] 安装 Browser Use Agent 依赖"
+runuser -u uniprism-crawler -- \
+  "${CRAWLER_ROOT}/venv/bin/python" -m pip install --no-cache-dir -e "${CRAWLER_APP}"
+install -d -o uniprism-crawler -g uniprism-crawler -m 0700 \
+  "${CRAWLER_ROOT}/runtime/browser-use"
+
+echo "[4/8] 补充 Agent 环境配置"
 if ! grep -q '^CRAWLER_COMMUNITY_INGEST_URL=' "${CRAWLER_APP}/.env"; then
   printf '\nCRAWLER_COMMUNITY_INGEST_URL="http://127.0.0.1:3000/api/internal/content-ingestion/community"\n' \
     >> "${CRAWLER_APP}/.env"
@@ -64,16 +70,39 @@ fi
 if ! grep -q '^CRAWLER_CONTACT=' "${CRAWLER_APP}/.env"; then
   printf 'CRAWLER_CONTACT="crawler-contact-not-configured"\n' >> "${CRAWLER_APP}/.env"
 fi
+if ! grep -q '^COMMUNITY_AGENT_ENABLED=' "${CRAWLER_APP}/.env"; then
+  printf 'COMMUNITY_AGENT_ENABLED="true"\n' >> "${CRAWLER_APP}/.env"
+fi
+if ! grep -q '^COMMUNITY_AGENT_RUNTIME_DIR=' "${CRAWLER_APP}/.env"; then
+  printf 'COMMUNITY_AGENT_RUNTIME_DIR="/opt/uniprism-crawler/runtime/browser-use"\n' \
+    >> "${CRAWLER_APP}/.env"
+fi
+if ! grep -q '^COMMUNITY_AGENT_SKILL_PATH=' "${CRAWLER_APP}/.env"; then
+  printf 'COMMUNITY_AGENT_SKILL_PATH="skills/uniprism-university-community-crawler/SKILL.md"\n' \
+    >> "${CRAWLER_APP}/.env"
+fi
+
+# 复用同一台服务器后端已有的 DeepSeek 配置，但绝不把密钥打印到日志。
+for key in DEEPSEEK_API_KEY DEEPSEEK_BASE_URL DEEPSEEK_DIALOGUE_MODEL; do
+  if ! grep -q "^${key}=.\\+" "${CRAWLER_APP}/.env"; then
+    value_line="$(grep -m 1 "^${key}=.\\+" "${BACKEND_ROOT}/.env" 2>/dev/null || true)"
+    [[ -z "${value_line}" ]] || printf '%s\n' "${value_line}" >> "${CRAWLER_APP}/.env"
+  fi
+done
+if ! grep -q '^DEEPSEEK_API_KEY=.\+' "${CRAWLER_APP}/.env"; then
+  echo "缺少 DEEPSEEK_API_KEY：请写入采集器 .env 或后端 .env 后重试。" >&2
+  exit 1
+fi
 chown uniprism-crawler:uniprism-crawler "${CRAWLER_APP}/.env"
 chmod 0600 "${CRAWLER_APP}/.env"
 
-echo "[4/7] 迁移数据库、生成 Prisma Client 并构建后端"
+echo "[5/8] 迁移数据库、生成 Prisma Client 并构建后端"
 cd "${BACKEND_ROOT}"
 npx prisma migrate deploy
 npm run db:generate
 npm run build
 
-echo "[5/7] 重启后端并启动独立 AI 分析 worker"
+echo "[6/8] 重启后端并启动独立 AI 分析 worker"
 pm2 restart UniPrism_New --update-env
 if pm2 describe "${WORKER_NAME}" >/dev/null 2>&1; then
   pm2 restart "${WORKER_NAME}" --update-env
@@ -84,7 +113,7 @@ else
 fi
 pm2 save
 
-echo "[6/7] 安装但保持关闭社区定时器"
+echo "[7/8] 安装但保持关闭社区定时器"
 install -o root -g root -m 0644 \
   "${BUNDLE_ROOT}/systemd/${SERVICE_NAME}" \
   "/etc/systemd/system/${SERVICE_NAME}"
@@ -95,7 +124,7 @@ systemctl daemon-reload
 # 首批内容必须由管理员审核，部署不能自动开始社区采集。
 systemctl disable --now "${TIMER_NAME}" >/dev/null 2>&1 || true
 
-echo "[7/7] 只读健康检查"
+echo "[8/8] 只读健康检查"
 backend_ready=false
 for _attempt in {1..30}; do
   if curl -fsS -o /dev/null "http://127.0.0.1:3000/api/health"; then
@@ -111,13 +140,7 @@ done
 systemctl is-enabled "${TIMER_NAME}" || true
 systemctl list-timers --all "${TIMER_NAME}" --no-pager || true
 
-if grep -q '^BRAVE_SEARCH_API_KEY=.\+' "${CRAWLER_APP}/.env"; then
-  echo "搜索发现配置：已配置。可以手动执行首批采集。"
-else
-  echo "搜索发现配置：DISCOVERY_NOT_CONFIGURED。请先在 ${CRAWLER_APP}/.env 写入 BRAVE_SEARCH_API_KEY。"
-fi
-
-echo "部署完成，社区定时器保持关闭。"
+echo "部署完成，Browser Agent 已配置，社区定时器保持关闭。"
 echo "备份目录：${BACKUP_ROOT}"
 echo "手动首批：systemctl start ${SERVICE_NAME}"
 echo "查看日志：journalctl -u ${SERVICE_NAME} -n 200 --no-pager"
