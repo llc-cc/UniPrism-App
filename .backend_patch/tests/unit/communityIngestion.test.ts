@@ -65,6 +65,7 @@ describe('ingestCommunityEvidence', () => {
         upsert: vi.fn().mockResolvedValue({ id: 'rights-1' }),
       },
       contentIngestionBatch: {
+        findUnique: vi.fn().mockResolvedValue(null),
         create: vi.fn().mockResolvedValue({ id: 'batch-1' }),
         update: updateBatch,
       },
@@ -109,5 +110,41 @@ describe('ingestCommunityEvidence', () => {
         }),
       }),
     }));
+  });
+
+  it('returns the completed batch when the crawler retries the same run id', async () => {
+    const database = {
+      contentSource: {
+        upsert: vi.fn().mockResolvedValue({ id: 'source-1' }),
+      },
+      contentRightsSnapshot: {
+        upsert: vi.fn().mockResolvedValue({ id: 'rights-1' }),
+      },
+      contentIngestionBatch: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: 'batch-existing',
+          status: 'completed',
+          createdCount: 2,
+          updatedCount: 0,
+          unchangedCount: 3,
+          rejectedCount: 1,
+          failedCount: 0,
+        }),
+        create: vi.fn(),
+      },
+    };
+
+    const result = await ingestCommunityEvidence(
+      database as never,
+      validPayload,
+      vi.fn(),
+    );
+
+    expect(result).toMatchObject({
+      batchId: 'batch-existing',
+      createdCount: 2,
+      unchangedCount: 3,
+    });
+    expect(database.contentIngestionBatch.create).not.toHaveBeenCalled();
   });
 });

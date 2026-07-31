@@ -14,13 +14,16 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** 所有审核操作都校验页面读取时的版本，冲突时要求管理员刷新。 */
-export const PATCH = withApiHandler(async (
-  request: NextRequest,
-  context: { params: Promise<{ itemId: string }> },
-) => {
+export const PATCH = withApiHandler(async (request: NextRequest) => {
   assertSafeMutationRequest(request);
   const admin = await requireAdminSession();
-  const { itemId } = await context.params;
+  // 现有 withApiHandler 只传入 request/requestId，因此从已匹配的路由路径读取资源 ID。
+  const itemId = decodeURIComponent(
+    request.nextUrl.pathname.split('/').filter(Boolean).at(-1) ?? '',
+  );
+  if (!itemId) {
+    throw new ApiError('VALIDATION_ERROR', '缺少待审核内容 ID。', 400);
+  }
   const input = communityEvidenceReviewSchema.parse(await request.json());
   try {
     return ok(await reviewCommunityEvidence(

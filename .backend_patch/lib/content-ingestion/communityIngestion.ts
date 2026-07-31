@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { cleanCommunityEvidence } from './communityCleaner';
@@ -151,11 +150,42 @@ export async function ingestCommunityEvidence(
     prisma,
     payload.platform,
   );
+  const idempotencyKey = `community:${payload.runId}:${payload.platform}`;
+  const existingBatch = await prisma.contentIngestionBatch.findUnique({
+    where: { idempotencyKey },
+    select: {
+      id: true,
+      status: true,
+      createdCount: true,
+      updatedCount: true,
+      unchangedCount: true,
+      rejectedCount: true,
+      failedCount: true,
+    },
+  });
+  if (
+    existingBatch
+    && (existingBatch.status === 'completed' || existingBatch.status === 'partial')
+  ) {
+    return {
+      batchId: existingBatch.id,
+      status: existingBatch.status,
+      createdCount: existingBatch.createdCount,
+      updatedCount: existingBatch.updatedCount,
+      unchangedCount: existingBatch.unchangedCount,
+      rejectedCount: existingBatch.rejectedCount,
+      failedCount: existingBatch.failedCount,
+    };
+  }
+  if (existingBatch) {
+    throw new Error('COMMUNITY_INGESTION_ALREADY_RUNNING');
+  }
   const batch = await prisma.contentIngestionBatch.create({
     data: {
       sourceId: source.id,
       trigger: 'manual',
-      idempotencyKey: `community:${payload.runId}:${payload.platform}:${randomUUID()}`,
+      // Python runId 已包含分批序号；固定键使网络重试不会重复创建采集批次。
+      idempotencyKey,
       status: 'running',
       requestedCount: payload.documents.length,
       fetchedCount: payload.documents.length,

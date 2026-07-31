@@ -32,6 +32,7 @@ async function processJob(data: CommunityEvidenceAnalysisJobData) {
   if (
     !item
     || !item.document
+    || !item.document.bodyText
     || !item.communityEvidenceAnalysis
     || item.cleanerVersion !== data.cleanerVersion
   ) {
