@@ -1,0 +1,1141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReportStatus {
+  pending
+  generating
+  completed
+  failed
+}
+
+enum DialogueRole {
+  user
+  assistant
+  system
+}
+
+enum InputMode {
+  text
+  voice_transcript
+}
+
+enum ApiProvider {
+  deepseek
+}
+
+model User {
+  id                     String    @id @default(cuid())
+  name                   String?   @unique
+  email                  String?   @unique @db.VarChar(254)
+  phone                  String?   @unique @db.VarChar(20)
+  wechatNickname         String?   @db.VarChar(64)
+  emailVerified          DateTime?
+  image                  String?   @db.Text
+  password               String?
+  passwordSetupSkippedAt DateTime?
+  phoneBindingSkippedAt  DateTime?
+  role                   String    @default("student")
+  status                 String    @default("active")
+  acceptedTermsVersion   String?
+  acceptedPrivacyVersion String?
+  acceptedAt             DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  accounts                       Account[]
+  sessions                       Session[]
+  exploreSessions                ExploreSession[]
+  aiDialogues                    AiDialogue[]
+  generatedReports               GeneratedReport[]
+  reportGenerationQuotaOverrides ReportGenerationQuotaOverride[]
+  reportFeedbackRatings          ReportFeedbackRating[]
+  reportShareSnapshots           ReportShareSnapshot[]
+  exploreProgress                UserExploreProgress[]
+  onboardingProfileLeads         OnboardingProfileLead[]         @relation("OnboardingProfileLeadRegisteredUser")
+  promotionShareLinks            PromotionShareLink[]
+  xhsClickAttributions           XhsClickAttribution[]
+  xhsConversionEvents            XhsConversionEvent[]
+  createdInviteCodes             InviteCode[]                    @relation("InviteCodeCreator")
+  inviteRedemptions              InviteRedemption[]
+  consents                       UserConsent[]
+
+  @@index([createdAt])
+  @@map("users")
+}
+
+model SmsVerification {
+  id           String   @id @default(cuid())
+  phone        String   @unique @db.VarChar(20)
+  codeHash     String
+  expiresAt    DateTime
+  attemptCount Int      @default(0)
+  lastSentAt   DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([expiresAt])
+  @@map("sms_verifications")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String? @db.Text
+  id_token          String? @db.Text
+  session_state     String? @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+model InviteCode {
+  id             String    @id @default(cuid())
+  codeHash       String    @unique
+  codeCiphertext String?   @db.Text
+  label          String?
+  maxUses        Int       @default(1)
+  usedCount      Int       @default(0)
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  createdBy   User?              @relation("InviteCodeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  redemptions InviteRedemption[]
+
+  @@index([createdById])
+  @@index([expiresAt])
+  @@map("invite_codes")
+}
+
+model InviteRedemption {
+  id             String   @id @default(cuid())
+  inviteCodeId   String
+  userId         String
+  loginIdHash    String?  @db.VarChar(64)
+  loginIdDisplay String?  @db.VarChar(64)
+  pinHash        String?
+  redeemedAt     DateTime @default(now())
+
+  inviteCode InviteCode @relation(fields: [inviteCodeId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([inviteCodeId, userId])
+  @@unique([inviteCodeId, loginIdHash])
+  @@index([userId])
+  @@map("invite_redemptions")
+}
+
+model UserConsent {
+  id          String    @id @default(cuid())
+  userId      String
+  policyType  String
+  version     String
+  acceptedAt  DateTime  @default(now())
+  withdrawnAt DateTime?
+  source      String?
+  ipAddress   String?
+  userAgent   String?   @db.Text
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([policyType, version])
+  @@map("user_consents")
+}
+
+model EmailAuthAudit {
+  id          String   @id @default(cuid())
+  emailHash   String   @db.VarChar(64)
+  emailDomain String   @db.VarChar(191)
+  action      String   @db.VarChar(40)
+  outcome     String   @db.VarChar(40)
+  userId      String?  @db.VarChar(191)
+  isNewUser   Boolean?
+  ipAddress   String?  @db.VarChar(64)
+  ipHash      String?  @db.VarChar(64)
+  userAgent   String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  @@index([emailDomain, createdAt])
+  @@index([ipHash, createdAt])
+  @@index([action, outcome, createdAt])
+  @@index([userId, createdAt])
+  @@map("email_auth_audits")
+}
+
+model EmailDomainBlock {
+  id              String    @id @default(cuid())
+  domain          String    @unique @db.VarChar(191)
+  reason          String?   @db.Text
+  source          String    @default("manual") @db.VarChar(40)
+  triggerCount    Int       @default(1)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastTriggeredAt DateTime?
+  expiresAt       DateTime?
+
+  @@index([expiresAt])
+  @@index([source, createdAt])
+  @@map("email_domain_blocks")
+}
+
+model OnboardingProfileLead {
+  id               String   @id @default(cuid())
+  ipHash           String   @unique @db.VarChar(64)
+  sessionId        String?  @db.VarChar(191)
+  registeredUserId String?  @db.VarChar(191)
+  name             String   @db.VarChar(80)
+  gender           String   @db.VarChar(40)
+  status           String   @db.VarChar(80)
+  clarity          String   @db.VarChar(80)
+  referralSource   String   @db.VarChar(120)
+  source           String   @default("questionnaire") @db.VarChar(40)
+  firstSeenAt      DateTime @default(now())
+  submittedAt      DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  registeredUser User? @relation("OnboardingProfileLeadRegisteredUser", fields: [registeredUserId], references: [id], onDelete: Cascade)
+  promotionShareLinks PromotionShareLink[]
+
+  @@index([registeredUserId])
+  @@index([sessionId])
+  @@index([submittedAt])
+  @@index([referralSource])
+  @@map("onboarding_profile_leads")
+}
+
+model ExploreSession {
+  id               String   @id @default(cuid())
+  userId           String?
+  anonymousId      String?
+  startedAt        DateTime @default(now())
+  lastActiveAt     DateTime @default(now())
+  totalTimeSeconds Int      @default(0)
+
+  discoveryCompleted Boolean @default(false)
+  majorsExplored     Int     @default(0)
+  careersExplored    Int     @default(0)
+  reportGenerated    Boolean @default(false)
+
+  user                  User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  events                ExploreEvent[]
+  discoverAnswers       DiscoverAnswer[]
+  interestProfile       InterestProfile?
+  memories              ExploreMemory[]
+  aiDialogues           AiDialogue[]
+  aiScoringSignals      AiScoringSignal[]
+  generatedReports      GeneratedReport[]
+  reportFeedbackRatings ReportFeedbackRating[]
+  reportShareSnapshots  ReportShareSnapshot[]
+  userProgressRecords   UserExploreProgress[]
+  promotionShareLinks   PromotionShareLink[]
+
+  @@index([userId])
+  @@index([lastActiveAt])
+  @@index([userId, lastActiveAt])
+  @@index([anonymousId])
+  @@index([anonymousId, lastActiveAt])
+  @@map("explore_sessions")
+}
+
+model ExploreEvent {
+  id        Int      @id @default(autoincrement())
+  sessionId String
+  eventType String
+  eventData Json
+  timestamp DateTime @default(now())
+  pageRoute String?  @db.VarChar(512)
+
+  session ExploreSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, eventType, timestamp])
+  @@index([eventType])
+  @@index([timestamp])
+  @@map("explore_events")
+}
+
+model DiscoverAnswer {
+  id            String   @id @default(cuid())
+  sessionId     String
+  questionId    String   @db.VarChar(160)
+  screenId      String?  @db.VarChar(80)
+  stageId       String?  @db.VarChar(80)
+  answerValue   Json
+  answerVersion Int      @default(1)
+  clientTraceId String?  @db.VarChar(128)
+  source        String   @default("questionnaire") @db.VarChar(40)
+  isFinal       Boolean  @default(true)
+  submittedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  session ExploreSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@unique([sessionId, clientTraceId])
+  @@index([sessionId, submittedAt])
+  @@index([questionId])
+  @@index([questionId, isFinal, submittedAt])
+  @@map("discover_answers")
+}
+
+model InterestProfile {
+  id        String @id @default(cuid())
+  sessionId String @unique
+
+  realistic     Int @default(0)
+  investigative Int @default(0)
+  artistic      Int @default(0)
+  social        Int @default(0)
+  enterprising  Int @default(0)
+  conventional  Int @default(0)
+
+  topDimensions      Json
+  recommendedMajors  Json
+  rawAnswers         Json
+  openEndedAnswers   Json?
+  personalityTraits  Json?
+  mbtiProfile        Json?
+  abilityPerformance Json?
+
+  createdAt DateTime       @default(now())
+  session   ExploreSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@map("interest_profiles")
+}
+
+model MajorCatalog {
+  id                       String   @id @default(cuid())
+  slug                     String   @unique @db.VarChar(160)
+  name                     String   @db.VarChar(120)
+  majorCategory            String   @db.VarChar(120)
+  discipline               String   @db.VarChar(80)
+  tags                     Json
+  keywords                 Json?
+  featureWeights           Json?
+  featureTaskFocus         Json?
+  featureRiskBoundaries    Json?
+  featureValidationActions Json?
+  majorDirections          Json?
+  iconPath                 String?  @db.VarChar(512)
+  iconPrompt               String?  @db.Text
+  iconPalette              Json?
+  sourceDoc                String   @db.VarChar(512)
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  recommendations RiasecMajorRecommendation[]
+
+  @@index([name])
+  @@index([discipline])
+  @@map("major_catalog")
+}
+
+model RiasecMajorRecommendation {
+  id         String   @id @default(cuid())
+  riasecCode String   @db.VarChar(2)
+  rank       Int
+  majorId    String
+  reason     String   @db.Text
+  tags       Json
+  sourceDoc  String   @db.VarChar(512)
+  sourceRank Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  major MajorCatalog @relation(fields: [majorId], references: [id], onDelete: Cascade)
+
+  @@unique([riasecCode, rank])
+  @@unique([riasecCode, majorId])
+  @@index([riasecCode])
+  @@index([majorId])
+  @@map("riasec_major_recommendations")
+}
+
+model CareerCatalog {
+  id                  String   @id @default(cuid())
+  slug                String   @unique @db.VarChar(180)
+  name                String   @db.VarChar(160)
+  alias               String?  @db.VarChar(240)
+  hollandProfile      String   @db.VarChar(6)
+  hollandWeights      Json
+  majorCategoryMoe    String   @db.Text
+  industryDomain      String   @db.VarChar(160)
+  typicalRoles        Json
+  coreSkills          Json
+  educationSuggestion String   @db.Text
+  standardRefNote     String?  @db.Text
+  keywords            Json?
+  iconPath            String?  @db.VarChar(512)
+  iconPrompt          String?  @db.Text
+  iconPalette         Json?
+  sourceDoc           String   @db.VarChar(512)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  recommendations RiasecCareerRecommendation[]
+  directions      CareerDirection[]
+
+  @@index([name])
+  @@index([industryDomain])
+  @@map("career_catalog")
+}
+
+model CareerDirection {
+  id                 String   @id @default(cuid())
+  careerId           String
+  slug               String   @unique @db.VarChar(220)
+  name               String   @db.VarChar(160)
+  description        String   @db.Text
+  riasecWeights      Json
+  calibrationWeights Json?
+  featureWeights     Json?
+  fitTags            Json
+  riskTags           Json?
+  sourceRefs         Json?
+  validationAction   String?  @db.Text
+  sourceDoc          String   @db.VarChar(512)
+  profileVersion     String   @db.VarChar(80)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  career CareerCatalog @relation(fields: [careerId], references: [id], onDelete: Cascade)
+
+  @@index([careerId])
+  @@index([profileVersion])
+  @@map("career_directions")
+}
+
+model RiasecCareerRecommendation {
+  id                 String   @id @default(cuid())
+  riasecCode         String   @db.VarChar(2)
+  pairLabel          String   @db.VarChar(80)
+  rank               Int
+  careerId           String
+  matchScore         Float
+  priorityTag        String   @db.VarChar(40)
+  hollandProfile     String   @db.VarChar(6)
+  reason             String   @db.Text
+  majorCategoryMoe   String   @db.Text
+  industryDomain     String   @db.VarChar(160)
+  coreSkills         Json
+  reservedTop3Fields Json?
+  sourceDoc          String   @db.VarChar(512)
+  sourceRank         Int
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  career CareerCatalog @relation(fields: [careerId], references: [id], onDelete: Cascade)
+
+  @@unique([riasecCode, rank])
+  @@unique([riasecCode, careerId])
+  @@index([riasecCode])
+  @@index([careerId])
+  @@map("riasec_career_recommendations")
+}
+
+model ReportTemplateContext {
+  id            String   @id @default(cuid())
+  templateType  String   @db.VarChar(40)
+  templateKey   String   @db.VarChar(191)
+  title         String   @db.VarChar(180)
+  body          String   @db.Text
+  metadata      Json?
+  sourceDoc     String   @db.VarChar(512)
+  version       String   @db.VarChar(80)
+  status        String   @default("active") @db.VarChar(40)
+  model         String?  @db.VarChar(120)
+  promptVersion String?  @db.VarChar(160)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([templateType, templateKey, version])
+  @@index([templateType, templateKey, status])
+  @@index([templateType, status])
+  @@map("report_template_contexts")
+}
+
+model ExploreMemory {
+  id         String   @id @default(cuid())
+  sessionId  String
+  category   String
+  key        String
+  content    String   @db.Text
+  data       Json?
+  confidence Int      @default(100)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  session ExploreSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, category, key])
+  @@index([sessionId])
+  @@index([sessionId, createdAt])
+  @@map("explore_memories")
+}
+
+model UserExploreProgress {
+  id         String   @id @default(cuid())
+  userId     String
+  sessionId  String?
+  category   String
+  key        String
+  content    String   @db.Text
+  data       Json?
+  confidence Int      @default(100)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session ExploreSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, category, key])
+  @@index([userId])
+  @@index([sessionId])
+  @@index([userId, updatedAt])
+  @@index([updatedAt])
+  @@map("user_explore_progress")
+}
+
+model AiDialogue {
+  id         String   @id @default(cuid())
+  sessionId  String
+  userId     String?
+  questionId String
+  status     String   @default("active")
+  turnCount  Int      @default(0)
+  maxTurns   Int      @default(4)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  session  ExploreSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user     User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages AiDialogueMessage[]
+  signals  AiScoringSignal[]
+
+  @@index([sessionId, questionId])
+  @@index([userId, createdAt])
+  @@map("ai_dialogues")
+}
+
+model AiDialogueMessage {
+  id            String       @id @default(cuid())
+  dialogueId    String
+  role          DialogueRole
+  inputMode     InputMode?
+  content       String       @db.Text
+  safeContent   String?      @db.Text
+  tokenCount    Int?
+  clientTraceId String?
+  createdAt     DateTime     @default(now())
+
+  dialogue AiDialogue @relation(fields: [dialogueId], references: [id], onDelete: Cascade)
+
+  @@unique([dialogueId, clientTraceId])
+  @@index([dialogueId, createdAt])
+  @@map("ai_dialogue_messages")
+}
+
+model AiScoringSignal {
+  id            String      @id @default(cuid())
+  sessionId     String
+  dialogueId    String?
+  questionId    String
+  provider      ApiProvider @default(deepseek)
+  model         String
+  promptVersion String
+  deltas        Json
+  topDimensions Json
+  confidence    Int
+  evidence      Json
+  rawOutput     Json?
+  createdAt     DateTime    @default(now())
+
+  session  ExploreSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  dialogue AiDialogue?    @relation(fields: [dialogueId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId, createdAt])
+  @@map("ai_scoring_signals")
+}
+
+model GeneratedReport {
+  id            String       @id @default(cuid())
+  sessionId     String
+  userId        String?
+  reportType    String
+  status        ReportStatus @default(pending)
+  title         String?
+  content       Json?
+  inputSnapshot Json?
+  inputHash     String?      @db.VarChar(64)
+  model         String?
+  promptVersion String?
+  tokenUsage    Json?
+  errorCode     String?
+  errorMessage  String?      @db.Text
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  completedAt   DateTime?
+
+  session         ExploreSession         @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user            User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  feedbackRatings ReportFeedbackRating[]
+  shareSnapshots  ReportShareSnapshot[]
+
+  @@index([sessionId, reportType, createdAt])
+  @@index([sessionId, reportType, promptVersion, inputHash])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("generated_reports")
+}
+
+model XhsClickAttribution {
+  id           String    @id @default(cuid())
+  sid          String    @unique @db.VarChar(64)
+  clickId      String?   @unique @db.VarChar(255)
+  channel      String    @default("xhs") @db.VarChar(40)
+  advertiserId String?   @db.VarChar(128)
+  campaignId   String?   @db.VarChar(128)
+  unitId       String?   @db.VarChar(128)
+  creativityId String?   @db.VarChar(128)
+  openid       String?   @db.VarChar(128)
+  unionid      String?   @db.VarChar(128)
+  userId       String?
+  status       String    @default("created") @db.VarChar(32)
+  landingIpHash     String?   @db.VarChar(64)
+  landingUserAgent  String?   @db.Text
+  landingReferer    String?   @db.VarChar(512)
+  launchPath        String?   @db.VarChar(512)
+  source            String    @default("miniapp_direct") @db.VarChar(40)
+  rawQuery          Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  monitoredAt       DateTime?
+  launchedAt        DateTime?
+  boundAt           DateTime?
+  expiresAt         DateTime
+
+  user        User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  conversions XhsConversionEvent[]
+
+  @@index([openid])
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@index([status, createdAt])
+  @@map("xhs_click_attributions")
+}
+
+model XhsConversionEvent {
+  id             String    @id @default(cuid())
+  attributionId  String?
+  clickId        String?   @db.VarChar(255)
+  userId         String?
+  eventName      String    @db.VarChar(80)
+  eventTime      DateTime  @default(now())
+  idempotencyKey String?   @unique @db.VarChar(191)
+  source         String    @default("server") @db.VarChar(40)
+  status         String    @default("pending") @db.VarChar(32)
+  payload        Json?
+  response       Json?
+  errorMessage   String?   @db.Text
+  reportedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  attribution XhsClickAttribution? @relation(fields: [attributionId], references: [id], onDelete: SetNull)
+  user        User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([attributionId, eventName])
+  @@index([clickId, eventName])
+  @@index([userId, eventName, createdAt])
+  @@index([status, createdAt])
+  @@map("xhs_conversion_events")
+}
+
+model ReportGenerationQuotaOverride {
+  id          String   @id @default(cuid())
+  userId      String
+  reportType  String   @default("full_explore") @db.VarChar(64)
+  unlimited   Boolean  @default(false)
+  reportLimit Int?
+  note        String?  @db.VarChar(255)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, reportType])
+  @@index([userId])
+  @@map("report_generation_quota_overrides")
+}
+
+model ReportFeedbackRating {
+  id        String   @id @default(cuid())
+  reportId  String
+  sessionId String
+  userId    String
+  rating    Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  report  GeneratedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  session ExploreSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@index([sessionId, createdAt])
+  @@index([userId, createdAt])
+  @@map("report_feedback_ratings")
+}
+
+model ReportShareSnapshot {
+  id              String    @id @default(cuid())
+  reportId        String
+  sessionId       String
+  userId          String
+  shareCode       String    @unique
+  personaTitle    String    @db.VarChar(120)
+  personaOneLiner String    @db.VarChar(240)
+  topMajors       Json
+  topCareers      Json?
+  posterTheme     String    @default("default") @db.VarChar(80)
+  publicReport    Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  revokedAt       DateTime?
+
+  report  GeneratedReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  session ExploreSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@index([sessionId, createdAt])
+  @@index([userId, createdAt])
+  @@index([revokedAt])
+  @@map("report_share_snapshots")
+}
+
+model PromotionShareLink {
+  id          String    @id @default(cuid())
+  ownerKey    String    @unique @db.VarChar(191)
+  ownerKind   String    @db.VarChar(40)
+  userId      String?
+  sessionId   String?
+  leadId      String?
+  shareCode   String    @unique @db.VarChar(40)
+  displayName String    @db.VarChar(120)
+  source      String    @default("home_toolbar") @db.VarChar(80)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  revokedAt   DateTime?
+
+  user    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  session ExploreSession?        @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  lead    OnboardingProfileLead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  visits  PromotionShareVisit[]
+
+  @@index([ownerKind])
+  @@index([userId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([leadId, createdAt])
+  @@index([source, createdAt])
+  @@index([revokedAt])
+  @@map("promotion_share_links")
+}
+
+model PromotionShareVisit {
+  id          String   @id @default(cuid())
+  shareLinkId String
+  shareCode   String   @db.VarChar(40)
+  targetUrl   String   @db.VarChar(512)
+  ipHash      String?  @db.VarChar(64)
+  userAgent   String?  @db.Text
+  referer     String?  @db.VarChar(512)
+  createdAt   DateTime @default(now())
+
+  shareLink PromotionShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+
+  @@index([shareLinkId, createdAt])
+  @@index([shareCode, createdAt])
+  @@index([ipHash, createdAt])
+  @@map("promotion_share_visits")
+}
+
+model ApiUsageLog {
+  id                    String   @id @default(cuid())
+  userId                String?
+  sessionId             String?
+  provider              String
+  endpoint              String
+  model                 String?
+  promptVersion         String?
+  inputTokens           Int?
+  outputTokens          Int?
+  promptCacheHitTokens  Int?
+  promptCacheMissTokens Int?
+  reasoningTokens       Int?
+  latencyMs             Int?
+  success               Boolean
+  errorCode             String?
+  createdAt             DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([provider, createdAt])
+  @@map("api_usage_logs")
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorUserId   String?
+  sessionId     String?
+  action        String
+  resourceType  String
+  resourceId    String?
+  ipHash        String?
+  userAgentHash String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([resourceType, resourceId])
+  @@map("audit_logs")
+}
+
+// Append this snippet to prisma/schema.prisma before applying the matching
+// 20260728_content_ingestion_foundation migration.
+
+enum ContentSourceStatus {
+  enabled
+  paused
+  blocked
+  error
+}
+
+enum ContentSyncMode {
+  query_only
+  scheduled
+  manual
+  versioned_dataset
+}
+
+enum ContentIngestionTrigger {
+  scheduled
+  manual
+  backfill
+  webhook
+}
+
+enum ContentIngestionStatus {
+  pending
+  running
+  completed
+  partial
+  failed
+  cancelled
+}
+
+enum ContentLifecycleStatus {
+  candidate
+  normalized
+  review_required
+  approved
+  rejected
+  published
+  retracted
+  expired
+}
+
+enum ContentRightsStatus {
+  unknown
+  allowed
+  restricted
+  expired
+  blocked
+}
+
+enum ContentReviewStatus {
+  pending
+  machine_passed
+  human_required
+  approved
+  rejected
+}
+
+model ContentSource {
+  id                      String              @id @default(cuid())
+  code                    String              @unique @db.VarChar(64)
+  displayName             String              @db.VarChar(160)
+  sourceKind              String              @db.VarChar(64)
+  status                  ContentSourceStatus @default(paused)
+  syncMode                ContentSyncMode     @default(query_only)
+  scheduleCron            String?             @db.VarChar(64)
+  syncCursor              String?             @db.Text
+  nextSyncAt              DateTime?
+  lastSuccessAt           DateTime?
+  allowStoreMetadata      Boolean             @default(false)
+  allowStoreExcerpt       Boolean             @default(false)
+  allowStoreBody          Boolean             @default(false)
+  allowStoreRawSnapshot   Boolean             @default(false)
+  allowAiProcess          Boolean             @default(false)
+  allowRecommend          Boolean             @default(false)
+  allowPush               Boolean             @default(false)
+  rawRetentionDays        Int                 @default(0)
+  normalizedRetentionDays Int?
+  policyVersion           String              @default("unreviewed") @db.VarChar(80)
+  rightsExpiresAt         DateTime?
+  attributionText         String?             @db.Text
+  sourceUrl               String?             @db.Text
+  metadata                Json?
+  enabledAt               DateTime?
+  disabledAt              DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  batches         ContentIngestionBatch[]
+  items           ContentItem[]
+  rightsSnapshots ContentRightsSnapshot[]
+
+  @@index([status, syncMode, nextSyncAt])
+  @@index([rightsExpiresAt])
+  @@map("content_sources")
+}
+
+model ContentIngestionBatch {
+  id             String                  @id @default(cuid())
+  sourceId       String
+  trigger        ContentIngestionTrigger
+  idempotencyKey String                  @unique @db.VarChar(191)
+  status         ContentIngestionStatus  @default(pending)
+  cursorStart    String?                 @db.Text
+  cursorEnd      String?                 @db.Text
+  requestedCount Int                     @default(0)
+  fetchedCount   Int                     @default(0)
+  createdCount   Int                     @default(0)
+  updatedCount   Int                     @default(0)
+  unchangedCount Int                     @default(0)
+  rejectedCount  Int                     @default(0)
+  failedCount    Int                     @default(0)
+  errorCode      String?                 @db.VarChar(80)
+  errorMessage   String?                 @db.Text
+  stageMetrics   Json?
+  workerId       String?                 @db.VarChar(120)
+  cleanerVersion String                  @db.VarChar(80)
+  policyVersion  String                  @db.VarChar(80)
+  scheduledFor   DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  source ContentSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@index([sourceId, createdAt])
+  @@index([status, scheduledFor])
+  @@map("content_ingestion_batches")
+}
+
+model ContentRightsSnapshot {
+  id                    String              @id @default(cuid())
+  sourceId              String
+  policyVersion         String              @db.VarChar(80)
+  status                ContentRightsStatus @default(unknown)
+  allowStoreMetadata    Boolean             @default(false)
+  allowStoreExcerpt     Boolean             @default(false)
+  allowStoreBody        Boolean             @default(false)
+  allowStoreRawSnapshot Boolean             @default(false)
+  allowAiProcess        Boolean             @default(false)
+  allowRecommend        Boolean             @default(false)
+  allowPush             Boolean             @default(false)
+  evidenceType          String?             @db.VarChar(80)
+  evidenceUrl           String?             @db.Text
+  evidenceObjectKey     String?             @db.VarChar(512)
+  note                  String?             @db.Text
+  effectiveAt           DateTime
+  expiresAt             DateTime?
+  reviewedBy            String?             @db.VarChar(191)
+  createdAt             DateTime            @default(now())
+
+  source       ContentSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  currentItems ContentItem[]
+
+  @@unique([sourceId, policyVersion])
+  @@index([status, expiresAt])
+  @@map("content_rights_snapshots")
+}
+
+model ContentItem {
+  id               String                 @id @default(cuid())
+  sourceId         String
+  externalId       String                 @db.VarChar(191)
+  originalUrl      String                 @db.Text
+  canonicalUrl     String                 @db.Text
+  canonicalUrlHash String                 @db.Char(64)
+  originalTitle    String                 @db.VarChar(500)
+  normalizedTitle  String                 @db.VarChar(500)
+  excerpt          String?                @db.Text
+  contentType      String                 @db.VarChar(80)
+  language         String?                @db.VarChar(32)
+  authors          Json?
+  tags             Json?
+  metrics          Json?
+  rawPayloadHash   String                 @db.Char(64)
+  contentHash      String                 @db.Char(64)
+  rawObjectKey     String?                @db.VarChar(512)
+  cleanerVersion   String                 @db.VarChar(80)
+  currentVersion   Int                    @default(1)
+  rightsSnapshotId String?
+  rightsStatus     ContentRightsStatus    @default(unknown)
+  reviewStatus     ContentReviewStatus    @default(pending)
+  lifecycleStatus  ContentLifecycleStatus @default(candidate)
+  riskLevel        String                 @default("unreviewed") @db.VarChar(40)
+  publishedAt      DateTime?
+  sourceUpdatedAt  DateTime?
+  firstSeenAt      DateTime               @default(now())
+  lastSeenAt       DateTime               @default(now())
+  normalizedAt     DateTime?
+  approvedAt       DateTime?
+  retractedAt      DateTime?
+  expiresAt        DateTime?
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  source         ContentSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  rightsSnapshot ContentRightsSnapshot? @relation(fields: [rightsSnapshotId], references: [id], onDelete: SetNull)
+  document       ContentDocument?
+  versions       ContentVersion[]
+  communityEvidenceAnalysis CommunityEvidenceAnalysis?
+
+  @@unique([sourceId, externalId])
+  @@index([canonicalUrlHash])
+  @@index([contentHash])
+  @@index([sourceId, lastSeenAt])
+  @@index([lifecycleStatus, publishedAt])
+  @@index([rightsStatus, reviewStatus, publishedAt])
+  @@index([expiresAt])
+  @@map("content_items")
+}
+
+/// 社区内容的规则清洗、AI判断和人工审核结果独立保存，避免把推断结论混入证据正文。
+model CommunityEvidenceAnalysis {
+  id                 String   @id @default(cuid())
+  contentItemId      String   @unique
+  institutionCode    String   @db.VarChar(80)
+  institutionName    String   @db.VarChar(160)
+  majorName          String?  @db.VarChar(160)
+  platform           String   @db.VarChar(40)
+  dimension          String   @db.VarChar(40)
+  qualityScore       Int
+  credibilityScore  Decimal? @db.Decimal(4, 2)
+  similarityHash     String   @db.Char(16)
+  duplicateClusterId String?  @db.VarChar(191)
+  spamSignals        Json?
+  privacyFlags       Json?
+  sentiment          Json?
+  claims             Json?
+  analysisStatus     String   @default("rules_passed") @db.VarChar(40)
+  model              String?  @db.VarChar(120)
+  promptVersion      String?  @db.VarChar(80)
+  reviewerUserId     String?  @db.VarChar(191)
+  reviewedAt         DateTime?
+  reviewNote         String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@index([institutionCode, dimension, analysisStatus])
+  @@index([platform, createdAt])
+  @@index([duplicateClusterId])
+  @@map("community_evidence_analyses")
+}
+
+model ContentDocument {
+  id                  String   @id @default(cuid())
+  contentItemId       String   @unique
+  bodyText            String?  @db.LongText
+  sanitizedHtml       String?  @db.LongText
+  originalCharCount   Int      @default(0)
+  normalizedCharCount Int      @default(0)
+  language            String?  @db.VarChar(32)
+  safetyFlags         Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("content_documents")
+}
+
+model ContentVersion {
+  id                String   @id @default(cuid())
+  contentItemId     String
+  version           Int
+  contentHash       String   @db.Char(64)
+  cleanerVersion    String   @db.VarChar(80)
+  policyVersion     String   @db.VarChar(80)
+  title             String   @db.VarChar(500)
+  excerpt           String?  @db.Text
+  documentObjectKey String?  @db.VarChar(512)
+  changedFields     Json?
+  changeReason      String?  @db.VarChar(160)
+  createdAt         DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@unique([contentItemId, contentHash])
+  @@index([createdAt])
+  @@map("content_versions")
+}
+
+/// 高校自动采集总开关使用按键存储，后续新增采集类型时无需修改表结构。
+model ContentIngestionAutomationControl {
+  key             String   @id @db.VarChar(64)
+  enabled         Boolean  @default(true)
+  updatedByUserId String?  @db.VarChar(191)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("content_ingestion_automation_controls")
+}

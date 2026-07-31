@@ -1,0 +1,297 @@
+// Append this snippet to prisma/schema.prisma before applying the matching
+// 20260728_content_ingestion_foundation migration.
+
+enum ContentSourceStatus {
+  enabled
+  paused
+  blocked
+  error
+}
+
+enum ContentSyncMode {
+  query_only
+  scheduled
+  manual
+  versioned_dataset
+}
+
+enum ContentIngestionTrigger {
+  scheduled
+  manual
+  backfill
+  webhook
+}
+
+enum ContentIngestionStatus {
+  pending
+  running
+  completed
+  partial
+  failed
+  cancelled
+}
+
+enum ContentLifecycleStatus {
+  candidate
+  normalized
+  review_required
+  approved
+  rejected
+  published
+  retracted
+  expired
+}
+
+enum ContentRightsStatus {
+  unknown
+  allowed
+  restricted
+  expired
+  blocked
+}
+
+enum ContentReviewStatus {
+  pending
+  machine_passed
+  human_required
+  approved
+  rejected
+}
+
+model ContentSource {
+  id                      String              @id @default(cuid())
+  code                    String              @unique @db.VarChar(64)
+  displayName             String              @db.VarChar(160)
+  sourceKind              String              @db.VarChar(64)
+  status                  ContentSourceStatus @default(paused)
+  syncMode                ContentSyncMode     @default(query_only)
+  scheduleCron            String?             @db.VarChar(64)
+  syncCursor              String?             @db.Text
+  nextSyncAt              DateTime?
+  lastSuccessAt           DateTime?
+  allowStoreMetadata      Boolean             @default(false)
+  allowStoreExcerpt       Boolean             @default(false)
+  allowStoreBody          Boolean             @default(false)
+  allowStoreRawSnapshot   Boolean             @default(false)
+  allowAiProcess          Boolean             @default(false)
+  allowRecommend          Boolean             @default(false)
+  allowPush               Boolean             @default(false)
+  rawRetentionDays        Int                 @default(0)
+  normalizedRetentionDays Int?
+  policyVersion           String              @default("unreviewed") @db.VarChar(80)
+  rightsExpiresAt         DateTime?
+  attributionText         String?             @db.Text
+  sourceUrl               String?             @db.Text
+  metadata                Json?
+  enabledAt               DateTime?
+  disabledAt              DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  batches         ContentIngestionBatch[]
+  items           ContentItem[]
+  rightsSnapshots ContentRightsSnapshot[]
+
+  @@index([status, syncMode, nextSyncAt])
+  @@index([rightsExpiresAt])
+  @@map("content_sources")
+}
+
+model ContentIngestionBatch {
+  id               String                  @id @default(cuid())
+  sourceId         String
+  trigger          ContentIngestionTrigger
+  idempotencyKey   String                  @unique @db.VarChar(191)
+  status           ContentIngestionStatus  @default(pending)
+  cursorStart      String?                 @db.Text
+  cursorEnd        String?                 @db.Text
+  requestedCount   Int                     @default(0)
+  fetchedCount     Int                     @default(0)
+  createdCount     Int                     @default(0)
+  updatedCount     Int                     @default(0)
+  unchangedCount   Int                     @default(0)
+  rejectedCount    Int                     @default(0)
+  failedCount      Int                     @default(0)
+  errorCode        String?                 @db.VarChar(80)
+  errorMessage     String?                 @db.Text
+  stageMetrics     Json?
+  workerId         String?                 @db.VarChar(120)
+  cleanerVersion   String                  @db.VarChar(80)
+  policyVersion    String                  @db.VarChar(80)
+  scheduledFor     DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  source ContentSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+
+  @@index([sourceId, createdAt])
+  @@index([status, scheduledFor])
+  @@map("content_ingestion_batches")
+}
+
+model ContentRightsSnapshot {
+  id                    String              @id @default(cuid())
+  sourceId              String
+  policyVersion         String              @db.VarChar(80)
+  status                ContentRightsStatus @default(unknown)
+  allowStoreMetadata    Boolean             @default(false)
+  allowStoreExcerpt     Boolean             @default(false)
+  allowStoreBody        Boolean             @default(false)
+  allowStoreRawSnapshot Boolean             @default(false)
+  allowAiProcess        Boolean             @default(false)
+  allowRecommend        Boolean             @default(false)
+  allowPush             Boolean             @default(false)
+  evidenceType          String?             @db.VarChar(80)
+  evidenceUrl           String?             @db.Text
+  evidenceObjectKey     String?             @db.VarChar(512)
+  note                  String?             @db.Text
+  effectiveAt           DateTime
+  expiresAt             DateTime?
+  reviewedBy            String?             @db.VarChar(191)
+  createdAt             DateTime            @default(now())
+
+  source       ContentSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  currentItems ContentItem[]
+
+  @@unique([sourceId, policyVersion])
+  @@index([status, expiresAt])
+  @@map("content_rights_snapshots")
+}
+
+model ContentItem {
+  id                 String                 @id @default(cuid())
+  sourceId           String
+  externalId         String                 @db.VarChar(191)
+  originalUrl        String                 @db.Text
+  canonicalUrl       String                 @db.Text
+  canonicalUrlHash   String                 @db.Char(64)
+  originalTitle      String                 @db.VarChar(500)
+  normalizedTitle    String                 @db.VarChar(500)
+  excerpt            String?                @db.Text
+  contentType        String                 @db.VarChar(80)
+  language           String?                @db.VarChar(32)
+  authors            Json?
+  tags               Json?
+  metrics            Json?
+  rawPayloadHash     String                 @db.Char(64)
+  contentHash        String                 @db.Char(64)
+  rawObjectKey       String?                @db.VarChar(512)
+  cleanerVersion     String                 @db.VarChar(80)
+  currentVersion     Int                    @default(1)
+  rightsSnapshotId   String?
+  rightsStatus       ContentRightsStatus    @default(unknown)
+  reviewStatus       ContentReviewStatus    @default(pending)
+  lifecycleStatus    ContentLifecycleStatus @default(candidate)
+  riskLevel          String                 @default("unreviewed") @db.VarChar(40)
+  publishedAt        DateTime?
+  sourceUpdatedAt    DateTime?
+  firstSeenAt        DateTime               @default(now())
+  lastSeenAt         DateTime               @default(now())
+  normalizedAt       DateTime?
+  approvedAt         DateTime?
+  retractedAt        DateTime?
+  expiresAt          DateTime?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  source         ContentSource          @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  rightsSnapshot ContentRightsSnapshot? @relation(fields: [rightsSnapshotId], references: [id], onDelete: SetNull)
+  document       ContentDocument?
+  versions       ContentVersion[]
+  communityEvidenceAnalysis CommunityEvidenceAnalysis?
+
+  @@unique([sourceId, externalId])
+  @@index([canonicalUrlHash])
+  @@index([contentHash])
+  @@index([sourceId, lastSeenAt])
+  @@index([lifecycleStatus, publishedAt])
+  @@index([rightsStatus, reviewStatus, publishedAt])
+  @@index([expiresAt])
+  @@map("content_items")
+}
+
+/// 社区内容的规则清洗、AI判断和人工审核结果独立保存，避免把推断结论混入证据正文。
+model CommunityEvidenceAnalysis {
+  id                 String   @id @default(cuid())
+  contentItemId      String   @unique
+  institutionCode    String   @db.VarChar(80)
+  institutionName    String   @db.VarChar(160)
+  majorName          String?  @db.VarChar(160)
+  platform           String   @db.VarChar(40)
+  dimension          String   @db.VarChar(40)
+  qualityScore       Int
+  credibilityScore  Decimal? @db.Decimal(4, 2)
+  similarityHash     String   @db.Char(16)
+  duplicateClusterId String?  @db.VarChar(191)
+  spamSignals        Json?
+  privacyFlags       Json?
+  sentiment          Json?
+  claims             Json?
+  analysisStatus     String   @default("rules_passed") @db.VarChar(40)
+  model              String?  @db.VarChar(120)
+  promptVersion      String?  @db.VarChar(80)
+  reviewerUserId     String?  @db.VarChar(191)
+  reviewedAt         DateTime?
+  reviewNote         String?  @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@index([institutionCode, dimension, analysisStatus])
+  @@index([platform, createdAt])
+  @@index([duplicateClusterId])
+  @@map("community_evidence_analyses")
+}
+
+model ContentDocument {
+  id                  String   @id @default(cuid())
+  contentItemId       String   @unique
+  bodyText            String?  @db.LongText
+  sanitizedHtml       String?  @db.LongText
+  originalCharCount   Int      @default(0)
+  normalizedCharCount Int      @default(0)
+  language            String?  @db.VarChar(32)
+  safetyFlags         Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@map("content_documents")
+}
+
+model ContentVersion {
+  id               String   @id @default(cuid())
+  contentItemId    String
+  version          Int
+  contentHash      String   @db.Char(64)
+  cleanerVersion   String   @db.VarChar(80)
+  policyVersion    String   @db.VarChar(80)
+  title            String   @db.VarChar(500)
+  excerpt          String?  @db.Text
+  documentObjectKey String? @db.VarChar(512)
+  changedFields    Json?
+  changeReason     String?  @db.VarChar(160)
+  createdAt        DateTime @default(now())
+
+  contentItem ContentItem @relation(fields: [contentItemId], references: [id], onDelete: Cascade)
+
+  @@unique([contentItemId, version])
+  @@unique([contentItemId, contentHash])
+  @@index([createdAt])
+  @@map("content_versions")
+}
+
+/// 高校自动采集总开关使用按键存储，后续新增采集类型时无需修改表结构。
+model ContentIngestionAutomationControl {
+  key             String   @id @db.VarChar(64)
+  enabled         Boolean  @default(true)
+  updatedByUserId String?  @db.VarChar(191)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("content_ingestion_automation_controls")
+}
