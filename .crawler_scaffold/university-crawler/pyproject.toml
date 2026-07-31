@@ -1,0 +1,22 @@
+[project]
+name = "uniprism-university-crawler"
+version = "0.1.0"
+description = "Controlled university public-content crawler for UniPrism"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4>=4.12,<5",
+  "browser-use>=0.12,<0.13",
+  "httpx>=0.27,<1",
+  "lxml>=5.2,<6",
+  "playwright>=1.52,<2",
+  "pydantic>=2.8,<3",
+  "pydantic-settings>=2.3,<3",
+  "PyYAML>=6.0,<7",
+]
+
+[project.scripts]
+uniprism-university-crawler = "university_crawler.main:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
         le=60.0,
     )
     community_agent_browser_headless: bool = True
+    community_agent_runtime_dir: str = ".runtime/browser-use"
     community_agent_skill_path: str = (
         "skills/uniprism-university-community-crawler/SKILL.md"
     )

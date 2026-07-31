@@ -15,6 +15,13 @@ CommunityDimension = Literal[
     "cafeteria",
     "student_club",
 ]
+CommunityAgentTaskStatus = Literal[
+    "completed",
+    "blocked_login",
+    "blocked_captcha",
+    "blocked_access",
+    "failed",
+]
 
 
 class CommunityDiscoveryPlan(BaseModel):
@@ -53,3 +60,14 @@ class CommunityEvidenceCandidate(BaseModel):
     discovered_at: datetime
     published_at: datetime | None = None
     engagement: dict[str, str | int | float | bool] = Field(default_factory=dict)
+
+
+class CommunityAgentTaskResult(BaseModel):
+    """单任务结果只保留可监控指标和合规候选，不保存模型思维链。"""
+
+    task: CommunityAgentTask
+    status: CommunityAgentTaskStatus
+    candidates: list[CommunityEvidenceCandidate] = Field(default_factory=list)
+    steps: int = Field(default=0, ge=0)
+    pages_visited: int = Field(default=0, ge=0)
+    block_reason: str = Field(default="", max_length=120)
