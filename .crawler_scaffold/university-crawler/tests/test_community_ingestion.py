@@ -93,7 +93,9 @@ class CommunityIngestionTest(unittest.IsolatedAsyncioTestCase):
 
         async def handler(request: httpx.Request) -> httpx.Response:
             nonlocal received_metadata
-            received_metadata = json.loads(request.content)["agentMetadata"]
+            body = json.loads(request.content)
+            received_metadata = body["agentMetadata"]
+            received_metadata["trigger"] = body["trigger"]
             return httpx.Response(
                 200,
                 json={
@@ -113,6 +115,7 @@ class CommunityIngestionTest(unittest.IsolatedAsyncioTestCase):
             platform="zhihu",
             run_id="agent-run-0001",
             query="北京大学课程",
+            trigger="scheduled",
             agent_metadata={
                 "mode": "agent",
                 "skillVersion": "uniprism-community-v1",
@@ -127,6 +130,7 @@ class CommunityIngestionTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(received_metadata["mode"], "agent")
         self.assertEqual(received_metadata["steps"], 12)
+        self.assertEqual(received_metadata["trigger"], "scheduled")
 
 
 async def _completed_wait() -> None:

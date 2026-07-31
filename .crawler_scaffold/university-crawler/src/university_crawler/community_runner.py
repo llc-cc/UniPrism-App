@@ -50,6 +50,7 @@ DimensionArgument = Literal[
     "student_club",
 ]
 DiscoveryMode = Literal["agent", "search_api"]
+ExecutionTrigger = Literal["manual", "scheduled"]
 Discoverer = Callable[..., Awaitable[list[DiscoveredLink]]]
 Crawler = Callable[[DiscoveredLink, Settings], Awaitable[CommunityCrawlResult]]
 Uploader = Callable[..., Awaitable[list[dict[str, Any]]]]
@@ -104,6 +105,7 @@ async def run_community_pilot(
     platform: PlatformArgument,
     discovery_mode: DiscoveryMode = "agent",
     dimension: DimensionArgument = "all",
+    execution_trigger: ExecutionTrigger = "manual",
     discoverer: Discoverer = discover_public_links,
     crawler: Crawler = crawl_discovered_link,
     uploader: Uploader = upload_community_evidence,
@@ -134,6 +136,7 @@ async def run_community_pilot(
             agent_task_runner=agent_task_runner,
             skill_loader=skill_loader,
             task_delay=task_delay,
+            execution_trigger=execution_trigger,
         )
     return await _run_search_api_pilot(
         plan,
@@ -141,6 +144,7 @@ async def run_community_pilot(
         discoverer=discoverer,
         crawler=crawler,
         uploader=uploader,
+        execution_trigger=execution_trigger,
     )
 
 
@@ -152,6 +156,7 @@ async def _run_agent_pilot(
     agent_task_runner: AgentTaskRunner,
     skill_loader: SkillLoader,
     task_delay: TaskDelay,
+    execution_trigger: ExecutionTrigger,
 ) -> CommunityRunResult:
     """串行执行受控 Agent，限制并发可降低平台压力和服务器内存峰值。"""
 
@@ -228,6 +233,7 @@ async def _run_agent_pilot(
                 platform=current_platform,
                 run_id=run_id,
                 query=f"北京大学 {current_platform} 七维度公开社区证据",
+                trigger=execution_trigger,
                 agent_metadata={
                     "mode": "agent",
                     "skillName": skill.name,
@@ -239,6 +245,7 @@ async def _run_agent_pilot(
                     "steps": counts["agent_steps"],
                     "pagesVisited": counts["pages_visited"],
                     "duplicatesRemoved": counts["duplicates_removed"],
+                    "triggerSource": execution_trigger,
                 },
                 settings=settings,
             )
@@ -258,6 +265,7 @@ async def _run_search_api_pilot(
     discoverer: Discoverer,
     crawler: Crawler,
     uploader: Uploader,
+    execution_trigger: ExecutionTrigger,
 ) -> CommunityRunResult:
     """保留已有搜索 API 模式，便于 Agent 故障时人工诊断。"""
 
@@ -303,6 +311,7 @@ async def _run_search_api_pilot(
                 platform=current_platform,
                 run_id=run_id,
                 query=query_by_platform.get(current_platform, "北京大学社区公开内容"),
+                trigger=execution_trigger,
                 settings=settings,
             )
         except Exception:

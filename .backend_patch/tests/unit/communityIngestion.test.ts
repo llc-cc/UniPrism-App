@@ -24,6 +24,20 @@ const validPayload = {
   documents: [usefulDocument],
 };
 
+const agentMetadata = {
+  mode: 'agent',
+  skillName: 'uniprism-university-community-crawler',
+  skillVersion: 'uniprism-community-v1',
+  plannedTasks: 14,
+  completedTasks: 12,
+  blockedTasks: 2,
+  failedTasks: 0,
+  steps: 48,
+  pagesVisited: 30,
+  duplicatesRemoved: 6,
+  triggerSource: 'scheduled',
+} as const;
+
 describe('community ingestion contract', () => {
   it('accepts only the Beijing University pilot and supported platforms', () => {
     expect(() => communityIngestionPayloadSchema.parse(validPayload)).not.toThrow();
@@ -46,6 +60,18 @@ describe('community ingestion contract', () => {
       }],
     })).toThrow();
   });
+
+  it('accepts bounded Agent audit metadata and rejects invalid counters', () => {
+    expect(() => communityIngestionPayloadSchema.parse({
+      ...validPayload,
+      trigger: 'scheduled',
+      agentMetadata,
+    })).not.toThrow();
+    expect(() => communityIngestionPayloadSchema.parse({
+      ...validPayload,
+      agentMetadata: { ...agentMetadata, steps: -1 },
+    })).toThrow();
+  });
 });
 
 describe('ingestCommunityEvidence', () => {
@@ -56,17 +82,21 @@ describe('ingestCommunityEvidence', () => {
       version: 1,
     });
     const upsertAnalysis = vi.fn().mockResolvedValue({ id: 'analysis-1' });
+    const sourceUpsert = vi.fn().mockResolvedValue({ id: 'source-1' });
+    const updateSource = vi.fn().mockResolvedValue({ id: 'source-1' });
+    const createBatch = vi.fn().mockResolvedValue({ id: 'batch-1' });
     const updateBatch = vi.fn().mockResolvedValue({ id: 'batch-1' });
     const database = {
       contentSource: {
-        upsert: vi.fn().mockResolvedValue({ id: 'source-1' }),
+        upsert: sourceUpsert,
+        update: updateSource,
       },
       contentRightsSnapshot: {
         upsert: vi.fn().mockResolvedValue({ id: 'rights-1' }),
       },
       contentIngestionBatch: {
         findUnique: vi.fn().mockResolvedValue(null),
-        create: vi.fn().mockResolvedValue({ id: 'batch-1' }),
+        create: createBatch,
         update: updateBatch,
       },
       communityEvidenceAnalysis: {
@@ -78,6 +108,8 @@ describe('ingestCommunityEvidence', () => {
       database as never,
       {
         ...validPayload,
+        trigger: 'scheduled',
+        agentMetadata,
         documents: [
           usefulDocument,
           {
@@ -99,7 +131,25 @@ describe('ingestCommunityEvidence', () => {
       database,
       expect.objectContaining({ forceHumanReview: true }),
     );
+    expect(sourceUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        status: 'enabled',
+        syncMode: 'scheduled',
+        scheduleCron: '0 3 * * *',
+      }),
+      update: expect.objectContaining({
+        status: 'enabled',
+        syncMode: 'scheduled',
+      }),
+    }));
+    expect(updateSource).toHaveBeenCalledWith({
+      where: { id: 'source-1' },
+      data: expect.objectContaining({ lastSuccessAt: expect.any(Date) }),
+    });
     expect(upsertAnalysis).toHaveBeenCalledTimes(1);
+    expect(createBatch).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ trigger: 'scheduled' }),
+    }));
     expect(updateBatch).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         status: 'completed',
@@ -107,6 +157,11 @@ describe('ingestCommunityEvidence', () => {
           extracted: 2,
           ruleRejected: 1,
           pendingReview: 1,
+          agent: expect.objectContaining({
+            skillVersion: 'uniprism-community-v1',
+            steps: 48,
+            pagesVisited: 30,
+          }),
         }),
       }),
     }));

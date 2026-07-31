@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -38,6 +38,7 @@ async def upload_community_evidence(
     platform: CommunityPlatform,
     run_id: str,
     query: str,
+    trigger: Literal["manual", "scheduled"] = "manual",
     agent_metadata: dict[str, Any] | None = None,
     settings: Settings,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -67,6 +68,7 @@ async def upload_community_evidence(
                 "institutionName": "北京大学",
                 "platform": platform,
                 "query": query,
+                "trigger": trigger,
                 "documents": [_document_payload(item) for item in batch],
             }
             if agent_metadata is not None:

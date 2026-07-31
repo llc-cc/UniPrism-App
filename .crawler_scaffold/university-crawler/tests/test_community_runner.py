@@ -152,6 +152,7 @@ class CommunityRunnerTest(unittest.IsolatedAsyncioTestCase):
             ),
             platform="zhihu",
             discovery_mode="agent",
+            execution_trigger="scheduled",
             agent_task_runner=agent_task_runner,
             skill_loader=lambda _path: CommunityAgentSkill(
                 name="uniprism-university-community-crawler",
@@ -172,3 +173,4 @@ class CommunityRunnerTest(unittest.IsolatedAsyncioTestCase):
             uploads[0][1]["agent_metadata"]["skillVersion"],
             "test",
         )
+        self.assertEqual(uploads[0][1]["trigger"], "scheduled")

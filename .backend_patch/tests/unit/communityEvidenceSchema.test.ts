@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 describe('community evidence Prisma schema', () => {
   const schema = readFileSync(
-    '.backend_patch/prisma/schema.prisma',
+    'prisma/schema.prisma',
     'utf8',
   );
 

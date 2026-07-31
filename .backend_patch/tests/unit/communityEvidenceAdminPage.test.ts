@@ -3,11 +3,15 @@ import { describe, expect, it } from 'vitest';
 
 describe('community evidence admin page', () => {
   const dashboard = readFileSync(
-    '.backend_patch/app/admin/content-ingestion/AdminContentIngestionDashboardClient.tsx',
+    'app/admin/content-ingestion/AdminContentIngestionDashboardClient.tsx',
     'utf8',
   );
   const reviewPage = readFileSync(
-    '.backend_patch/app/admin/content-ingestion/CommunityEvidenceReviewClient.tsx',
+    'app/admin/content-ingestion/CommunityEvidenceReviewClient.tsx',
+    'utf8',
+  );
+  const sourceDetail = readFileSync(
+    'app/admin/content-ingestion/[sourceCode]/page.tsx',
     'utf8',
   );
 
@@ -39,5 +43,13 @@ describe('community evidence admin page', () => {
     expect(reviewPage).toContain('通过');
     expect(reviewPage).toContain('拒绝');
     expect(reviewPage).not.toMatch(/username|accountId|avatar|rawSnapshot/);
+  });
+
+  it('shows bounded Agent execution metrics without model reasoning', () => {
+    expect(dashboard).toContain('Agent 任务');
+    expect(sourceDetail).toContain('Agent 执行');
+    expect(sourceDetail).toContain('访问页');
+    expect(sourceDetail).toContain('去重');
+    expect(sourceDetail).not.toMatch(/thoughts|chainOfThought|modelReasoning/);
   });
 });

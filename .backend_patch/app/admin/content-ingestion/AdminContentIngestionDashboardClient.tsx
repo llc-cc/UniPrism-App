@@ -90,6 +90,11 @@ function SourceDirectoryRow({ source }: { source: AdminContentIngestionSource })
       <div className="text-sm text-slate-600">
         <div>最近成功：{formatDateTime(source.lastSuccessAt)}</div>
         <div className="mt-1 text-xs text-slate-400">最近任务：抓取 {latestBatch?.fetchedCount ?? 0} · 新增 {latestBatch?.createdCount ?? 0} · 失败 {latestBatch?.failedCount ?? 0}</div>
+        {latestBatch?.agentMetrics ? (
+          <div className="mt-1 text-xs text-violet-600">
+            Agent 任务：完成 {latestBatch.agentMetrics.completedTasks} · 阻断 {latestBatch.agentMetrics.blockedTasks} · 失败 {latestBatch.agentMetrics.failedTasks}
+          </div>
+        ) : null}
       </div>
 
       <Link href={`/admin/content-ingestion/${encodeURIComponent(source.code)}`} aria-label={`查看${source.displayName}详情`} className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-violet-700 hover:bg-violet-50">

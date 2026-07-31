@@ -119,6 +119,7 @@ async def run_community(
         platform=platform,
         discovery_mode=discovery_mode,
         dimension=dimension,
+        execution_trigger="scheduled" if scheduled else "manual",
     )
 
 

@@ -40,12 +40,28 @@ const communityDocumentSchema = z.object({
   ).default({}),
 }).strict();
 
+const communityAgentMetadataSchema = z.object({
+  mode: z.literal('agent'),
+  skillName: z.string().trim().min(1).max(120),
+  skillVersion: z.string().trim().min(1).max(120),
+  plannedTasks: z.number().int().min(0).max(10_000),
+  completedTasks: z.number().int().min(0).max(10_000),
+  blockedTasks: z.number().int().min(0).max(10_000),
+  failedTasks: z.number().int().min(0).max(10_000),
+  steps: z.number().int().min(0).max(1_000_000),
+  pagesVisited: z.number().int().min(0).max(1_000_000),
+  duplicatesRemoved: z.number().int().min(0).max(1_000_000),
+  triggerSource: z.enum(['manual', 'scheduled']),
+}).strict();
+
 export const communityIngestionPayloadSchema = z.object({
   runId: z.string().trim().min(8).max(191),
   institutionCode: z.literal('peking-university'),
   institutionName: z.literal('北京大学'),
   platform: z.enum(COMMUNITY_PLATFORMS),
   query: z.string().trim().min(2).max(300),
+  trigger: z.enum(['manual', 'scheduled']).default('manual'),
+  agentMetadata: communityAgentMetadataSchema.optional(),
   documents: z.array(communityDocumentSchema).min(1).max(50),
 }).strict().superRefine((payload, context) => {
   payload.documents.forEach((document, index) => {
@@ -75,16 +91,19 @@ type EnqueueAnalysisFunction = (
 async function ensureCommunitySource(
   prisma: PrismaClient,
   platform: CommunityPlatform,
+  trigger: 'manual' | 'scheduled',
 ) {
   const definition = getCommunitySource(platform);
+  const scheduled = trigger === 'scheduled';
   const source = await prisma.contentSource.upsert({
     where: { code: definition.code },
     create: {
       code: definition.code,
       displayName: definition.displayName,
       sourceKind: 'community_public',
-      status: 'paused',
-      syncMode: 'manual',
+      status: scheduled ? 'enabled' : 'paused',
+      syncMode: scheduled ? 'scheduled' : 'manual',
+      scheduleCron: scheduled ? '0 3 * * *' : null,
       allowStoreMetadata: true,
       allowStoreExcerpt: true,
       allowStoreBody: true,
@@ -97,6 +116,12 @@ async function ensureCommunitySource(
     },
     update: {
       displayName: definition.displayName,
+      // 人工补测不能把已经启用的定时来源降级为暂停状态。
+      ...(scheduled ? {
+        status: 'enabled' as const,
+        syncMode: 'scheduled' as const,
+        scheduleCron: '0 3 * * *',
+      } : {}),
       allowAiProcess: true,
       allowRecommend: false,
       allowPush: false,
@@ -149,6 +174,7 @@ export async function ingestCommunityEvidence(
   const { source, rights, definition } = await ensureCommunitySource(
     prisma,
     payload.platform,
+    payload.trigger,
   );
   const idempotencyKey = `community:${payload.runId}:${payload.platform}`;
   const existingBatch = await prisma.contentIngestionBatch.findUnique({
@@ -183,7 +209,7 @@ export async function ingestCommunityEvidence(
   const batch = await prisma.contentIngestionBatch.create({
     data: {
       sourceId: source.id,
-      trigger: 'manual',
+      trigger: payload.trigger,
       // Python runId 已包含分批序号；固定键使网络重试不会重复创建采集批次。
       idempotencyKey,
       status: 'running',
@@ -295,10 +321,17 @@ export async function ingestCommunityEvidence(
         extracted: payload.documents.length,
         ruleRejected: rejectedCount,
         pendingReview,
+        ...(payload.agentMetadata ? { agent: payload.agentMetadata } : {}),
       },
       completedAt: new Date(),
     },
   });
+  if (failedCount === 0) {
+    await prisma.contentSource.update({
+      where: { id: source.id },
+      data: { lastSuccessAt: new Date() },
+    });
+  }
 
   return {
     batchId: batch.id,
