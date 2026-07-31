@@ -68,6 +68,10 @@ type PersistFunction = (
   prisma: PrismaClient,
   input: PersistNormalizedContentInput,
 ) => Promise<PersistNormalizedContentResult>;
+type EnqueueAnalysisFunction = (
+  contentItemId: string,
+  cleanerVersion: string,
+) => Promise<unknown>;
 
 async function ensureCommunitySource(
   prisma: PrismaClient,
@@ -140,6 +144,7 @@ export async function ingestCommunityEvidence(
   prisma: PrismaClient,
   input: CommunityIngestionPayload,
   persist: PersistFunction = persistNormalizedContent,
+  enqueueAnalysis?: EnqueueAnalysisFunction,
 ) {
   const payload = communityIngestionPayloadSchema.parse(input);
   const { source, rights, definition } = await ensureCommunitySource(
@@ -237,6 +242,9 @@ export async function ingestCommunityEvidence(
           analysisStatus: 'rules_passed',
         },
       });
+      if (enqueueAnalysis) {
+        await enqueueAnalysis(persisted.itemId, 'community-cleaner-v1');
+      }
     } catch {
       failedCount += 1;
     }

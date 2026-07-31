@@ -7,6 +7,10 @@ import {
   communityIngestionPayloadSchema,
   ingestCommunityEvidence,
 } from '@/lib/content-ingestion/communityIngestion';
+import {
+  enqueueCommunityEvidenceAnalysis,
+  getCommunityEvidenceAnalysisQueue,
+} from '@/lib/community-analysis/queue';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,5 +20,14 @@ export const maxDuration = 300;
 export const POST = withApiHandler(async (request: NextRequest) => {
   assertCrawlerAuthorization(request.headers.get('authorization') ?? '');
   const payload = communityIngestionPayloadSchema.parse(await request.json());
-  return ok(await ingestCommunityEvidence(prisma, payload));
+  return ok(await ingestCommunityEvidence(
+    prisma,
+    payload,
+    undefined,
+    (contentItemId, cleanerVersion) => enqueueCommunityEvidenceAnalysis(
+      getCommunityEvidenceAnalysisQueue(),
+      contentItemId,
+      cleanerVersion,
+    ),
+  ));
 });
