@@ -18,6 +18,7 @@ double _unifiedDouble(dynamic value) {
   return double.tryParse(value?.toString() ?? '') ?? 0;
 }
 
+/// 后端筛选出的单条真实来源，供 Agent 回答和来源卡片展示。
 class UnifiedAnswerSource {
   const UnifiedAnswerSource({
     required this.sourceId,
@@ -76,6 +77,7 @@ class UnifiedAnswerSource {
   };
 }
 
+/// “先检索内容库”的完整回答数据，包含答案、来源和采集任务状态。
 class UnifiedContentAnswerResult {
   const UnifiedContentAnswerResult({
     required this.answer,
@@ -90,6 +92,7 @@ class UnifiedContentAnswerResult {
     required this.latencyMs,
     required this.primarySource,
     required this.selectedSources,
+    this.acquisition,
   });
 
   final String answer;
@@ -104,6 +107,7 @@ class UnifiedContentAnswerResult {
   final int latencyMs;
   final UnifiedAnswerSource? primarySource;
   final List<UnifiedAnswerSource> selectedSources;
+  final ContentAcquisitionInfo? acquisition;
 
   factory UnifiedContentAnswerResult.fromJson(Map<String, dynamic> json) {
     final answerData = AuthService._map(json['answer']) ?? const {};
@@ -131,6 +135,7 @@ class UnifiedContentAnswerResult {
                 .map(UnifiedAnswerSource.fromJson)
                 .toList(growable: false)
           : const [],
+      acquisition: ContentAcquisitionInfo.fromDynamic(json['acquisition']),
     );
   }
 
@@ -153,7 +158,163 @@ class UnifiedContentAnswerResult {
     'selectedSources': selectedSources
         .map((source) => source.toJson())
         .toList(),
+    if (acquisition != null) 'acquisition': acquisition!.toJson(),
   };
+}
+
+/// 内容库未命中后创建或合并的后台采集任务信息。
+class ContentAcquisitionInfo {
+  const ContentAcquisitionInfo({
+    required this.jobId,
+    required this.status,
+    required this.merged,
+    required this.foregroundWaitMs,
+    this.notification,
+  });
+
+  factory ContentAcquisitionInfo.fromJson(Map<String, dynamic> json) {
+    return ContentAcquisitionInfo(
+      jobId: json['jobId']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'pending',
+      merged: json['merged'] == true,
+      foregroundWaitMs: _unifiedInt(json['foregroundWaitMs']),
+      notification: AuthService._map(json['notification']),
+    );
+  }
+
+  static ContentAcquisitionInfo? fromDynamic(dynamic value) {
+    final json = AuthService._map(value);
+    if (json == null || (json['jobId']?.toString() ?? '').isEmpty) return null;
+    return ContentAcquisitionInfo.fromJson(json);
+  }
+
+  final String jobId;
+  final String status;
+  final bool merged;
+  final int foregroundWaitMs;
+  final Map<String, dynamic>? notification;
+
+  bool get isPending => status == 'pending';
+  bool get isCompleted => status == 'completed';
+
+  Map<String, dynamic> toJson() => {
+    'jobId': jobId,
+    'status': status,
+    'merged': merged,
+    'foregroundWaitMs': foregroundWaitMs,
+    if (notification != null) 'notification': notification,
+  };
+}
+
+/// 客户端轮询后台采集任务时使用的轻量状态数据。
+class ContentAcquisitionStatusSnapshot {
+  const ContentAcquisitionStatusSnapshot({
+    required this.jobId,
+    required this.status,
+    this.notification,
+  });
+
+  factory ContentAcquisitionStatusSnapshot.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return ContentAcquisitionStatusSnapshot(
+      jobId: json['jobId']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'not_found',
+      notification: AuthService._map(json['notification']),
+    );
+  }
+
+  final String jobId;
+  final String status;
+  final Map<String, dynamic>? notification;
+
+  bool get isPending => status == 'pending';
+  bool get isCompleted => status == 'completed';
+  bool get isTerminal =>
+      status == 'completed' || status == 'failed' || status == 'not_found';
+}
+
+/// 持久化未完成任务并轮询其状态；完成后转成 App 消息，用户无需停留在聊天页。
+class ContentAcquisitionMonitor {
+  ContentAcquisitionMonitor._();
+
+  static final instance = ContentAcquisitionMonitor._();
+  static const _storageKey = 'uniprism.pendingContentAcquisitions.v1';
+  final Set<String> _pendingJobIds = {};
+  Timer? _timer;
+  bool _polling = false;
+
+  Future<void> initialize() async {
+    final stored = await AuthService._readStorage();
+    final raw = stored[_storageKey]?.toString();
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          _pendingJobIds.addAll(
+            decoded
+                .map((value) => value?.toString() ?? '')
+                .where((value) => RegExp(r'^acq-[a-f0-9]{32}$').hasMatch(value)),
+          );
+        }
+      } catch (_) {
+        // Invalid task state is discarded instead of blocking app startup.
+      }
+    }
+    _ensureTimer();
+    if (_pendingJobIds.isNotEmpty) unawaited(_poll());
+  }
+
+  Future<void> register(String jobId) async {
+    if (!RegExp(r'^acq-[a-f0-9]{32}$').hasMatch(jobId)) return;
+    if (_pendingJobIds.add(jobId)) await _persist();
+    _ensureTimer();
+  }
+
+  Future<void> _persist() {
+    return AuthService._writeStorage({
+      _storageKey: _pendingJobIds.isEmpty
+          ? null
+          : jsonEncode(_pendingJobIds.toList(growable: false)),
+    });
+  }
+
+  void _ensureTimer() {
+    if (_pendingJobIds.isEmpty) {
+      _timer?.cancel();
+      _timer = null;
+      return;
+    }
+    _timer ??= Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(_poll()),
+    );
+  }
+
+  Future<void> _poll() async {
+    if (_polling || _pendingJobIds.isEmpty) return;
+    _polling = true;
+    try {
+      for (final jobId in _pendingJobIds.toList(growable: false)) {
+        try {
+          final snapshot = await UnifiedContentAnswerTestService.instance
+              .acquisitionStatus(jobId);
+          if (snapshot.isCompleted && snapshot.notification != null) {
+            await ReportNotificationService.instance.ingestRemotePushPayload(
+              snapshot.notification!,
+            );
+          }
+          if (snapshot.isTerminal) _pendingJobIds.remove(jobId);
+        } on ApiRequestException {
+          // Keep polling after transient network failures.
+        }
+      }
+      await _persist();
+    } finally {
+      _polling = false;
+      _ensureTimer();
+    }
+  }
 }
 
 enum UnifiedAgentChatRole { user, assistant }
@@ -290,6 +451,7 @@ class _UnifiedAgentChatStore {
   }
 }
 
+/// 开发环境下连接“内容库优先回答接口”和“采集状态接口”的服务层。
 class UnifiedContentAnswerTestService {
   UnifiedContentAnswerTestService._();
 
@@ -302,6 +464,7 @@ class UnifiedContentAnswerTestService {
     required List<String> interests,
     required List<String> historySignals,
     required List<Map<String, String>> conversation,
+    String? acquisitionJobId,
   }) async {
     if (!AppConfig.developerToolsEnabled) {
       throw const ApiRequestException('统一内容回答测试只能在开发环境使用');
@@ -320,7 +483,7 @@ class UnifiedContentAnswerTestService {
 
     try {
       final request = await _client.postUrl(
-        Uri.parse('$normalizedBaseUrl/api/dev/content-sources/answer'),
+        Uri.parse('$normalizedBaseUrl/api/dev/content-library/answer'),
       );
       request.headers.contentType = ContentType.json;
       request.add(
@@ -331,6 +494,8 @@ class UnifiedContentAnswerTestService {
             'interests': interests,
             'historySignals': historySignals,
             'conversation': conversation,
+            if (acquisitionJobId?.isNotEmpty == true)
+              'acquisitionJobId': acquisitionJobId,
             'count': 3,
           }),
         ),
@@ -358,6 +523,24 @@ class UnifiedContentAnswerTestService {
       throw const ApiRequestException('统一内容回答连接超时');
     } on ApiRequestException {
       rethrow;
+    } on SocketException catch (error, stackTrace) {
+      // 展示目标地址，避免 App 只显示 SocketException 而无法定位配置问题。
+      debugPrint(
+        '[UnifiedContentAnswerTest] socket request failed: ' +
+            normalizedBaseUrl + '; ' + error.message + '\n' + stackTrace.toString(),
+      );
+      throw ApiRequestException(
+        '无法连接内容服务（' + normalizedBaseUrl +
+            '）。请确认后端 npm run dev 正在运行。',
+      );
+    } on HttpException catch (error, stackTrace) {
+      debugPrint(
+        '[UnifiedContentAnswerTest] HTTP request failed: ' +
+            normalizedBaseUrl + '; ' + error.message + '\n' + stackTrace.toString(),
+      );
+      throw ApiRequestException(
+        '内容服务连接异常（' + normalizedBaseUrl + '）：' + error.message,
+      );
     } on FormatException {
       throw const ApiRequestException('统一内容回答返回了无法识别的数据');
     } catch (error, stackTrace) {
@@ -368,8 +551,49 @@ class UnifiedContentAnswerTestService {
       throw ApiRequestException('统一内容回答失败：${error.runtimeType}');
     }
   }
+
+  Future<ContentAcquisitionStatusSnapshot> acquisitionStatus(
+    String jobId,
+  ) async {
+    final baseUrl = AppConfig.contentSourceTestApiBaseUrl.trim();
+    final normalizedBaseUrl = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    try {
+      final uri = Uri.parse(
+        '$normalizedBaseUrl/api/dev/content-acquisition/status',
+      ).replace(queryParameters: {'jobId': jobId});
+      final request = await _client.getUrl(uri);
+      final response = await request.close().timeout(
+        const Duration(seconds: 10),
+      );
+      final responseText = await utf8.decodeStream(response);
+      final envelope =
+          AuthService._map(jsonDecode(responseText)) ?? const {};
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          envelope['ok'] != true) {
+        throw ApiRequestException(
+          AuthService._errorMessage(envelope),
+          statusCode: response.statusCode,
+        );
+      }
+      final data = AuthService._map(envelope['data']);
+      if (data == null) {
+        throw const ApiRequestException('内容采集任务状态格式不正确');
+      }
+      return ContentAcquisitionStatusSnapshot.fromJson(data);
+    } on TimeoutException {
+      throw const ApiRequestException('内容采集任务状态查询超时');
+    } on ApiRequestException {
+      rethrow;
+    } catch (_) {
+      throw const ApiRequestException('暂时无法查询内容采集任务状态');
+    }
+  }
 }
 
+/// 开发环境手动验证内容库问答流程的页面。
 class UnifiedContentAnswerTestPage extends StatefulWidget {
   const UnifiedContentAnswerTestPage({
     super.key,
@@ -385,6 +609,7 @@ class UnifiedContentAnswerTestPage extends StatefulWidget {
       _UnifiedContentAnswerTestPageState();
 }
 
+/// 保存测试聊天记录，并在页面恢复后继续关联未完成的采集任务。
 class _UnifiedContentAnswerTestPageState
     extends State<UnifiedContentAnswerTestPage> {
   static const _statusMessages = [
@@ -401,6 +626,8 @@ class _UnifiedContentAnswerTestPageState
   bool _loading = false;
   bool _restoring = true;
   int _statusIndex = 0;
+  String? _acquisitionJobId;
+  String? _acquisitionQuestion;
 
   @override
   void initState() {
@@ -419,16 +646,16 @@ class _UnifiedContentAnswerTestPageState
   UnifiedAgentChatMessage _welcomeMessage() {
     final majors = widget.recommendedMajors.isEmpty
         ? ''
-        : '我已经读取到你当前推荐的专业：${widget.recommendedMajors.join('、')}。';
+        : '我会参考你当前推荐的专业：${widget.recommendedMajors.join('、')}。';
     final interests = widget.interests.isEmpty
         ? ''
-        : '也会参考你的兴趣线索：${widget.interests.take(5).join('、')}。';
+        : '也会结合你在意的方向：${widget.interests.take(5).join('、')}。';
     return UnifiedAgentChatMessage(
       id: 'welcome',
       role: UnifiedAgentChatRole.assistant,
       text:
-          '你好，我会结合你的推荐专业和连续对话，检索多个真实平台后再回答。'
-          '$majors$interests你可以先问我一个专业、技能、就业或项目问题。',
+          '你好，我可以陪你把专业、学习和未来方向一步步想清楚。'
+          '$majors$interests你现在最想聊哪一件事？',
       createdAt: DateTime.now(),
     );
   }
@@ -438,6 +665,13 @@ class _UnifiedContentAnswerTestPageState
     if (!mounted) return;
     setState(() {
       _messages = restored.isEmpty ? [_welcomeMessage()] : restored;
+      for (final message in _messages.reversed) {
+        final acquisition = message.result?.acquisition;
+        if (acquisition?.isPending == true) {
+          _acquisitionJobId = acquisition!.jobId;
+          break;
+        }
+      }
       _restoring = false;
     });
     _scrollToBottom();
@@ -493,24 +727,6 @@ class _UnifiedContentAnswerTestPageState
         .toList(growable: false);
   }
 
-  List<String> _historySignals(UnifiedAgentChatMessage current) {
-    return _messages
-        .where(
-          (message) =>
-              message.id != current.id &&
-              message.role == UnifiedAgentChatRole.user,
-        )
-        .map((message) => message.text.trim())
-        .where((text) => text.isNotEmpty)
-        .map((text) => text.length <= 120 ? text : text.substring(0, 120))
-        .toList()
-        .reversed
-        .take(8)
-        .toList()
-        .reversed
-        .toList(growable: false);
-  }
-
   Future<void> _send() async {
     final text = _inputController.text.trim();
     if (_loading || text.length < 2) return;
@@ -532,13 +748,41 @@ class _UnifiedContentAnswerTestPageState
     unawaited(_UnifiedAgentChatStore.persist(_messages));
 
     try {
+      final canReuseTask = _acquisitionJobId != null
+          && _acquisitionQuestion != null
+          && _agentQuestionKey(userMessage.text)
+              == _agentQuestionKey(_acquisitionQuestion!);
+      if (!canReuseTask) {
+        _acquisitionJobId = null;
+        _acquisitionQuestion = null;
+      }
       final result = await UnifiedContentAnswerTestService.instance.answer(
         question: text,
         recommendedMajors: widget.recommendedMajors,
         interests: widget.interests,
-        historySignals: _historySignals(userMessage),
+        // 历史消息仅用于对话语气；独立问题不能把上一题关键词带入检索。
+        historySignals: const [],
         conversation: _recentConversation(userMessage),
+        acquisitionJobId: canReuseTask ? _acquisitionJobId : null,
       );
+      final acquisition = result.acquisition;
+      if (acquisition?.isPending == true) {
+        _acquisitionJobId = acquisition!.jobId;
+        _acquisitionQuestion = userMessage.text;
+        await ContentAcquisitionMonitor.instance.register(acquisition.jobId);
+      } else if (acquisition?.isCompleted == true) {
+        _acquisitionJobId = null;
+        _acquisitionQuestion = null;
+        if (acquisition?.notification != null) {
+          await ReportNotificationService.instance.ingestRemotePushPayload(
+            acquisition!.notification!,
+          );
+        }
+      } else {
+        // 历史任务仍由通知监听器追踪，但不再作为下一条独立问题的上下文。
+        _acquisitionJobId = null;
+        _acquisitionQuestion = null;
+      }
       final assistantMessage = UnifiedAgentChatMessage(
         id: 'assistant-${DateTime.now().microsecondsSinceEpoch}',
         role: UnifiedAgentChatRole.assistant,
@@ -556,7 +800,7 @@ class _UnifiedContentAnswerTestPageState
       final errorMessage = UnifiedAgentChatMessage(
         id: 'error-${DateTime.now().microsecondsSinceEpoch}',
         role: UnifiedAgentChatRole.assistant,
-        text: '这次没有完成真实内容检索：${error.message}\n你可以稍后重新发送。',
+        text: '这次没能顺利给出合适的建议。你可以换一种说法，或补充你最在意的是学习、就业还是未来方向，我会继续帮你分析。',
         createdAt: DateTime.now(),
         isError: true,
       );
@@ -848,19 +1092,6 @@ class _UnifiedAgentMessageBubble extends StatelessWidget {
                   ),
                 ),
               ],
-              if (result.caveat.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  '说明：${result.caveat}',
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
-              const SizedBox(height: 8),
-              Text(
-                '检索 ${result.successSourceCount} 个来源，'
-                '筛选 ${result.itemCount} 条候选',
-                style: const TextStyle(fontSize: 12, color: Colors.black45),
-              ),
               if (result.selectedSources.isNotEmpty)
                 _UnifiedSourcesExpansion(result: result),
             ],

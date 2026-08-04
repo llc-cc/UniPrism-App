@@ -12,6 +12,7 @@ part 'app_config.dart';
 part 'agent_experience.dart';
 part 'assessment.dart';
 part 'compliance.dart';
+part 'content_ingestion_preview.dart';
 part 'content_source_test.dart';
 part 'github_content_source_test.dart';
 part 'unified_content_answer_test.dart';
@@ -31,6 +32,8 @@ Future<void> main() async {
   await AuthService.instance.restore();
   await ComplianceService.instance.restore();
   await AppMessageCenter.instance.restore();
+  // 恢复上次退出 App 时尚未完成的后台采集任务。
+  await ContentAcquisitionMonitor.instance.initialize();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
@@ -83,6 +86,8 @@ class UniPrismApp extends StatelessWidget {
         if (AppConfig.developerToolsEnabled) ...{
           '/content-source-test': (_) => const ZhihuContentTestPage(),
           '/github-content-source-test': (_) => const GitHubContentTestPage(),
+          '/content-ingestion-preview': (_) =>
+              const ContentIngestionPreviewPage(),
           '/unified-content-answer-test': (_) =>
               const UnifiedContentAnswerTestPage(),
           '/landscape-test': (_) => const LandscapeTestPage(),
@@ -2817,6 +2822,25 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// 打开 Agent，并传入只用于回答个性化的用户画像。
+  void _openAgent() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => AgentExperiencePage(
+          recommendedMajors: _currentRecommendedMajorNames,
+          interests: _agentInterestTags,
+        ),
+      ),
+    );
+  }
+
+  /// 入库预览仅在开发工具开启时可进入。
+  void _openContentIngestionPreview() {
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => const ContentIngestionPreviewPage()),
+    );
+  }
+
   void _openUnifiedContentAnswerTest() {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -2974,11 +2998,23 @@ class _HomePageState extends State<HomePage> {
               ),
               if (AppConfig.agentFeatureVisible) ...[
                 const SizedBox(height: 16),
-                _AgentHomeEntry(
-                  onTap: () => Navigator.of(context).pushNamed('/agent'),
-                ),
+                _AgentHomeEntry(onTap: _openAgent),
               ],
               if (AppConfig.developerToolsEnabled) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _openContentIngestionPreview,
+                    icon: const Icon(Icons.storage_rounded),
+                    label: const Text('真实内容入库预览'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      foregroundColor: const Color(0xFF1C6B52),
+                      side: const BorderSide(color: Color(0xFF7BBFA9)),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,

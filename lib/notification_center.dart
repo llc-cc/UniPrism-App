@@ -61,6 +61,7 @@ class AppMessage {
   };
 }
 
+/// 本地消息中心：接收推送和后台采集完成通知。
 class AppMessageCenter extends ChangeNotifier {
   AppMessageCenter._();
 
@@ -100,6 +101,7 @@ class AppMessageCenter extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 按服务端消息编号去重，仅保留最近 100 条，避免本地无限增长。
   Future<void> ingestRemotePayload(Map<String, dynamic> payload) async {
     await restore();
     final id = payload['messageId']?.toString();
@@ -673,6 +675,11 @@ class MessageDetailPage extends StatelessWidget {
     Icons.cloud_outlined,
     const Color(0xFFDFF4FF),
     const Color(0xFF2584C7),
+  ),
+  'content_acquisition' => (
+    Icons.auto_awesome_outlined,
+    const Color(0xFFEADDFF),
+    const Color(0xFF6B23FF),
   ),
   _ => (
     Icons.notifications_none_rounded,
