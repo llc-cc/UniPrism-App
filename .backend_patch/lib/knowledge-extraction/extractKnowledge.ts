@@ -4,6 +4,7 @@ import {
   callDeepSeekJson,
   type DeepSeekJsonResult,
 } from '@/lib/ai/deepseek';
+import { forbidden } from '@/lib/api/response';
 
 const treeSummarySchema = z.object({
   id: z.string().trim().min(1).max(80),
@@ -89,6 +90,15 @@ export class KnowledgeExtractionError extends Error {
   ) {
     super(message);
     this.name = 'KnowledgeExtractionError';
+  }
+}
+
+/**
+ * 首版未持久化用户确认结果，不能在生产环境暴露调试接口。
+ */
+export function assertKnowledgeExtractionEnvironment(environment?: string) {
+  if (environment === 'production') {
+    throw forbidden('知识提炼接口目前仅用于开发联调。');
   }
 }
 
