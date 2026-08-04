@@ -41,6 +41,35 @@ const sampleBatchJson = <String, dynamic>{
 KnowledgeExtractionBatch get sampleBatch =>
     KnowledgeExtractionBatch.fromJson(sampleBatchJson);
 
+class FakeKnowledgeExtractionGateway implements KnowledgeExtractionGateway {
+  FakeKnowledgeExtractionGateway.success(this._success) : _failures = const [];
+
+  FakeKnowledgeExtractionGateway.failOnceThenSuccess(
+    ApiRequestException failure,
+    this._success,
+  ) : _failures = [failure];
+
+  final Map<String, dynamic> _success;
+  final List<ApiRequestException> _failures;
+  int _calls = 0;
+
+  @override
+  Future<KnowledgeExtractionBatch> extract({
+    required String conversationId,
+    required String messageId,
+    required String question,
+    required String answer,
+    required List<KnowledgeTreeSummary> availableTrees,
+    required List<KnowledgeSourceRef> sourceRefs,
+  }) async {
+    if (_calls < _failures.length) throw _failures[_calls++];
+    _calls += 1;
+    return KnowledgeExtractionBatch.fromJson(
+      _success,
+    ).copyWith(sourceRefs: sourceRefs);
+  }
+}
+
 void main() {
   test('knowledge extraction batch parses candidates and tree suggestion', () {
     final batch = sampleBatch;
@@ -290,5 +319,102 @@ void main() {
 
     expect(find.byType(MindMapWidget), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('agent answer can be extracted and confirmed into the forest', (
+    tester,
+  ) async {
+    final gateway = FakeKnowledgeExtractionGateway.success(sampleBatchJson);
+    final store = KnowledgeForestStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AgentExperiencePage(
+          knowledgeGateway: gateway,
+          knowledgeStore: store,
+        ),
+      ),
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-input')),
+      '人工智能专业主要学习什么？',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-send-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    final extractButton = find.byKey(
+      const ValueKey('knowledge-extract-button'),
+    );
+    final conversationScroll = find.descendant(
+      of: find.byKey(const ValueKey('agent-conversation-list')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      extractButton,
+      260,
+      scrollable: conversationScroll,
+    );
+    await tester.tap(extractButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('确认知识节点'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('confirm-knowledge-batch')));
+    await tester.pumpAndSettle();
+
+    expect(store.trees.single.title, '人工智能');
+  });
+
+  testWidgets('failed agent extraction keeps the answer and allows retry', (
+    tester,
+  ) async {
+    final gateway = FakeKnowledgeExtractionGateway.failOnceThenSuccess(
+      const ApiRequestException('知识提炼暂时不可用'),
+      sampleBatchJson,
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: AgentExperiencePage(knowledgeGateway: gateway)),
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('agent-message-input')),
+      '数学专业需要哪些能力？',
+    );
+    await tester.tap(find.byKey(const ValueKey('agent-send-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    final extractButton = find.byKey(
+      const ValueKey('knowledge-extract-button'),
+    );
+    final conversationScroll = find.descendant(
+      of: find.byKey(const ValueKey('agent-conversation-list')),
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      extractButton,
+      260,
+      scrollable: conversationScroll,
+    );
+    await tester.tap(extractButton);
+    await tester.pump();
+
+    expect(find.textContaining('暂时不可用'), findsOneWidget);
+    final originalQuestion = find.textContaining('数学专业');
+    await tester.scrollUntilVisible(
+      originalQuestion,
+      -180,
+      scrollable: conversationScroll,
+    );
+    expect(originalQuestion, findsWidgets);
+    await tester.drag(
+      find.byKey(const ValueKey('agent-conversation-list')),
+      const Offset(0, -600),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(extractButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('确认知识节点'), findsOneWidget);
   });
 }

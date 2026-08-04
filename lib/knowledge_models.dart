@@ -355,6 +355,8 @@ class KnowledgeForestSnapshot {
 class KnowledgeForestStore extends ChangeNotifier {
   KnowledgeForestStore();
 
+  static final instance = KnowledgeForestStore();
+
   final Map<String, KnowledgeTreeSnapshot> _trees = {};
   final Set<String> _confirmedBatchIds = {};
   final Map<String, String> _batchTreeIds = {};

@@ -216,10 +216,7 @@ String _agentCompactExcerpt(String value, {int maxLength = 180}) {
 
 /// 只有完全相同的问题才允许复用已完成的采集任务。
 String _agentQuestionKey(String value) {
-  return value
-      .toLowerCase()
-      .replaceAll(RegExp(r'[\s，。！？、,.!?]'), '')
-      .trim();
+  return value.toLowerCase().replaceAll(RegExp(r'[\s，。！？、,.!?]'), '').trim();
 }
 
 /// 根据环境调用正式 Agent 接口或开发期内容库接口，页面无需关心差异。
@@ -528,10 +525,14 @@ class AgentExperiencePage extends StatefulWidget {
     super.key,
     this.recommendedMajors = const [],
     this.interests = const [],
+    this.knowledgeGateway,
+    this.knowledgeStore,
   });
 
   final List<String> recommendedMajors;
   final List<String> interests;
+  final KnowledgeExtractionGateway? knowledgeGateway;
+  final KnowledgeForestStore? knowledgeStore;
 
   @override
   State<AgentExperiencePage> createState() => _AgentExperiencePageState();
@@ -544,15 +545,29 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
   final List<_AgentConversationEntry> _entries = [
     const _AgentConversationEntry(
       fromUser: false,
+      messageId: 'agent-welcome',
       text: '你好，我可以根据你的兴趣查找专业体验、学习方法和成长内容。长期推送会先给你预览，并在你确认后创建订阅。',
     ),
   ];
   final Set<String> _confirmedPreviewIds = {};
+  final Set<String> _extractingKnowledgeMessageIds = {};
+  final Map<String, String> _knowledgeExtractionErrors = {};
+  late final KnowledgeExtractionGateway _knowledgeGateway;
+  late final KnowledgeForestStore _knowledgeStore;
   Timer? _scrollCorrectionTimer;
   String? _conversationId;
   String? _acquisitionJobId;
   String? _acquisitionQuestion;
+  int _localMessageSequence = 0;
   bool _sending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _knowledgeGateway =
+        widget.knowledgeGateway ?? KnowledgeExtractionService.instance;
+    _knowledgeStore = widget.knowledgeStore ?? KnowledgeForestStore.instance;
+  }
 
   @override
   void dispose() {
@@ -583,13 +598,21 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
         .toList(growable: false);
     _controller.clear();
     setState(() {
-      _entries.add(_AgentConversationEntry(fromUser: true, text: message));
+      _entries.add(
+        _AgentConversationEntry(
+          fromUser: true,
+          messageId: _nextLocalMessageId('user'),
+          text: message,
+          question: message,
+        ),
+      );
       _sending = true;
     });
     _scrollToEnd();
-    final canReuseTask = _acquisitionJobId != null
-        && _acquisitionQuestion != null
-        && _agentQuestionKey(message) == _agentQuestionKey(_acquisitionQuestion!);
+    final canReuseTask =
+        _acquisitionJobId != null &&
+        _acquisitionQuestion != null &&
+        _agentQuestionKey(message) == _agentQuestionKey(_acquisitionQuestion!);
     if (!canReuseTask) {
       // 旧任务仍由通知中心追踪，但新问题绝不能携带旧任务编号请求回答。
       _acquisitionJobId = null;
@@ -625,10 +648,15 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
         _acquisitionQuestion = null;
       }
       setState(() {
+        final traceId = (reply.traceId ?? '').trim();
         _entries.add(
           _AgentConversationEntry(
             fromUser: false,
+            messageId: traceId.isEmpty
+                ? _nextLocalMessageId('answer')
+                : traceId,
             text: reply.text,
+            question: message,
             cards: reply.cards,
             subscriptionDraft: reply.subscriptionDraft,
           ),
@@ -640,6 +668,7 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
         _entries.add(
           _AgentConversationEntry(
             fromUser: false,
+            messageId: _nextLocalMessageId('error'),
             text: '暂时无法完成这次请求：${error.message}',
             isError: true,
           ),
@@ -663,6 +692,7 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
         _entries.add(
           _AgentConversationEntry(
             fromUser: false,
+            messageId: _nextLocalMessageId('subscription'),
             text: subscription.isDemo
                 ? '内部演示订阅已创建：${subscription.name}。它不会触发真实远程推送，离开进程后可能清空。'
                 : '订阅已创建：${subscription.name}，你可以在“我的订阅”中随时暂停或删除。',
@@ -675,6 +705,67 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  String _nextLocalMessageId(String kind) {
+    _localMessageSequence += 1;
+    return 'agent-$kind-$_localMessageSequence';
+  }
+
+  /// 页面只编排提炼状态；网络、审核和存储分别交给既有边界。
+  Future<void> _extractKnowledge(_AgentConversationEntry entry) async {
+    if (_extractingKnowledgeMessageIds.contains(entry.messageId)) return;
+    setState(() {
+      _extractingKnowledgeMessageIds.add(entry.messageId);
+      _knowledgeExtractionErrors.remove(entry.messageId);
+    });
+
+    try {
+      final batch = await _knowledgeGateway.extract(
+        conversationId: _conversationId ?? 'local-agent-conversation',
+        messageId: entry.messageId,
+        question: entry.question,
+        answer: entry.text,
+        availableTrees: _knowledgeStore.trees
+            .map((tree) => KnowledgeTreeSummary(id: tree.id, title: tree.title))
+            .toList(growable: false),
+        sourceRefs: entry.cards
+            .where((card) => card.source.url.trim().isNotEmpty)
+            .map(
+              (card) => KnowledgeSourceRef(
+                id: card.id,
+                title: card.title,
+                url: card.source.url,
+                sourceName: card.source.name,
+              ),
+            )
+            .toList(growable: false),
+      );
+      if (!mounted) return;
+      setState(() => _extractingKnowledgeMessageIds.remove(entry.messageId));
+      await Navigator.of(context).push<KnowledgeTreeSnapshot>(
+        MaterialPageRoute<KnowledgeTreeSnapshot>(
+          builder: (_) => KnowledgeExtractionPreviewPage(
+            batch: batch,
+            store: _knowledgeStore,
+          ),
+        ),
+      );
+    } on ApiRequestException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _extractingKnowledgeMessageIds.remove(entry.messageId);
+        _knowledgeExtractionErrors[entry.messageId] = error.message;
+      });
+      _scrollToEnd();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _extractingKnowledgeMessageIds.remove(entry.messageId);
+        _knowledgeExtractionErrors[entry.messageId] = '知识提炼失败，请稍后重试。';
+      });
+      _scrollToEnd();
     }
   }
 
@@ -715,6 +806,15 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
         surfaceTintColor: Colors.white,
         actions: [
           IconButton(
+            tooltip: '我的知识森林',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => KnowledgeForestPage(store: _knowledgeStore),
+              ),
+            ),
+            icon: const Icon(Icons.account_tree_outlined),
+          ),
+          IconButton(
             tooltip: '我的订阅',
             onPressed: () =>
                 Navigator.of(context).pushNamed('/agent-subscriptions'),
@@ -731,6 +831,7 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
             child: AppConstrainedContent(
               maxWidth: AppLayout.phoneContentMaxWidth,
               child: ListView.builder(
+                key: const ValueKey('agent-conversation-list'),
                 controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
                 itemCount: _entries.length + (_sending ? 1 : 0),
@@ -741,6 +842,13 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
                   final entry = _entries[index];
                   return _AgentEntryView(
                     entry: entry,
+                    knowledgeExtracting: _extractingKnowledgeMessageIds
+                        .contains(entry.messageId),
+                    knowledgeError: _knowledgeExtractionErrors[entry.messageId],
+                    onExtractKnowledge:
+                        entry.knowledgeEligible && entry.question.isNotEmpty
+                        ? () => _extractKnowledge(entry)
+                        : null,
                     subscriptionConfirmed:
                         entry.subscriptionDraft != null &&
                         _confirmedPreviewIds.contains(
@@ -770,17 +878,24 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
 class _AgentConversationEntry {
   const _AgentConversationEntry({
     required this.fromUser,
+    required this.messageId,
     required this.text,
+    this.question = '',
     this.cards = const [],
     this.subscriptionDraft,
     this.isError = false,
   });
 
   final bool fromUser;
+  final String messageId;
   final String text;
+  final String question;
   final List<AgentContentCardData> cards;
   final AgentSubscriptionDraft? subscriptionDraft;
   final bool isError;
+
+  bool get knowledgeEligible =>
+      !fromUser && !isError && text.trim().length >= 40;
 }
 
 class _AgentHomeEntry extends StatelessWidget {
@@ -919,12 +1034,18 @@ class _AgentLiveTestBanner extends StatelessWidget {
 class _AgentEntryView extends StatelessWidget {
   const _AgentEntryView({
     required this.entry,
+    required this.knowledgeExtracting,
     required this.subscriptionConfirmed,
+    this.knowledgeError,
+    this.onExtractKnowledge,
     this.onConfirmSubscription,
   });
 
   final _AgentConversationEntry entry;
+  final bool knowledgeExtracting;
   final bool subscriptionConfirmed;
+  final String? knowledgeError;
+  final VoidCallback? onExtractKnowledge;
   final VoidCallback? onConfirmSubscription;
 
   @override
@@ -979,6 +1100,30 @@ class _AgentEntryView extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 10),
                 child: _AgentContentCard(card: card),
               ),
+            ),
+          ],
+          if (onExtractKnowledge != null) ...[
+            const SizedBox(height: 2),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                key: const ValueKey('knowledge-extract-button'),
+                onPressed: knowledgeExtracting ? null : onExtractKnowledge,
+                icon: knowledgeExtracting
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_awesome_rounded, size: 18),
+                label: Text(knowledgeExtracting ? '正在提炼…' : '可提炼为知识（内部测试）'),
+              ),
+            ),
+          ],
+          if (knowledgeError != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              '$knowledgeError 可重试。',
+              style: const TextStyle(color: Color(0xFFB42318), fontSize: 12),
             ),
           ],
           if (entry.subscriptionDraft != null) ...[

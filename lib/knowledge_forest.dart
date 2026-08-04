@@ -104,7 +104,7 @@ class _KnowledgeExtractionPreviewPageState
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('审核知识节点'),
+        title: const Text('确认知识节点'),
         leading: IconButton(
           tooltip: '取消',
           onPressed: _isConfirming
