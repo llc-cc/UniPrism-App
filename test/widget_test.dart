@@ -97,6 +97,31 @@ void main() {
     expect(reply.subscriptionDraft?.pushTime, '20:00');
   });
 
+  test('content acquisition metadata keeps pending task identity', () {
+    final result = UnifiedContentAnswerResult.fromJson({
+      'answer': {
+        'answer': '正在后台补充资料',
+        'keyPoints': ['已转后台'],
+        'confidence': 'low',
+        'caveat': '等待真实资料',
+        'model': 'not-called',
+        'usedFallback': true,
+      },
+      'sourceSummary': {'success': 0, 'failed': 0, 'itemCount': 0},
+      'selectedSources': [],
+      'acquisition': {
+        'jobId': 'acq-11111111111111111111111111111111',
+        'status': 'pending',
+        'merged': true,
+        'foregroundWaitMs': 8000,
+      },
+    });
+
+    expect(result.acquisition?.isPending, isTrue);
+    expect(result.acquisition?.merged, isTrue);
+    expect(result.acquisition?.foregroundWaitMs, 8000);
+  });
+
   test('Zhihu content test result keeps AI plan and real source separate', () {
     final result = ZhihuContentTestResult.fromJson({
       'provider': 'zhihu-official-open-platform',

@@ -108,6 +108,7 @@ class AgentSubscriptionDraft {
   final bool isDemo;
 }
 
+/// Agent 页面使用的统一回复；可携带来源卡片和后台采集任务状态。
 class AgentChatReply {
   const AgentChatReply({
     required this.conversationId,
@@ -115,6 +116,7 @@ class AgentChatReply {
     this.cards = const [],
     this.subscriptionDraft,
     this.traceId,
+    this.acquisition,
   });
 
   factory AgentChatReply.fromJson(Map<String, dynamic> json) {
@@ -136,6 +138,7 @@ class AgentChatReply {
           : const [],
       subscriptionDraft: draft,
       traceId: json['traceId']?.toString(),
+      acquisition: ContentAcquisitionInfo.fromDynamic(json['acquisition']),
     );
   }
 
@@ -144,6 +147,7 @@ class AgentChatReply {
   final List<AgentContentCardData> cards;
   final AgentSubscriptionDraft? subscriptionDraft;
   final String? traceId;
+  final ContentAcquisitionInfo? acquisition;
 }
 
 class AgentSubscription {
@@ -203,6 +207,22 @@ List<String> _agentStringList(dynamic value) {
       .toList(growable: false);
 }
 
+/// 保持来源卡片易扫读；完整内容仍可通过原始来源链接查看。
+String _agentCompactExcerpt(String value, {int maxLength = 180}) {
+  final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return normalized.substring(0, maxLength) + '…';
+}
+
+/// 只有完全相同的问题才允许复用已完成的采集任务。
+String _agentQuestionKey(String value) {
+  return value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s，。！？、,.!?]'), '')
+      .trim();
+}
+
+/// 根据环境调用正式 Agent 接口或开发期内容库接口，页面无需关心差异。
 class AgentExperienceService {
   AgentExperienceService._();
 
@@ -212,6 +232,10 @@ class AgentExperienceService {
     required String message,
     String? conversationId,
     bool useProfile = true,
+    List<String> recommendedMajors = const [],
+    List<String> interests = const [],
+    List<Map<String, String>> conversation = const [],
+    String? acquisitionJobId,
   }) async {
     final normalized = message.trim();
     if (normalized.isEmpty) {
@@ -228,6 +252,10 @@ class AgentExperienceService {
       return _sendDevelopmentMessage(
         message: normalized,
         conversationId: conversationId,
+        recommendedMajors: recommendedMajors,
+        interests: interests,
+        conversation: conversation,
+        acquisitionJobId: acquisitionJobId,
       );
     }
     final data = await AuthService.instance._request(
@@ -248,66 +276,50 @@ class AgentExperienceService {
   Future<AgentChatReply> _sendDevelopmentMessage({
     required String message,
     String? conversationId,
+    required List<String> recommendedMajors,
+    required List<String> interests,
+    required List<Map<String, String>> conversation,
+    String? acquisitionJobId,
   }) async {
-    final result = await ZhihuContentTestService.instance.search(
+    final result = await UnifiedContentAnswerTestService.instance.answer(
       question: message,
-      interests: const [],
-      count: 5,
+      recommendedMajors: recommendedMajors,
+      interests: interests,
+      historySignals: const [],
+      conversation: conversation,
+      acquisitionJobId: acquisitionJobId,
     );
     final now = DateTime.now();
-    if (result.items.isEmpty) {
-      return AgentChatReply(
-        conversationId:
-            conversationId ??
-            'zhihu-conversation-${now.millisecondsSinceEpoch}',
-        text: '没有从知乎官方开放平台找到直接相关的内容，请换一个更具体的问题再试。',
-        traceId: 'zhihu-${now.millisecondsSinceEpoch}',
-      );
-    }
-
-    final highlights = result.items
-        .take(2)
-        .map(
-          (item) =>
-              '• ${item.title}：${_shortExcerpt(item.contentText, maxLength: 140)}',
-        )
-        .join('\n');
     return AgentChatReply(
       conversationId:
-          conversationId ?? 'zhihu-conversation-${now.millisecondsSinceEpoch}',
-      text:
-          '我根据你的问题，从知乎官方开放平台检索了“${result.searchQuery}”，找到 ${result.items.length} 条真实内容：\n\n$highlights\n\n下方卡片可以查看原始来源。',
-      cards: result.items
+          conversationId ??
+          'unified-conversation-${now.millisecondsSinceEpoch}',
+      // 来源卡片已单独呈现，不把检索计数等内部信息塞进用户回答。
+      text: result.answer,
+      cards: result.selectedSources
           .map(
-            (item) => AgentContentCardData(
-              id: item.id.isNotEmpty ? item.id : item.url,
-              title: item.title.isNotEmpty ? item.title : '知乎相关内容',
-              excerpt: _shortExcerpt(item.contentText, maxLength: 360),
+            (source) => AgentContentCardData(
+              id: source.sourceId.isNotEmpty ? source.sourceId : source.url,
+              title: source.title.isNotEmpty ? source.title : '相关内容',
+              excerpt: _agentCompactExcerpt(source.summary),
               source: AgentContentSource(
-                id: item.id.isNotEmpty ? item.id : item.url,
-                name: item.authorName.isEmpty
-                    ? '知乎'
-                    : '知乎 · ${item.authorName}',
-                url: item.url,
-                type: 'zhihu_official_api',
+                id: source.provider,
+                name: source.displayName,
+                url: source.url,
+                type: source.provider,
               ),
-              contentType: item.contentType.isEmpty
-                  ? 'knowledge'
-                  : item.contentType,
-              recommendationReason: '与你的问题相关，来自知乎官方开放平台真实检索结果',
-              publishedAt: item.editTime ?? result.retrievedAt ?? now,
+              contentType: source.kind.isEmpty ? 'knowledge' : source.kind,
+              recommendationReason: source.scoreReasons.isEmpty
+                  ? '来自真实平台检索结果，与你当前的问题相关'
+                  : source.scoreReasons.take(2).join('；'),
+              publishedAt: source.publishedAt ?? now,
               aiGenerated: false,
             ),
           )
           .toList(growable: false),
-      traceId: 'zhihu-${now.millisecondsSinceEpoch}',
+      traceId: 'unified-${now.millisecondsSinceEpoch}',
+      acquisition: result.acquisition,
     );
-  }
-
-  String _shortExcerpt(String value, {required int maxLength}) {
-    final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (normalized.length <= maxLength) return normalized;
-    return '${normalized.substring(0, maxLength)}…';
   }
 
   AgentChatReply _mockReply(String message, {String? conversationId}) {
@@ -510,13 +522,22 @@ class AgentSubscriptionCenter extends ChangeNotifier {
   }
 }
 
+/// Agent 会话页：传递用户画像用于个性化表达，但不把画像当作检索关键词。
 class AgentExperiencePage extends StatefulWidget {
-  const AgentExperiencePage({super.key});
+  const AgentExperiencePage({
+    super.key,
+    this.recommendedMajors = const [],
+    this.interests = const [],
+  });
+
+  final List<String> recommendedMajors;
+  final List<String> interests;
 
   @override
   State<AgentExperiencePage> createState() => _AgentExperiencePageState();
 }
 
+/// 管理本地聊天记录及当前已合并的后台采集任务编号。
 class _AgentExperiencePageState extends State<AgentExperiencePage> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
@@ -527,32 +548,82 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
     ),
   ];
   final Set<String> _confirmedPreviewIds = {};
+  Timer? _scrollCorrectionTimer;
   String? _conversationId;
+  String? _acquisitionJobId;
+  String? _acquisitionQuestion;
   bool _sending = false;
 
   @override
   void dispose() {
+    _scrollCorrectionTimer?.cancel();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
+  /// 先渲染用户消息；若后端转入后台采集，则保存任务编号并等待 App 通知。
   Future<void> _send([String? suggested]) async {
     final message = (suggested ?? _controller.text).trim();
     if (message.isEmpty || _sending) return;
+    FocusScope.of(context).unfocus();
+    final conversation = _entries
+        .where((entry) => !entry.isError)
+        .toList(growable: false)
+        .reversed
+        .take(8)
+        .toList(growable: false)
+        .reversed
+        .map(
+          (entry) => {
+            'role': entry.fromUser ? 'user' : 'assistant',
+            'content': entry.text,
+          },
+        )
+        .toList(growable: false);
     _controller.clear();
     setState(() {
       _entries.add(_AgentConversationEntry(fromUser: true, text: message));
       _sending = true;
     });
     _scrollToEnd();
+    final canReuseTask = _acquisitionJobId != null
+        && _acquisitionQuestion != null
+        && _agentQuestionKey(message) == _agentQuestionKey(_acquisitionQuestion!);
+    if (!canReuseTask) {
+      // 旧任务仍由通知中心追踪，但新问题绝不能携带旧任务编号请求回答。
+      _acquisitionJobId = null;
+      _acquisitionQuestion = null;
+    }
     try {
       final reply = await AgentExperienceService.instance.sendMessage(
         message: message,
         conversationId: _conversationId,
+        recommendedMajors: widget.recommendedMajors,
+        interests: widget.interests,
+        conversation: conversation,
+        acquisitionJobId: canReuseTask ? _acquisitionJobId : null,
       );
       if (!mounted) return;
       _conversationId = reply.conversationId;
+      final acquisition = reply.acquisition;
+      if (acquisition?.isPending == true) {
+        _acquisitionJobId = acquisition!.jobId;
+        _acquisitionQuestion = message;
+        await ContentAcquisitionMonitor.instance.register(acquisition.jobId);
+      } else if (acquisition?.isCompleted == true) {
+        _acquisitionJobId = null;
+        _acquisitionQuestion = null;
+        if (acquisition?.notification != null) {
+          await ReportNotificationService.instance.ingestRemotePushPayload(
+            acquisition!.notification!,
+          );
+        }
+      } else {
+        // 旧任务仍由通知监听器追踪，但不能再作为下一条独立问题的上下文。
+        _acquisitionJobId = null;
+        _acquisitionQuestion = null;
+      }
       setState(() {
         _entries.add(
           _AgentConversationEntry(
@@ -607,14 +678,30 @@ class _AgentExperiencePageState extends State<AgentExperiencePage> {
     }
   }
 
+  /// 来源卡片会在首帧后撑高列表，因此二次滚动以保证最新回答可见。
   void _scrollToEnd() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOut,
+      if (!mounted || !_scrollController.hasClients) return;
+      unawaited(
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        ),
       );
+      // Long answers and source cards can increase the list extent after the
+      // first frame. A second pass keeps the newest reply above the composer.
+      _scrollCorrectionTimer?.cancel();
+      _scrollCorrectionTimer = Timer(const Duration(milliseconds: 320), () {
+        if (!mounted || !_scrollController.hasClients) return;
+        unawaited(
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+          ),
+        );
+      });
     });
   }
 
@@ -813,7 +900,7 @@ class _AgentLiveTestBanner extends StatelessWidget {
             SizedBox(width: 7),
             Flexible(
               child: Text(
-                '真实内容联调 · DeepSeek + 知乎官方开放平台',
+                '真实内容联调 · 定期采集内容库 + DeepSeek',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Color(0xFF136239),
