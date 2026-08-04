@@ -7,6 +7,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:reactive_mind_map/reactive_mind_map.dart';
 
 part 'app_config.dart';
 part 'agent_experience.dart';

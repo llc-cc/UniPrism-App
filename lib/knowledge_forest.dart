@@ -349,3 +349,408 @@ class _KnowledgeExtractionPreviewPageState
 }
 
 const _newTreeChoice = '__new_knowledge_tree__';
+
+abstract final class KnowledgeMindMapAdapter {
+  static MindMapData toMindMapData(KnowledgeTreeSnapshot tree) {
+    final nodesById = {for (final node in tree.nodes) node.id: node};
+    final roots = tree.nodes
+        .where(
+          (node) =>
+              node.parentNodeId == null ||
+              !nodesById.containsKey(node.parentNodeId),
+        )
+        .toList(growable: false);
+    if (roots.length == 1) {
+      return _buildNode(roots.single, tree.nodes, const <String>{});
+    }
+
+    // 第三方组件只接受单根数据；多根树使用不入库的渲染根。
+    return MindMapData(
+      id: 'render-root-${tree.id}',
+      title: tree.title,
+      description: '知识树根节点',
+      color: const Color(0xFF6B23FF),
+      customData: const {'type': 'topic', 'synthetic': true},
+      children: roots
+          .map((node) => _buildNode(node, tree.nodes, const <String>{}))
+          .toList(growable: false),
+    );
+  }
+
+  static MindMapData _buildNode(
+    KnowledgeNode node,
+    List<KnowledgeNode> allNodes,
+    Set<String> ancestors,
+  ) {
+    if (ancestors.contains(node.id)) {
+      return MindMapData(
+        id: node.id,
+        title: node.title,
+        description: node.summary,
+        color: _nodeColor(node.type),
+        customData: {'type': node.type, 'cycleTruncated': true},
+      );
+    }
+    final nextAncestors = {...ancestors, node.id};
+    final children = allNodes
+        .where((candidate) => candidate.parentNodeId == node.id)
+        .map((child) => _buildNode(child, allNodes, nextAncestors))
+        .toList(growable: false);
+    return MindMapData(
+      id: node.id,
+      title: node.title,
+      description: node.summary,
+      color: _nodeColor(node.type),
+      customData: {'type': node.type, 'knowledgeNodeId': node.id},
+      children: children,
+    );
+  }
+
+  static Color _nodeColor(String type) {
+    return switch (type) {
+      'topic' => const Color(0xFF6B23FF),
+      'concept' => const Color(0xFF2563EB),
+      'insight' => const Color(0xFF0F8A78),
+      'method' => const Color(0xFFB45309),
+      'action' => const Color(0xFFDC4C64),
+      'resource' => const Color(0xFF64748B),
+      _ => const Color(0xFF475569),
+    };
+  }
+}
+
+class KnowledgeForestPage extends StatelessWidget {
+  const KnowledgeForestPage({super.key, required this.store});
+
+  final KnowledgeForestStore store;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('我的知识森林')),
+      body: SafeArea(
+        child: AnimatedBuilder(
+          animation: store,
+          builder: (context, _) {
+            final trees = store.trees;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+              children: [
+                const _KnowledgePrototypeBanner(),
+                const SizedBox(height: 18),
+                if (trees.isEmpty)
+                  const _KnowledgeForestEmptyState()
+                else
+                  for (final tree in trees)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _KnowledgeTreeCard(
+                        tree: tree,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => KnowledgeTreePage(tree: tree),
+                          ),
+                        ),
+                      ),
+                    ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _KnowledgePrototypeBanner extends StatelessWidget {
+  const _KnowledgePrototypeBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF6DD),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFFD98B)),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.all(13),
+        child: Row(
+          children: [
+            Icon(Icons.science_outlined, color: Color(0xFF9A6700)),
+            SizedBox(width: 10),
+            Expanded(child: Text('内部测试数据，App 重启后清空。')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _KnowledgeForestEmptyState extends StatelessWidget {
+  const _KnowledgeForestEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 72, horizontal: 24),
+      child: Column(
+        children: [
+          Icon(
+            Icons.account_tree_outlined,
+            size: 56,
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.6),
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '还没有知识树',
+            style: Theme.of(
+              context,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '从 Agent 回答中选择“提炼为知识”，确认后将在这里形成主题树。',
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KnowledgeTreeCard extends StatelessWidget {
+  const _KnowledgeTreeCard({required this.tree, required this.onTap});
+
+  final KnowledgeTreeSnapshot tree;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFE6E0F1)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1EAFF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const SizedBox.square(
+                  dimension: 48,
+                  child: Icon(
+                    Icons.account_tree_rounded,
+                    color: Color(0xFF6B23FF),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      tree.title,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text('${tree.nodes.length} 个知识节点'),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class KnowledgeTreePage extends StatelessWidget {
+  const KnowledgeTreePage({super.key, required this.tree});
+
+  final KnowledgeTreeSnapshot tree;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = KnowledgeMindMapAdapter.toMindMapData(tree);
+    final nodesById = {for (final node in tree.nodes) node.id: node};
+    return Scaffold(
+      appBar: AppBar(title: Text(tree.title)),
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _KnowledgePrototypeBanner(),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: MindMapWidget(
+                    data: data,
+                    cameraFocus: CameraFocus.rootNode,
+                    minCanvasSize: const Size(900, 600),
+                    canvasPadding: const EdgeInsets.all(180),
+                    style: MindMapStyle(
+                      layout: MindMapLayout.right,
+                      backgroundColor: const Color(0xFFF8F7FC),
+                      connectionColor: const Color(0xFFB8A7D9),
+                      levelSpacing: 140,
+                      nodeMargin: 24,
+                      minNodeWidth: 96,
+                      maxNodeWidth: 190,
+                      nodeBuilder:
+                          (node, isSelected, onTap, onLongPress, onDoubleTap) {
+                            final type =
+                                node.customData?['type']?.toString() ?? '';
+                            final color = KnowledgeMindMapAdapter._nodeColor(
+                              type,
+                            );
+                            return Material(
+                              color: color,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                side: BorderSide(
+                                  color: isSelected
+                                      ? Colors.white
+                                      : color.withValues(alpha: 0.75),
+                                  width: isSelected ? 3 : 1,
+                                ),
+                              ),
+                              child: InkWell(
+                                onTap: onTap,
+                                onLongPress: onLongPress,
+                                onDoubleTap: onDoubleTap,
+                                borderRadius: BorderRadius.circular(14),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      node.title,
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                    ),
+                    onNodeTap: (data) {
+                      final node = nodesById[data.id];
+                      if (node != null) {
+                        KnowledgeNodeDetailSheet.show(context, node);
+                      }
+                    },
+                    onNodeLongPress: (data) {
+                      final node = nodesById[data.id];
+                      if (node != null) {
+                        KnowledgeNodeDetailSheet.show(context, node);
+                      }
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class KnowledgeNodeDetailSheet extends StatelessWidget {
+  const KnowledgeNodeDetailSheet({super.key, required this.node});
+
+  final KnowledgeNode node;
+
+  static Future<void> show(BuildContext context, KnowledgeNode node) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (_) => KnowledgeNodeDetailSheet(node: node),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          4,
+          20,
+          24 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              node.title,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(node.summary, style: theme.textTheme.bodyLarge),
+            const SizedBox(height: 20),
+            Text('来源问题', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 5),
+            Text(node.sourceQuestion),
+            const SizedBox(height: 14),
+            Text('原始回答摘要', style: theme.textTheme.labelLarge),
+            const SizedBox(height: 5),
+            Text(node.sourceAnswerExcerpt),
+            if (node.sourceRefs.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              Text('可追溯来源', style: theme.textTheme.labelLarge),
+              const SizedBox(height: 6),
+              for (final source in node.sourceRefs)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.link_rounded),
+                  title: Text(source.title),
+                  subtitle: Text(source.sourceName),
+                  trailing: IconButton(
+                    tooltip: '复制链接',
+                    onPressed: source.url.isEmpty
+                        ? null
+                        : () => Clipboard.setData(
+                            ClipboardData(text: source.url),
+                          ),
+                    icon: const Icon(Icons.copy_rounded),
+                  ),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
