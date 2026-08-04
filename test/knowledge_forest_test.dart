@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/main.dart';
 
@@ -120,5 +122,42 @@ void main() {
     expect(store.trees, hasLength(1));
     expect(merged.nodes, hasLength(3));
     expect(merged.nodes.last.id, 'node-batch-2-robotics');
+  });
+
+  test(
+    'knowledge extraction service parses envelope and attaches trusted refs',
+    () {
+      const sourceRefs = [
+        KnowledgeSourceRef(
+          id: 'source-1',
+          title: '教育部专业介绍',
+          url: 'https://example.edu/ai',
+          sourceName: '教育部',
+        ),
+      ];
+
+      final batch = KnowledgeExtractionService.decodeEnvelopeForTest({
+        'ok': true,
+        'data': sampleBatchJson,
+      }, sourceRefs: sourceRefs);
+
+      expect(batch.nodes, isNotEmpty);
+      expect(batch.sourceRefs.single.url, 'https://example.edu/ai');
+    },
+  );
+
+  test('knowledge extraction service exposes timeout as user-facing error', () {
+    expect(
+      () => KnowledgeExtractionService.decodeFailureForTest(
+        TimeoutException('network timeout'),
+      ),
+      throwsA(
+        isA<ApiRequestException>().having(
+          (error) => error.message,
+          'message',
+          contains('超时'),
+        ),
+      ),
+    );
   });
 }

@@ -16,6 +16,7 @@ part 'content_ingestion_preview.dart';
 part 'content_source_test.dart';
 part 'github_content_source_test.dart';
 part 'knowledge_models.dart';
+part 'knowledge_service.dart';
 part 'unified_content_answer_test.dart';
 part 'login.dart';
 part 'notification_center.dart';
