@@ -78,6 +78,8 @@ class UniPrismApp extends StatelessWidget {
         '/assessment': (_) => const AssessmentPage(),
         '/agent': (_) => const AgentExperiencePage(),
         '/agent-subscriptions': (_) => const AgentSubscriptionsPage(),
+        '/knowledge-forest': (_) =>
+            KnowledgeForestPage(store: KnowledgeForestStore.instance),
         '/reports': (_) => const ReportCenterPage(),
         '/home': (_) => const ComplianceGate(),
         '/messages': (_) => const ComplianceGate(initialIndex: 2),
