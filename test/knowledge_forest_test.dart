@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/main.dart';
 
@@ -159,5 +160,104 @@ void main() {
         ),
       ),
     );
+  });
+
+  testWidgets('candidate preview edits and selectively confirms nodes', (
+    tester,
+  ) async {
+    final store = KnowledgeForestStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: KnowledgeExtractionPreviewPage(batch: sampleBatch, store: store),
+      ),
+    );
+
+    final secondCandidate = find.byKey(
+      const ValueKey('knowledge-candidate-node-2'),
+    );
+    final reviewList = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      secondCandidate,
+      300,
+      scrollable: reviewList,
+    );
+    await tester.tap(secondCandidate);
+    final firstTitle = find.byKey(
+      const ValueKey('knowledge-candidate-title-node-1'),
+    );
+    await tester.scrollUntilVisible(firstTitle, -300, scrollable: reviewList);
+    await tester.enterText(firstTitle, '人工智能基础');
+    await tester.tap(find.byKey(const ValueKey('confirm-knowledge-batch')));
+    await tester.pumpAndSettle();
+
+    expect(store.trees.single.nodes, hasLength(1));
+    expect(store.trees.single.nodes.single.title, '人工智能基础');
+  });
+
+  testWidgets('cancelling candidate preview leaves the forest unchanged', (
+    tester,
+  ) async {
+    final store = KnowledgeForestStore();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => FilledButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => KnowledgeExtractionPreviewPage(
+                  batch: sampleBatch,
+                  store: store,
+                ),
+              ),
+            ),
+            child: const Text('打开审核'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('打开审核'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('取消'));
+    await tester.pumpAndSettle();
+
+    expect(store.trees, isEmpty);
+  });
+
+  testWidgets('candidate preview can target an existing tree', (tester) async {
+    final store = KnowledgeForestStore();
+    final existing = store.confirmBatch(sampleBatch, targetTreeTitle: '人工智能');
+    final laterBatch = KnowledgeExtractionBatch.fromJson({
+      ...sampleBatchJson,
+      'batchId': 'batch-preview-existing',
+      'nodes': [
+        {
+          'candidateId': 'robotics',
+          'parentCandidateId': null,
+          'type': 'concept',
+          'title': '机器人学',
+          'summary': '感知、决策与控制',
+          'selected': true,
+          'confidence': 0.82,
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: KnowledgeExtractionPreviewPage(batch: laterBatch, store: store),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('knowledge-target-tree-choice')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(existing.title).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm-knowledge-batch')));
+    await tester.pumpAndSettle();
+
+    expect(store.trees, hasLength(1));
+    expect(store.trees.single.nodes, hasLength(3));
   });
 }
