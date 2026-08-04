@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertKnowledgeExtractionEnvironment,
   extractKnowledgeBatch,
   KnowledgeExtractionError,
+  knowledgeExtractionInputSchema,
   type KnowledgeModelCaller,
 } from '@/lib/knowledge-extraction/extractKnowledge';
 
@@ -23,6 +25,26 @@ function callerReturning(payload: unknown): KnowledgeModelCaller {
 }
 
 describe('knowledge extraction', () => {
+  it('rejects the development extraction endpoint in production', () => {
+    expect(() => assertKnowledgeExtractionEnvironment('production'))
+      .toThrow(/仅用于开发联调/);
+  });
+
+  it('rejects oversized answers and excessive tree summaries', () => {
+    expect(() => knowledgeExtractionInputSchema.parse({
+      ...validInput,
+      answer: 'a'.repeat(6_001),
+    })).toThrow();
+
+    expect(() => knowledgeExtractionInputSchema.parse({
+      ...validInput,
+      availableTrees: Array.from({ length: 21 }, (_, index) => ({
+        id: `tree-${index}`,
+        title: `Tree ${index}`,
+      })),
+    })).toThrow();
+  });
+
   it('normalizes candidates and clears a missing parent', async () => {
     const result = await extractKnowledgeBatch(
       validInput,
