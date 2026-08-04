@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:reactive_mind_map/reactive_mind_map.dart';
 import 'package:uniprism_app/main.dart';
 
 const sampleBatchJson = <String, dynamic>{
@@ -259,5 +260,35 @@ void main() {
 
     expect(store.trees, hasLength(1));
     expect(store.trees.single.nodes, hasLength(3));
+  });
+
+  test('mind map adapter renders primary parent-child edges', () {
+    final store = KnowledgeForestStore();
+    final tree = store.confirmBatch(sampleBatch, targetTreeTitle: '人工智能');
+
+    final data = KnowledgeMindMapAdapter.toMindMapData(tree);
+
+    expect(data.id, 'node-batch-1-node-1');
+    expect(data.children.single.id, 'node-batch-1-node-2');
+  });
+
+  testWidgets('knowledge forest opens one tree as a mind map', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(() {
+      tester.view.resetDevicePixelRatio();
+      tester.view.resetPhysicalSize();
+    });
+    final store = KnowledgeForestStore()
+      ..confirmBatch(sampleBatch, targetTreeTitle: '人工智能');
+    await tester.pumpWidget(
+      MaterialApp(home: KnowledgeForestPage(store: store)),
+    );
+
+    await tester.tap(find.text('人工智能').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(MindMapWidget), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
