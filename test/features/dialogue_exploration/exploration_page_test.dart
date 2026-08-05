@@ -3,48 +3,64 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/dialogue_exploration/dialogue_exploration.dart';
 
 void main() {
-  testWidgets('lab shows three scenarios, mastery profiles, and mock warning', (
+  testWidgets('lab opens as a conversation instead of a scenario menu', (
     tester,
   ) async {
     await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
     await tester.pumpAndSettle();
 
     expect(find.text('1.2 对话探索实验室'), findsOneWidget);
-    expect(find.textContaining('测试数据'), findsWidgets);
-    expect(find.text('二次函数：顶点为什么在这里'), findsOneWidget);
-    expect(find.text('证明不等式：验证、诊断与回退'), findsOneWidget);
-    expect(find.text('Business model：咖啡店怎么赚钱'), findsOneWidget);
-    expect(find.text('基础薄弱'), findsOneWidget);
-    expect(find.text('正在形成'), findsOneWidget);
-    expect(find.text('掌握较好'), findsOneWidget);
+    expect(find.text('今天想弄懂什么？'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('exploration-topic-input')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('exploration-start-session')),
+      findsOneWidget,
+    );
+    expect(find.text('为什么两个负数相乘会得到正数？'), findsOneWidget);
+    expect(find.text('选择学生掌握程度'), findsNothing);
+    expect(find.text('选择复用场景'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('scenario-teaching-quadratic')),
+      findsNothing,
+    );
   });
 
-  testWidgets('teaching scenario renders adapted answer and live material', (
+  testWidgets('a free question starts an automatically planned micro lesson', (
+    tester,
+  ) async {
+    await _startQuestion(tester, '二次函数的顶点为什么在这里？');
+
+    expect(find.text('二次函数：顶点为什么在这里'), findsOneWidget);
+    expect(find.textContaining('正在梳理问题链'), findsOneWidget);
+    expect(find.textContaining('顶点'), findsWidgets);
+    expect(find.byKey(const ValueKey('parabola-a-slider')), findsOneWidget);
+    expect(find.text('查看思维树'), findsOneWidget);
+  });
+
+  testWidgets('negative multiplication seed receives a relevant response', (
     tester,
   ) async {
     await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('scenario-teaching-quadratic')),
-    );
+    await tester.tap(find.text('为什么两个负数相乘会得到正数？'));
+    await tester.tap(find.byKey(const ValueKey('exploration-start-session')));
     await tester.pumpAndSettle();
 
-    expect(find.text('二次函数：顶点为什么在这里'), findsOneWidget);
-    expect(find.textContaining('顶点式'), findsWidgets);
-    expect(find.byKey(const ValueKey('parabola-a-slider')), findsOneWidget);
-    expect(find.text('查看思维树'), findsOneWidget);
+    expect(find.textContaining('负数'), findsWidgets);
+    expect(find.textContaining('成立条件'), findsWidgets);
   });
 
   testWidgets('question scaffold only fills input and does not auto-send', (
     tester,
   ) async {
-    await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('scenario-teaching-quadratic')),
-    );
-    await tester.pumpAndSettle();
-    final tutorCount = find.byKey(const ValueKey('tutor-message')).evaluate().length;
+    await _startQuestion(tester, '二次函数的顶点为什么在这里？');
+    final tutorCount = find
+        .byKey(const ValueKey('tutor-message'))
+        .evaluate()
+        .length;
 
     await tester.tap(find.text('如果……会怎样'));
     await tester.pump();
@@ -59,37 +75,32 @@ void main() {
     );
   });
 
-  testWidgets('question library fills a seed and tutor message opens whiteboard', (
+  testWidgets(
+    'question library fills a seed and tutor message opens whiteboard',
+    (tester) async {
+      await _startQuestion(tester, '二次函数的顶点为什么在这里？');
+
+      await tester.tap(find.text('一般式怎么变成顶点式？'));
+      await tester.pump();
+      final input = tester.widget<TextField>(
+        find.byKey(const ValueKey('exploration-question-input')),
+      );
+      expect(input.controller!.text, '一般式怎么变成顶点式？');
+
+      final whiteboardButton = find.text('在白板上演示').first;
+      final button = tester.widget<TextButton>(
+        find.ancestor(of: whiteboardButton, matching: find.byType(TextButton)),
+      );
+      button.onPressed!();
+      await tester.pumpAndSettle();
+      expect(find.text('Mock 白板'), findsOneWidget);
+    },
+  );
+
+  testWidgets('practice question keeps wrong path and reaches a valid branch', (
     tester,
   ) async {
-    await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('scenario-teaching-quadratic')),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('一般式怎么变成顶点式？'));
-    await tester.pump();
-    final input = tester.widget<TextField>(
-      find.byKey(const ValueKey('exploration-question-input')),
-    );
-    expect(input.controller!.text, '一般式怎么变成顶点式？');
-
-    final whiteboardButton = find.text('在白板上演示').first;
-    await tester.ensureVisible(whiteboardButton);
-    await tester.tap(whiteboardButton);
-    await tester.pumpAndSettle();
-    expect(find.text('Mock 白板'), findsOneWidget);
-  });
-
-  testWidgets('practice page keeps wrong path and reaches a valid branch', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('scenario-practice-inequality')));
-    await tester.pumpAndSettle();
+    await _startQuestion(tester, '怎样证明 x + 1/x ≥ 2？');
 
     await tester.tap(find.byKey(const ValueKey('practice-try-wrong')));
     await tester.pump();
@@ -119,7 +130,9 @@ void main() {
     expect(find.text('已完成'), findsWidgets);
   });
 
-  testWidgets('compact teaching page has no layout overflow', (tester) async {
+  testWidgets('compact conversation entry has no layout overflow', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -127,11 +140,19 @@ void main() {
 
     await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('scenario-teaching-quadratic')),
-    );
-    await tester.pumpAndSettle();
 
+    expect(find.text('今天想弄懂什么？'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> _startQuestion(WidgetTester tester, String question) async {
+  await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(const ValueKey('exploration-topic-input')),
+    question,
+  );
+  await tester.tap(find.byKey(const ValueKey('exploration-start-session')));
+  await tester.pumpAndSettle();
 }

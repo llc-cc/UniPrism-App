@@ -6,6 +6,15 @@ final class MockExplorationContentRepository
     implements ExplorationContentRepository {
   static final List<ExplorationScenario> _scenarios = List.unmodifiable([
     ExplorationScenario(
+      id: 'teaching-negative-multiplication',
+      title: '负数乘法：为什么负负得正',
+      kind: ExplorationScenarioKind.teaching,
+      atomId: 'negative-multiplication',
+      openingPrompt: '为什么两个负数相乘会得到正数？',
+      seedQuestions: const ['为什么两个负数相乘会得到正数？', '负号可以表示什么？', '连续两次取相反数会怎样？'],
+      allowedMaterialIds: const {},
+    ),
+    ExplorationScenario(
       id: 'teaching-quadratic',
       title: '二次函数：顶点为什么在这里',
       kind: ExplorationScenarioKind.teaching,
@@ -32,15 +41,8 @@ final class MockExplorationContentRepository
       kind: ExplorationScenarioKind.practice,
       atomId: 'inequality-proof',
       openingPrompt: '证明：当 x > 0 时，x + 1/x ≥ 2。',
-      seedQuestions: const [
-        '我想直接用柯西不等式，可以吗？',
-        '这一步需要满足什么条件？',
-        '能不能用基本不等式？',
-      ],
-      allowedMaterialIds: const {
-        'inequality-figure',
-        'inequality-formula',
-      },
+      seedQuestions: const ['我想直接用柯西不等式，可以吗？', '这一步需要满足什么条件？', '能不能用基本不等式？'],
+      allowedMaterialIds: const {'inequality-figure', 'inequality-formula'},
     ),
     ExplorationScenario(
       id: 'demo-coffee-business-model',
@@ -112,7 +114,9 @@ final class MockExplorationContentRepository
       atomId: 'business-model-unit-economics',
       kind: ExplorationMaterialKind.figure,
       title: '收入与成本画布',
-      payload: const {'columns': ['收入', '固定成本', '变动成本']},
+      payload: const {
+        'columns': ['收入', '固定成本', '变动成本'],
+      },
     ),
     ExplorationMaterial(
       id: 'business-model-interactive',

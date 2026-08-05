@@ -17,6 +17,7 @@ import '../materials/mock_whiteboard_launcher.dart';
 import '../practice/practice_diagnosis.dart';
 import '../practice/practice_exploration_strategy.dart';
 import '../teaching/teaching_exploration_strategy.dart';
+import '../teaching/teaching_strategy_engine.dart';
 import 'exploration_tree_panel.dart';
 
 /// 教学与 public Demo 的对话页，展示回答、素材、提问脚手架和思维树。
@@ -31,10 +32,12 @@ final class TeachingExplorationPage extends StatefulWidget {
   final StudentMasterySnapshot mastery;
 
   @override
-  State<TeachingExplorationPage> createState() => _TeachingExplorationPageState();
+  State<TeachingExplorationPage> createState() =>
+      _TeachingExplorationPageState();
 }
 
-final class _TeachingExplorationPageState extends State<TeachingExplorationPage> {
+final class _TeachingExplorationPageState
+    extends State<TeachingExplorationPage> {
   final _contentRepository = MockExplorationContentRepository();
   final _inputController = TextEditingController();
   final _whiteboardLauncher = const MockExplorationWhiteboardLauncher();
@@ -65,7 +68,9 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
       widget.scenario.allowedMaterialIds,
     );
     if (mounted) {
-      setState(() => _materials = {for (final item in materials) item.id: item});
+      setState(
+        () => _materials = {for (final item in materials) item.id: item},
+      );
     }
     await _controller.start(
       scenario: widget.scenario,
@@ -116,6 +121,7 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
                           icon: const Icon(Icons.account_tree_outlined),
                           label: const Text('查看思维树'),
                         ),
+                        _strategyStatus(state),
                         const SizedBox(height: 8),
                         _messageList(tree.nodes),
                         if (state.status == TeachingSessionStatus.loading)
@@ -123,8 +129,12 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
                         if (_branchFromNodeId != null)
                           Padding(
                             padding: const EdgeInsets.only(top: 8),
-                            child: Text('正在从历史节点创建支线',
-                                style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                            child: Text(
+                              '正在从历史节点创建支线',
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
                           ),
                       ],
                     ),
@@ -139,49 +149,106 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
   Widget _messageList(List<ExplorationNode> nodes) {
     return Column(
       key: const ValueKey('tutor-message'),
-      children: nodes.map((node) {
-        final isTutor = node.kind == ExplorationNodeKind.tutorResponse;
-        return Align(
-          alignment: isTutor ? Alignment.centerLeft : Alignment.centerRight,
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(12),
-            constraints: const BoxConstraints(maxWidth: 620),
-            decoration: BoxDecoration(
-              color: isTutor ? const Color(0xFFF4F0FF) : const Color(0xFFEAF6FF),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(node.text),
-                if (isTutor) ...[
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      TextButton(
-                        onPressed: () => setState(() => _branchFromNodeId = node.id),
-                        child: const Text('从这里继续探索'),
+      children: nodes
+          .map((node) {
+            final isTutor = node.kind == ExplorationNodeKind.tutorResponse;
+            return Align(
+              alignment: isTutor ? Alignment.centerLeft : Alignment.centerRight,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                constraints: const BoxConstraints(maxWidth: 620),
+                decoration: BoxDecoration(
+                  color: isTutor
+                      ? const Color(0xFFF4F0FF)
+                      : const Color(0xFFEAF6FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(node.text),
+                    if (isTutor) ...[
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _branchFromNodeId = node.id),
+                            child: const Text('从这里继续探索'),
+                          ),
+                          TextButton(
+                            onPressed: () => _convertMemory(node.id),
+                            child: const Text('转为记忆候选'),
+                          ),
+                          TextButton(
+                            onPressed: () => _openWhiteboard(node.id),
+                            child: const Text('在白板上演示'),
+                          ),
+                        ],
                       ),
-                      TextButton(
-                        onPressed: () => _convertMemory(node.id),
-                        child: const Text('转为记忆候选'),
-                      ),
-                      TextButton(
-                        onPressed: () => _openWhiteboard(node.id),
-                        child: const Text('在白板上演示'),
-                      ),
+                      for (final id in node.materialIds)
+                        if (_materials[id] case final material?)
+                          ExplorationMaterialCard(material: material),
                     ],
+                  ],
+                ),
+              ),
+            );
+          })
+          .toList(growable: false),
+    );
+  }
+
+  Widget _strategyStatus(TeachingSessionState state) {
+    final active = state.activeDecision;
+    if (active == null) return const SizedBox.shrink();
+    final progress = (state.strategyHistory.length / 5)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    return Card(
+      key: const ValueKey('adaptive-strategy-status'),
+      margin: const EdgeInsets.only(top: 8),
+      elevation: 0,
+      color: const Color(0xFFEFF8F4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.auto_awesome_rounded, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    active.mode.studentActionLabel,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
-                  for (final id in node.materialIds)
-                    if (_materials[id] case final material?)
-                      ExplorationMaterialCard(material: material),
-                ],
+                ),
+                Text('${(progress * 100).round()}%'),
               ],
             ),
-          ),
-        );
-      }).toList(growable: false),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(value: progress),
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: const Text('查看本轮调整原因（开发）'),
+              children: [
+                for (final decision in state.strategyHistory)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(decision.mode.studentActionLabel),
+                    subtitle: Text(decision.reason),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -256,12 +323,17 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
     final text = _inputController.text;
     if (text.trim().isEmpty) return;
     try {
-      await _controller.submitQuestion(text, branchFromNodeId: _branchFromNodeId);
+      await _controller.submitQuestion(
+        text,
+        branchFromNodeId: _branchFromNodeId,
+      );
       _inputController.clear();
       if (mounted) setState(() => _branchFromNodeId = null);
     } on ExplorationInputRejectedException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
     }
   }
 
@@ -281,9 +353,9 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
       initialState: const {'a': 1.0, 'h': 0.0, 'k': 0.0},
     );
     if (!mounted || !result.confirmed) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('白板状态已带回当前探索节点（Mock）')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('白板状态已带回当前探索节点（Mock）')));
   }
 
   void _showTree(ExplorationTree tree) {
@@ -310,7 +382,10 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
         title: const Text('用自己的话复述'),
         content: TextField(controller: reflectionController, maxLines: 3),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.pop(context, reflectionController.text),
             child: const Text('保存'),
@@ -321,9 +396,9 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
     reflectionController.dispose();
     if (reflection == null || reflection.trim().isEmpty) return;
     final record = await _controller.saveTrace(reflection: reflection);
-    final json = const JsonEncoder.withIndent('  ').convert(
-      ExplorationTraceExporter.toVersionedJson(record),
-    );
+    final json = const JsonEncoder.withIndent(
+      '  ',
+    ).convert(ExplorationTraceExporter.toVersionedJson(record));
     await Clipboard.setData(ClipboardData(text: json));
     if (!mounted) return;
     showDialog<void>(
@@ -331,7 +406,12 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
       builder: (context) => AlertDialog(
         title: const Text('已保存并复制 JSON'),
         content: SingleChildScrollView(child: SelectableText(json)),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('关闭'),
+          ),
+        ],
       ),
     );
   }
@@ -349,10 +429,12 @@ final class PracticeExplorationPage extends StatefulWidget {
   final StudentMasterySnapshot mastery;
 
   @override
-  State<PracticeExplorationPage> createState() => _PracticeExplorationPageState();
+  State<PracticeExplorationPage> createState() =>
+      _PracticeExplorationPageState();
 }
 
-final class _PracticeExplorationPageState extends State<PracticeExplorationPage> {
+final class _PracticeExplorationPageState
+    extends State<PracticeExplorationPage> {
   late final InMemoryMasteryEvidenceSink _evidenceSink;
   late final ExplorationController _controller;
   final _reflectionController = TextEditingController();
@@ -367,7 +449,10 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
       masteryEvidenceSink: _evidenceSink,
       nowUtc: () => DateTime.now().toUtc(),
     )..addListener(_refresh);
-    _controller.startPractice(scenario: widget.scenario, mastery: widget.mastery);
+    _controller.startPractice(
+      scenario: widget.scenario,
+      mastery: widget.mastery,
+    );
   }
 
   void _refresh() {
@@ -423,7 +508,12 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
             value: _selectedDiagnosis ?? pending.suggestedKind,
             isExpanded: true,
             items: DifficultyDiagnosisKind.values
-                .map((kind) => DropdownMenuItem(value: kind, child: Text(_diagnosisLabel(kind))))
+                .map(
+                  (kind) => DropdownMenuItem(
+                    value: kind,
+                    child: Text(_diagnosisLabel(kind)),
+                  ),
+                )
                 .toList(growable: false),
             onChanged: (value) => setState(() => _selectedDiagnosis = value),
           ),
@@ -452,9 +542,8 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
               ),
               FilledButton.tonal(
                 key: const ValueKey('practice-try-correct'),
-                onPressed: () => _controller.submitHypothesis(
-                  '令 a=x、b=1/x，使用基本不等式',
-                ),
+                onPressed: () =>
+                    _controller.submitHypothesis('令 a=x、b=1/x，使用基本不等式'),
                 child: const Text('使用基本不等式'),
               ),
             ],
@@ -496,9 +585,7 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
           TextField(
             key: const ValueKey('practice-reflection'),
             controller: _reflectionController,
-            decoration: const InputDecoration(
-              hintText: '用自己的话说说：这一步为什么成立？',
-            ),
+            decoration: const InputDecoration(hintText: '用自己的话说说：这一步为什么成立？'),
           ),
           const SizedBox(height: 8),
           FilledButton(
@@ -526,9 +613,9 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
   void _completePractice() {
     final reflection = _reflectionController.text.trim();
     if (reflection.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先用自己的话复述关键思路')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先用自己的话复述关键思路')));
       return;
     }
     // 只有学生主动复述后才完成节点，避免把“看过答案”误记为理解。

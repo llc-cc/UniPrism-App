@@ -38,10 +38,36 @@ final class MockExplorationGateway implements ExplorationGateway {
         sideBranch: true,
       );
     }
+    if (request.atomId == 'negative-multiplication') {
+      return _routeNegativeMultiplication(request);
+    }
+    if (request.atomId == 'free-question') {
+      return _routeFreeQuestion(request);
+    }
     if (request.scenarioKind == ExplorationScenarioKind.publicDemo) {
       return _routeBusinessModel(request);
     }
     return _routeTeaching(request);
+  }
+
+  ExplorationTurnResponse _routeNegativeMultiplication(
+    ExplorationTurnRequest request,
+  ) {
+    return _response(
+      request,
+      answer: '负号可以表示“取相反方向”，乘以 -1 就是取一次相反数；连续取两次相反数，会回到原来的方向。',
+      followUp: '把“连续两次取相反数”写成式子时，每一步依据的运算规则是什么？',
+      intent: ExplorationIntent.probePriorKnowledge,
+    );
+  }
+
+  ExplorationTurnResponse _routeFreeQuestion(ExplorationTurnRequest request) {
+    return _response(
+      request,
+      answer: '先不急着给结论。我们把你的问题拆成已知现象、关键概念和需要验证的条件。',
+      followUp: '你目前最确定的一条事实是什么，它的依据来自哪里？',
+      intent: ExplorationIntent.probePriorKnowledge,
+    );
   }
 
   ExplorationTurnResponse _routeBusinessModel(ExplorationTurnRequest request) {

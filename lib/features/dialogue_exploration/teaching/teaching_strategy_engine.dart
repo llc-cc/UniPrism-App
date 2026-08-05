@@ -104,3 +104,16 @@ final class TeachingStrategyEngine {
     return signals.any(value.contains);
   }
 }
+
+/// 学生只看到当前教学动作的自然语言反馈，不看到可选择的内部模式枚举。
+extension TeachingDialogueModePresentation on TeachingDialogueMode {
+  String get studentActionLabel {
+    return switch (this) {
+      TeachingDialogueMode.problemChain => '正在梳理问题链',
+      TeachingDialogueMode.socratic => '正在追问成立条件',
+      TeachingDialogueMode.errorTracing => '正在检查错误思路',
+      TeachingDialogueMode.analogyTransfer => '正在换一个熟悉类比',
+      TeachingDialogueMode.selfExplanation => '正在验证你的解释',
+    };
+  }
+}
