@@ -13,6 +13,7 @@ import '../core/exploration_tree.dart';
 import '../core/teaching_session_controller.dart';
 import '../mastery/student_mastery.dart';
 import '../materials/exploration_material_card.dart';
+import '../materials/mock_whiteboard_launcher.dart';
 import '../practice/practice_diagnosis.dart';
 import '../practice/practice_exploration_strategy.dart';
 import '../teaching/teaching_exploration_strategy.dart';
@@ -36,6 +37,7 @@ final class TeachingExplorationPage extends StatefulWidget {
 final class _TeachingExplorationPageState extends State<TeachingExplorationPage> {
   final _contentRepository = MockExplorationContentRepository();
   final _inputController = TextEditingController();
+  final _whiteboardLauncher = const MockExplorationWhiteboardLauncher();
   late final InMemoryExplorationTraceRepository _traceRepository;
   late final InMemoryMemoryCandidateSink _memorySink;
   late final TeachingSessionController _controller;
@@ -154,9 +156,6 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
               children: [
                 Text(node.text),
                 if (isTutor) ...[
-                  for (final id in node.materialIds)
-                    if (_materials[id] case final material?)
-                      ExplorationMaterialCard(material: material),
                   Wrap(
                     spacing: 8,
                     children: [
@@ -168,8 +167,15 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
                         onPressed: () => _convertMemory(node.id),
                         child: const Text('转为记忆候选'),
                       ),
+                      TextButton(
+                        onPressed: () => _openWhiteboard(node.id),
+                        child: const Text('在白板上演示'),
+                      ),
                     ],
                   ),
+                  for (final id in node.materialIds)
+                    if (_materials[id] case final material?)
+                      ExplorationMaterialCard(material: material),
                 ],
               ],
             ),
@@ -188,6 +194,26 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: Text('问题库'),
+                  ),
+                  ...widget.scenario.seedQuestions.map(
+                    (question) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ActionChip(
+                        label: Text(question),
+                        onPressed: () => _inputController.text = question,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -244,6 +270,19 @@ final class _TeachingExplorationPageState extends State<TeachingExplorationPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已生成记忆候选（当前 ${_memorySink.items.length} 项）')),
+    );
+  }
+
+  Future<void> _openWhiteboard(String nodeId) async {
+    final result = await _whiteboardLauncher.open(
+      context,
+      nodeId: nodeId,
+      atomId: widget.scenario.atomId,
+      initialState: const {'a': 1.0, 'h': 0.0, 'k': 0.0},
+    );
+    if (!mounted || !result.confirmed) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('白板状态已带回当前探索节点（Mock）')),
     );
   }
 
@@ -316,6 +355,7 @@ final class PracticeExplorationPage extends StatefulWidget {
 final class _PracticeExplorationPageState extends State<PracticeExplorationPage> {
   late final InMemoryMasteryEvidenceSink _evidenceSink;
   late final ExplorationController _controller;
+  final _reflectionController = TextEditingController();
   DifficultyDiagnosisKind? _selectedDiagnosis;
 
   @override
@@ -342,6 +382,7 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
   void dispose() {
     _controller.removeListener(_refresh);
     _controller.dispose();
+    _reflectionController.dispose();
     super.dispose();
   }
 
@@ -452,6 +493,19 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
       return _controlPanel(
         children: [
           Text('步骤验证通过 · 已记录 ${_evidenceSink.items.length} 条掌握证据'),
+          TextField(
+            key: const ValueKey('practice-reflection'),
+            controller: _reflectionController,
+            decoration: const InputDecoration(
+              hintText: '用自己的话说说：这一步为什么成立？',
+            ),
+          ),
+          const SizedBox(height: 8),
+          FilledButton(
+            key: const ValueKey('practice-complete'),
+            onPressed: _completePractice,
+            child: const Text('完成复述'),
+          ),
         ],
       );
     }
@@ -467,6 +521,18 @@ final class _PracticeExplorationPageState extends State<PracticeExplorationPage>
         child: Column(mainAxisSize: MainAxisSize.min, children: children),
       ),
     );
+  }
+
+  void _completePractice() {
+    final reflection = _reflectionController.text.trim();
+    if (reflection.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先用自己的话复述关键思路')),
+      );
+      return;
+    }
+    // 只有学生主动复述后才完成节点，避免把“看过答案”误记为理解。
+    _controller.saveReflection(reflection);
   }
 
   static String _diagnosisLabel(DifficultyDiagnosisKind kind) {

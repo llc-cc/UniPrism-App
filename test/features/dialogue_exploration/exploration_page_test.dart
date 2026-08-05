@@ -59,6 +59,30 @@ void main() {
     );
   });
 
+  testWidgets('question library fills a seed and tutor message opens whiteboard', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const MaterialApp(home: ExplorationLabPage()));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('scenario-teaching-quadratic')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('一般式怎么变成顶点式？'));
+    await tester.pump();
+    final input = tester.widget<TextField>(
+      find.byKey(const ValueKey('exploration-question-input')),
+    );
+    expect(input.controller!.text, '一般式怎么变成顶点式？');
+
+    final whiteboardButton = find.text('在白板上演示').first;
+    await tester.ensureVisible(whiteboardButton);
+    await tester.tap(whiteboardButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Mock 白板'), findsOneWidget);
+  });
+
   testWidgets('practice page keeps wrong path and reaches a valid branch', (
     tester,
   ) async {
@@ -85,6 +109,14 @@ void main() {
     expect(find.textContaining('满足基本不等式'), findsOneWidget);
     expect(find.text('不成立'), findsWidgets);
     expect(find.text('回退'), findsWidgets);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('practice-reflection')),
+      '先检查正数条件，再选择基本不等式。',
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-complete')));
+    await tester.pump();
+    expect(find.text('已完成'), findsWidgets);
   });
 
   testWidgets('compact teaching page has no layout overflow', (tester) async {
