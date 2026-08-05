@@ -1,5 +1,7 @@
 # 1.2 对话式发散提问 Mock Implementation Plan
 
+> **已被替代：** 用户补充了练习端口、错误思路验证、诊断确认和回退要求。本计划保留为决策记录，执行以 `2026-08-05-dialogue-exploration-dual-port-mock.md` 为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在独立 Flutter 模块中实现可操作的 1.2 对话式发散提问闭环，使用二次函数与 business model Mock 数据，同时为知识库、正式对话、白板、事件和 M2 记忆项保留稳定接口。
