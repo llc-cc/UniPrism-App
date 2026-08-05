@@ -14,4 +14,7 @@ export 'materials/mock_whiteboard_launcher.dart';
 export 'materials/parabola_painter.dart';
 export 'practice/practice_diagnosis.dart';
 export 'practice/practice_exploration_strategy.dart';
+export 'presentation/exploration_lab_page.dart';
+export 'presentation/exploration_session_page.dart';
+export 'presentation/exploration_tree_panel.dart';
 export 'teaching/teaching_exploration_strategy.dart';

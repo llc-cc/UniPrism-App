@@ -1,0 +1,500 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../adapters/in_memory_exploration_adapters.dart';
+import '../adapters/mock_exploration_content_repository.dart';
+import '../adapters/mock_exploration_gateway.dart';
+import '../core/exploration_controller.dart';
+import '../core/exploration_models.dart';
+import '../core/exploration_outputs.dart';
+import '../core/exploration_tree.dart';
+import '../core/teaching_session_controller.dart';
+import '../mastery/student_mastery.dart';
+import '../materials/exploration_material_card.dart';
+import '../practice/practice_diagnosis.dart';
+import '../practice/practice_exploration_strategy.dart';
+import '../teaching/teaching_exploration_strategy.dart';
+import 'exploration_tree_panel.dart';
+
+/// 教学与 public Demo 的对话页，展示回答、素材、提问脚手架和思维树。
+final class TeachingExplorationPage extends StatefulWidget {
+  const TeachingExplorationPage({
+    super.key,
+    required this.scenario,
+    required this.mastery,
+  });
+
+  final ExplorationScenario scenario;
+  final StudentMasterySnapshot mastery;
+
+  @override
+  State<TeachingExplorationPage> createState() => _TeachingExplorationPageState();
+}
+
+final class _TeachingExplorationPageState extends State<TeachingExplorationPage> {
+  final _contentRepository = MockExplorationContentRepository();
+  final _inputController = TextEditingController();
+  late final InMemoryExplorationTraceRepository _traceRepository;
+  late final InMemoryMemoryCandidateSink _memorySink;
+  late final TeachingSessionController _controller;
+  Map<String, ExplorationMaterial> _materials = const {};
+  String? _branchFromNodeId;
+
+  @override
+  void initState() {
+    super.initState();
+    _traceRepository = InMemoryExplorationTraceRepository();
+    _memorySink = InMemoryMemoryCandidateSink();
+    _controller = TeachingSessionController(
+      strategy: TeachingExplorationStrategy(
+        gateway: MockExplorationGateway(delay: Duration.zero),
+      ),
+      traceRepository: _traceRepository,
+      memoryCandidateSink: _memorySink,
+      nowUtc: () => DateTime.now().toUtc(),
+    )..addListener(_refresh);
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    final materials = await _contentRepository.loadMaterials(
+      widget.scenario.allowedMaterialIds,
+    );
+    if (mounted) {
+      setState(() => _materials = {for (final item in materials) item.id: item});
+    }
+    await _controller.start(
+      scenario: widget.scenario,
+      mastery: widget.mastery,
+      question: widget.scenario.openingPrompt,
+    );
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_refresh);
+    _controller.dispose();
+    _inputController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = _controller.state;
+    final tree = state.tree;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.scenario.title),
+        actions: [
+          if (tree != null)
+            TextButton(onPressed: _saveAndExport, child: const Text('保存并导出')),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _SessionMockNotice(),
+            ),
+            Expanded(
+              child: tree == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
+                      padding: const EdgeInsets.all(12),
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => _showTree(tree),
+                          icon: const Icon(Icons.account_tree_outlined),
+                          label: const Text('查看思维树'),
+                        ),
+                        const SizedBox(height: 8),
+                        _messageList(tree.nodes),
+                        if (state.status == TeachingSessionStatus.loading)
+                          const LinearProgressIndicator(),
+                        if (_branchFromNodeId != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text('正在从历史节点创建支线',
+                                style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                          ),
+                      ],
+                    ),
+            ),
+            _questionComposer(state.status == TeachingSessionStatus.loading),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _messageList(List<ExplorationNode> nodes) {
+    return Column(
+      key: const ValueKey('tutor-message'),
+      children: nodes.map((node) {
+        final isTutor = node.kind == ExplorationNodeKind.tutorResponse;
+        return Align(
+          alignment: isTutor ? Alignment.centerLeft : Alignment.centerRight,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(12),
+            constraints: const BoxConstraints(maxWidth: 620),
+            decoration: BoxDecoration(
+              color: isTutor ? const Color(0xFFF4F0FF) : const Color(0xFFEAF6FF),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(node.text),
+                if (isTutor) ...[
+                  for (final id in node.materialIds)
+                    if (_materials[id] case final material?)
+                      ExplorationMaterialCard(material: material),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      TextButton(
+                        onPressed: () => setState(() => _branchFromNodeId = node.id),
+                        child: const Text('从这里继续探索'),
+                      ),
+                      TextButton(
+                        onPressed: () => _convertMemory(node.id),
+                        child: const Text('转为记忆候选'),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(growable: false),
+    );
+  }
+
+  Widget _questionComposer(bool disabled) {
+    return Material(
+      elevation: 8,
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: TeachingExplorationStrategy.questionScaffolds
+                    .map(
+                      (text) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ActionChip(
+                          label: Text(text),
+                          onPressed: () => _inputController.text = text,
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('exploration-question-input'),
+                    controller: _inputController,
+                    decoration: const InputDecoration(hintText: '继续提问……'),
+                  ),
+                ),
+                IconButton.filled(
+                  key: const ValueKey('exploration-send'),
+                  onPressed: disabled ? null : _send,
+                  icon: const Icon(Icons.arrow_upward_rounded),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _send() async {
+    final text = _inputController.text;
+    if (text.trim().isEmpty) return;
+    try {
+      await _controller.submitQuestion(text, branchFromNodeId: _branchFromNodeId);
+      _inputController.clear();
+      if (mounted) setState(() => _branchFromNodeId = null);
+    } on ExplorationInputRejectedException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.message)));
+    }
+  }
+
+  Future<void> _convertMemory(String nodeId) async {
+    await _controller.convertNodeToMemory(nodeId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已生成记忆候选（当前 ${_memorySink.items.length} 项）')),
+    );
+  }
+
+  void _showTree(ExplorationTree tree) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SafeArea(
+        child: FractionallySizedBox(
+          heightFactor: 0.82,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ExplorationTreePanel(tree: tree),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _saveAndExport() async {
+    final reflectionController = TextEditingController();
+    final reflection = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('用自己的话复述'),
+        content: TextField(controller: reflectionController, maxLines: 3),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, reflectionController.text),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    reflectionController.dispose();
+    if (reflection == null || reflection.trim().isEmpty) return;
+    final record = await _controller.saveTrace(reflection: reflection);
+    final json = const JsonEncoder.withIndent('  ').convert(
+      ExplorationTraceExporter.toVersionedJson(record),
+    );
+    await Clipboard.setData(ClipboardData(text: json));
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('已保存并复制 JSON'),
+        content: SingleChildScrollView(child: SelectableText(json)),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭'))],
+      ),
+    );
+  }
+}
+
+/// 练习端口页面，显式展示错误验证、诊断确认、回退和第二解法分支。
+final class PracticeExplorationPage extends StatefulWidget {
+  const PracticeExplorationPage({
+    super.key,
+    required this.scenario,
+    required this.mastery,
+  });
+
+  final ExplorationScenario scenario;
+  final StudentMasterySnapshot mastery;
+
+  @override
+  State<PracticeExplorationPage> createState() => _PracticeExplorationPageState();
+}
+
+final class _PracticeExplorationPageState extends State<PracticeExplorationPage> {
+  late final InMemoryMasteryEvidenceSink _evidenceSink;
+  late final ExplorationController _controller;
+  DifficultyDiagnosisKind? _selectedDiagnosis;
+
+  @override
+  void initState() {
+    super.initState();
+    _evidenceSink = InMemoryMasteryEvidenceSink();
+    _controller = ExplorationController(
+      practiceStrategy: const PracticeExplorationStrategy(),
+      masteryEvidenceSink: _evidenceSink,
+      nowUtc: () => DateTime.now().toUtc(),
+    )..addListener(_refresh);
+    _controller.startPractice(scenario: widget.scenario, mastery: widget.mastery);
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    final pending = _controller.state.pendingDiagnosis;
+    setState(() {
+      if (pending != null) _selectedDiagnosis ??= pending.suggestedKind;
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_refresh);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = _controller.state;
+    final tree = state.tree!;
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.scenario.title)),
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+              child: _SessionMockNotice(),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: ExplorationTreePanel(tree: tree),
+              ),
+            ),
+            _practiceControls(state),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _practiceControls(ExplorationControllerState state) {
+    final active = state.tree!.activeLeaf!;
+    if (state.pendingDiagnosis case final pending?) {
+      return _controlPanel(
+        children: [
+          Text('候选诊断：${_diagnosisLabel(pending.suggestedKind)}'),
+          Text(pending.rationale),
+          DropdownButton<DifficultyDiagnosisKind>(
+            value: _selectedDiagnosis ?? pending.suggestedKind,
+            isExpanded: true,
+            items: DifficultyDiagnosisKind.values
+                .map((kind) => DropdownMenuItem(value: kind, child: Text(_diagnosisLabel(kind))))
+                .toList(growable: false),
+            onChanged: (value) => setState(() => _selectedDiagnosis = value),
+          ),
+          FilledButton(
+            key: const ValueKey('practice-confirm-diagnosis'),
+            onPressed: () => _controller.confirmDiagnosis(
+              _selectedDiagnosis ?? pending.suggestedKind,
+            ),
+            child: const Text('确认诊断'),
+          ),
+        ],
+      );
+    }
+    if (active.kind == ExplorationNodeKind.studentQuestion ||
+        active.kind == ExplorationNodeKind.backtrack) {
+      return _controlPanel(
+        children: [
+          const Text('选择一个思路开始验证：'),
+          Wrap(
+            spacing: 8,
+            children: [
+              OutlinedButton(
+                key: const ValueKey('practice-try-wrong'),
+                onPressed: () => _controller.submitHypothesis('直接使用柯西不等式'),
+                child: const Text('尝试柯西不等式'),
+              ),
+              FilledButton.tonal(
+                key: const ValueKey('practice-try-correct'),
+                onPressed: () => _controller.submitHypothesis(
+                  '令 a=x、b=1/x，使用基本不等式',
+                ),
+                child: const Text('使用基本不等式'),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+    if (active.kind == ExplorationNodeKind.studentHypothesis) {
+      return _controlPanel(
+        children: [
+          FilledButton(
+            key: const ValueKey('practice-validate'),
+            onPressed: _controller.validateActiveStep,
+            child: const Text('检查成立条件'),
+          ),
+        ],
+      );
+    }
+    if (active.kind == ExplorationNodeKind.diagnosis) {
+      final rootId = state.tree!.nodes.first.id;
+      return _controlPanel(
+        children: [
+          FilledButton.tonal(
+            key: const ValueKey('practice-backtrack'),
+            onPressed: () {
+              _selectedDiagnosis = null;
+              _controller.backtrack(targetNodeId: rootId);
+            },
+            child: const Text('回退到题目，换一种方法'),
+          ),
+        ],
+      );
+    }
+    if (active.kind == ExplorationNodeKind.reasoningStep &&
+        active.status == ExplorationNodeStatus.validated) {
+      return _controlPanel(
+        children: [
+          Text('步骤验证通过 · 已记录 ${_evidenceSink.items.length} 条掌握证据'),
+        ],
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _controlPanel({required List<Widget> children}) {
+    return Material(
+      elevation: 8,
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(mainAxisSize: MainAxisSize.min, children: children),
+      ),
+    );
+  }
+
+  static String _diagnosisLabel(DifficultyDiagnosisKind kind) {
+    return switch (kind) {
+      DifficultyDiagnosisKind.conceptGap => '概念不熟',
+      DifficultyDiagnosisKind.conditionGap => '成立条件不清楚',
+      DifficultyDiagnosisKind.methodSelection => '方法不会选择',
+      DifficultyDiagnosisKind.reasoningBreak => '推理步骤断裂',
+      DifficultyDiagnosisKind.calculationGap => '计算能力不过关',
+      DifficultyDiagnosisKind.promptMisread => '题意理解偏差',
+      DifficultyDiagnosisKind.uncertain => '暂时不确定',
+    };
+  }
+}
+
+final class _SessionMockNotice extends StatelessWidget {
+  const _SessionMockNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF5D9),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Text('Mock 演示 · 当前结果不写入正式学生档案'),
+    );
+  }
+}
