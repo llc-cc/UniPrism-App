@@ -3,21 +3,24 @@ import 'package:uniprism_app/features/dialogue_exploration/dialogue_exploration.
 
 void main() {
   group('ExplorationTree', () {
-    test('ordinary append follows the active leaf without creating a branch', () {
-      final tree = _seededTree().append(
-        _node(
-          id: 'tutor-1',
-          parentId: 'root',
-          kind: ExplorationNodeKind.tutorResponse,
-          text: '先检查这个结论成立的条件。',
-        ),
-      );
+    test(
+      'ordinary append follows the active leaf without creating a branch',
+      () {
+        final tree = _seededTree().append(
+          _node(
+            id: 'tutor-1',
+            parentId: 'root',
+            kind: ExplorationNodeKind.tutorResponse,
+            text: '先检查这个结论成立的条件。',
+          ),
+        );
 
-      expect(tree.activeLeafId, 'tutor-1');
-      expect(tree.nodeById('tutor-1')!.parentId, 'root');
-      expect(tree.nodeById('tutor-1')!.isSideBranch, isFalse);
-      expect(tree.sideBranchCount, 0);
-    });
+        expect(tree.activeLeafId, 'tutor-1');
+        expect(tree.nodeById('tutor-1')!.parentId, 'root');
+        expect(tree.nodeById('tutor-1')!.isSideBranch, isFalse);
+        expect(tree.sideBranchCount, 0);
+      },
+    );
 
     test('explicit branching can restart from a historical node', () {
       final linear = _seededTree().append(
@@ -63,10 +66,7 @@ void main() {
               text: '当前写法无法满足所需条件。',
             ),
           )
-          .updateStatus(
-            'condition-fails',
-            ExplorationNodeStatus.contradicted,
-          );
+          .updateStatus('condition-fails', ExplorationNodeStatus.contradicted);
 
       final recovered = attempted.backtrack(
         fromNodeId: 'condition-fails',
@@ -133,7 +133,7 @@ void main() {
       expect(tree.nodes, hasLength(ExplorationTree.maxNodes));
     });
 
-    test('rejects depth beyond six nodes on one path', () {
+    test('rejects depth beyond the configured path limit', () {
       var tree = _seededTree();
       for (var depth = 2; depth <= ExplorationTree.maxDepth; depth++) {
         tree = tree.append(

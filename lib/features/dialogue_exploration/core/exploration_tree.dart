@@ -25,7 +25,8 @@ final class ExplorationTree {
        collapsedNodeIds = Set.unmodifiable(collapsedNodeIds);
 
   static const int maxNodes = 40;
-  static const int maxDepth = 6;
+  // 五个教学策略来回至少产生十层节点，保留两层用于收口或错误回退。
+  static const int maxDepth = 12;
   static const int maxDirectBranches = 8;
 
   factory ExplorationTree.seed({
@@ -104,10 +105,7 @@ final class ExplorationTree {
     return _insert(node, isSideBranch: true, enforceDepthLimit: true);
   }
 
-  ExplorationTree updateStatus(
-    String nodeId,
-    ExplorationNodeStatus status,
-  ) {
+  ExplorationTree updateStatus(String nodeId, ExplorationNodeStatus status) {
     final current = nodeById(nodeId);
     if (current == null) {
       throw ArgumentError.value(nodeId, 'nodeId', '节点不存在');
@@ -149,11 +147,7 @@ final class ExplorationTree {
       createdAt: createdAt,
       strategyVersion: from.strategyVersion,
     );
-    return _insert(
-      backtrackNode,
-      isSideBranch: false,
-      enforceDepthLimit: true,
-    );
+    return _insert(backtrackNode, isSideBranch: false, enforceDepthLimit: true);
   }
 
   ExplorationTree toggleCollapsed(String nodeId) {
@@ -191,16 +185,13 @@ final class ExplorationTree {
     }
     final nextDepth = _depthOf(parentId) + 1;
     if (enforceDepthLimit && nextDepth > maxDepth) {
-      throw const ExplorationLimitException(
+      throw ExplorationLimitException(
         ExplorationLimitKind.pathDepth,
-        '当前路径已达到 6 层，请回到已有节点继续。',
+        '当前路径已达到 $maxDepth 层，请回到已有节点继续。',
       );
     }
     final storedNode = isSideBranch ? node.asSideBranch() : node;
-    return _copy(
-      nodes: [...nodes, storedNode],
-      activeLeafId: storedNode.id,
-    );
+    return _copy(nodes: [...nodes, storedNode], activeLeafId: storedNode.id);
   }
 
   int _depthOf(String nodeId) {

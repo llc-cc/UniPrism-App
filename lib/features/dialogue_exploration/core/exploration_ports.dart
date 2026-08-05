@@ -26,6 +26,9 @@ final class ExplorationTurnRequest {
     required List<String> misconceptionTags,
     required List<String> ancestorTexts,
     required Set<String> allowedMaterialIds,
+    required this.teachingMode,
+    required this.teachingGoal,
+    required this.strategyReason,
   }) : misconceptionTags = List.unmodifiable(misconceptionTags),
        ancestorTexts = List.unmodifiable(ancestorTexts),
        allowedMaterialIds = Set.unmodifiable(allowedMaterialIds);
@@ -38,6 +41,9 @@ final class ExplorationTurnRequest {
   final List<String> misconceptionTags;
   final List<String> ancestorTexts;
   final Set<String> allowedMaterialIds;
+  final String teachingMode;
+  final String teachingGoal;
+  final String strategyReason;
 }
 
 /// 正式 Skill 与确定性 Mock 共用的回答接口。

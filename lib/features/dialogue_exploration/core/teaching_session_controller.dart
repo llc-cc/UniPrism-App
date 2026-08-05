@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../mastery/student_mastery.dart';
 import '../teaching/teaching_exploration_strategy.dart';
+import '../teaching/teaching_strategy_engine.dart';
 import 'exploration_models.dart';
 import 'exploration_outputs.dart';
 import 'exploration_ports.dart';
@@ -18,6 +19,8 @@ final class TeachingSessionState {
     required this.mastery,
     required this.tree,
     required this.errorMessage,
+    required this.activeDecision,
+    required this.strategyHistory,
   });
 
   const TeachingSessionState.idle()
@@ -25,13 +28,17 @@ final class TeachingSessionState {
       scenario = null,
       mastery = null,
       tree = null,
-      errorMessage = null;
+      errorMessage = null,
+      activeDecision = null,
+      strategyHistory = const [];
 
   final TeachingSessionStatus status;
   final ExplorationScenario? scenario;
   final StudentMasterySnapshot? mastery;
   final ExplorationTree? tree;
   final String? errorMessage;
+  final TeachingStrategyDecision? activeDecision;
+  final List<TeachingStrategyDecision> strategyHistory;
 }
 
 /// 编排教学对话、分支、保存和记忆候选输出；所有教学决策委托给策略。
@@ -70,13 +77,18 @@ final class TeachingSessionController extends ChangeNotifier {
         mastery: mastery,
         tree: null,
         errorMessage: null,
+        activeDecision: null,
+        strategyHistory: const [],
       ),
     );
-    final response = await strategy.respond(
+    final turn = await strategy.respondWithDecision(
       scenario: scenario,
       mastery: mastery,
       question: question,
       ancestorTexts: const [],
+      turnIndex: 0,
+      consecutiveErrors: 0,
+      isClosing: false,
     );
     final root = _studentNode(
       id: '${scenario.id}-root',
@@ -85,7 +97,7 @@ final class TeachingSessionController extends ChangeNotifier {
       isSideBranch: false,
     );
     var tree = ExplorationTree.seed(id: scenario.id, root: root);
-    tree = tree.append(_tutorNode(parentId: root.id, response: response));
+    tree = tree.append(_tutorNode(parentId: root.id, turn: turn));
     _setState(
       TeachingSessionState(
         status: TeachingSessionStatus.active,
@@ -93,6 +105,8 @@ final class TeachingSessionController extends ChangeNotifier {
         mastery: mastery,
         tree: tree,
         errorMessage: null,
+        activeDecision: turn.decision,
+        strategyHistory: List.unmodifiable([turn.decision]),
       ),
     );
   }
@@ -110,14 +124,24 @@ final class TeachingSessionController extends ChangeNotifier {
         mastery: current.mastery,
         tree: tree,
         errorMessage: null,
+        activeDecision: current.activeDecision,
+        strategyHistory: current.strategyHistory,
       ),
     );
     try {
-      final response = await strategy.respond(
+      final turn = await strategy.respondWithDecision(
         scenario: current.scenario!,
         mastery: current.mastery!,
         question: question,
-        ancestorTexts: _ancestorTexts(tree, branchFromNodeId ?? tree.activeLeafId),
+        ancestorTexts: _ancestorTexts(
+          tree,
+          branchFromNodeId ?? tree.activeLeafId,
+        ),
+        turnIndex: tree.nodes
+            .where((node) => node.kind == ExplorationNodeKind.tutorResponse)
+            .length,
+        consecutiveErrors: _hasMockErrorSignal(question) ? 1 : 0,
+        isClosing: _shouldClose(question, tree),
       );
       final parentId = branchFromNodeId ?? tree.activeLeafId;
       final student = _studentNode(
@@ -129,9 +153,7 @@ final class TeachingSessionController extends ChangeNotifier {
       var updated = branchFromNodeId == null
           ? tree.append(student)
           : tree.branchFrom(parentNodeId: parentId, node: student);
-      updated = updated.append(
-        _tutorNode(parentId: student.id, response: response),
-      );
+      updated = updated.append(_tutorNode(parentId: student.id, turn: turn));
       _setState(
         TeachingSessionState(
           status: TeachingSessionStatus.active,
@@ -139,6 +161,11 @@ final class TeachingSessionController extends ChangeNotifier {
           mastery: current.mastery,
           tree: updated,
           errorMessage: null,
+          activeDecision: turn.decision,
+          strategyHistory: List.unmodifiable([
+            ...current.strategyHistory,
+            turn.decision,
+          ]),
         ),
       );
     } on ExplorationInputRejectedException {
@@ -153,6 +180,8 @@ final class TeachingSessionController extends ChangeNotifier {
           mastery: current.mastery,
           tree: tree,
           errorMessage: error.toString(),
+          activeDecision: current.activeDecision,
+          strategyHistory: current.strategyHistory,
         ),
       );
       rethrow;
@@ -196,13 +225,17 @@ final class TeachingSessionController extends ChangeNotifier {
         mastery: current.mastery,
         tree: current.tree,
         errorMessage: null,
+        activeDecision: current.activeDecision,
+        strategyHistory: current.strategyHistory,
       ),
     );
     return record;
   }
 
   TeachingSessionState _requiredState() {
-    if (_state.tree == null || _state.scenario == null || _state.mastery == null) {
+    if (_state.tree == null ||
+        _state.scenario == null ||
+        _state.mastery == null) {
       throw StateError('教学探索尚未开始');
     }
     return _state;
@@ -225,13 +258,17 @@ final class TeachingSessionController extends ChangeNotifier {
       backtrackTargetNodeId: null,
       createdAt: nowUtc(),
       strategyVersion: MockExplorationGatewayVersion.value,
+      strategyMode: null,
+      strategyGoal: null,
+      strategyReason: null,
     );
   }
 
   ExplorationNode _tutorNode({
     required String parentId,
-    required ExplorationTurnResponse response,
+    required TeachingTurnResult turn,
   }) {
+    final response = turn.response;
     return ExplorationNode(
       id: _nextId('tutor'),
       parentId: parentId,
@@ -243,6 +280,9 @@ final class TeachingSessionController extends ChangeNotifier {
       backtrackTargetNodeId: null,
       createdAt: nowUtc(),
       strategyVersion: response.strategyVersion,
+      strategyMode: turn.decision.mode.name,
+      strategyGoal: turn.decision.goal.name,
+      strategyReason: turn.decision.reason,
     );
   }
 
@@ -251,12 +291,26 @@ final class TeachingSessionController extends ChangeNotifier {
     var current = tree.nodeById(nodeId);
     while (current != null) {
       reversed.add(current.text);
-      current = current.parentId == null ? null : tree.nodeById(current.parentId!);
+      current = current.parentId == null
+          ? null
+          : tree.nodeById(current.parentId!);
     }
     return reversed.reversed.toList(growable: false);
   }
 
   String _nextId(String prefix) => '$prefix-${++_idCounter}';
+
+  static bool _hasMockErrorSignal(String text) {
+    // 正式版由步骤验证器提供错误证据；Mock 仅保留少量可演示的确定性信号。
+    return const ['负负还是负', 'x=3', '直接用柯西'].any(text.contains);
+  }
+
+  static bool _shouldClose(String text, ExplorationTree tree) {
+    final tutorTurns = tree.nodes
+        .where((node) => node.kind == ExplorationNodeKind.tutorResponse)
+        .length;
+    return tutorTurns >= 5 || const ['总结', '结束', '学会了'].any(text.contains);
+  }
 
   void _setState(TeachingSessionState value) {
     _state = value;

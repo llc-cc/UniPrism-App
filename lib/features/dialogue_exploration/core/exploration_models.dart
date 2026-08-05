@@ -93,6 +93,9 @@ final class ExplorationNode {
     required this.backtrackTargetNodeId,
     required this.createdAt,
     required this.strategyVersion,
+    this.strategyMode,
+    this.strategyGoal,
+    this.strategyReason,
   }) : materialIds = List.unmodifiable(materialIds);
 
   final String id;
@@ -105,6 +108,9 @@ final class ExplorationNode {
   final String? backtrackTargetNodeId;
   final DateTime createdAt;
   final String strategyVersion;
+  final String? strategyMode;
+  final String? strategyGoal;
+  final String? strategyReason;
 
   ExplorationNode withStatus(ExplorationNodeStatus nextStatus) {
     return ExplorationNode(
@@ -118,6 +124,9 @@ final class ExplorationNode {
       backtrackTargetNodeId: backtrackTargetNodeId,
       createdAt: createdAt,
       strategyVersion: strategyVersion,
+      strategyMode: strategyMode,
+      strategyGoal: strategyGoal,
+      strategyReason: strategyReason,
     );
   }
 
@@ -133,6 +142,9 @@ final class ExplorationNode {
       backtrackTargetNodeId: backtrackTargetNodeId,
       createdAt: createdAt,
       strategyVersion: strategyVersion,
+      strategyMode: strategyMode,
+      strategyGoal: strategyGoal,
+      strategyReason: strategyReason,
     );
   }
 }

@@ -1,6 +1,7 @@
 import '../core/exploration_models.dart';
 import '../core/exploration_ports.dart';
 import '../mastery/student_mastery.dart';
+import '../teaching/teaching_strategy_engine.dart';
 
 /// 按关键词和掌握档位返回确定性结果，便于首版演示和自动化验收。
 final class MockExplorationGateway implements ExplorationGateway {
@@ -75,10 +76,7 @@ final class MockExplorationGateway implements ExplorationGateway {
         answer: '成本要分固定成本和变动成本：房租与基础排班短期固定，咖啡豆、杯子和平台抽成随订单变化。',
         followUp: '区分固定与变动成本的依据是什么，时间范围改变后结论还成立吗？',
         intent: ExplorationIntent.clarifyBoundary,
-        materialIds: const [
-          'business-model-figure',
-          'business-model-formula',
-        ],
+        materialIds: const ['business-model-figure', 'business-model-formula'],
       );
     }
     if (_containsAny(question, const ['护城河', '竞争'])) {
@@ -203,13 +201,39 @@ final class MockExplorationGateway implements ExplorationGateway {
     bool sideBranch = false,
   }) {
     // 即使 Mock 路由配置错误，也在输出边界再次裁剪，模拟正式服务端的素材白名单校验。
-    final safeMaterials = materialIds
+    var effectiveAnswer = answer;
+    var effectiveFollowUp = followUp;
+    var effectiveMaterialIds = materialIds;
+    final mode = TeachingDialogueMode.values.byName(request.teachingMode);
+    switch (mode) {
+      case TeachingDialogueMode.problemChain:
+        effectiveAnswer = '先把这个问题拆成“现象、依据、成立条件”三层。$answer';
+        effectiveFollowUp = '沿着主干先看：这条结论依赖的第一个概念和成立条件分别是什么？';
+        break;
+      case TeachingDialogueMode.socratic:
+        effectiveFollowUp = '你这一步使用了哪个结论？它成立需要满足什么条件？';
+        break;
+      case TeachingDialogueMode.errorTracing:
+        effectiveAnswer = '先保留你的思路，不直接判错。$answer';
+        effectiveFollowUp = '能否找一个具体反例，检查这条思路在哪个条件上失效？';
+        break;
+      case TeachingDialogueMode.analogyTransfer:
+        effectiveAnswer = '换成一个熟悉场景：把变化看成手机电量随时间移动的轨迹。$answer';
+        effectiveFollowUp = '这个生活场景中的“变化关系”，对应原问题里的哪个量？';
+        break;
+      case TeachingDialogueMode.selfExplanation:
+        effectiveAnswer = '现在先不增加新结论，我们检查刚才的理解能否独立成立。';
+        effectiveFollowUp = '请用一句话解释核心结论，并说出它成立的一个必要条件。';
+        effectiveMaterialIds = const [];
+        break;
+    }
+    final safeMaterials = effectiveMaterialIds
         .where(request.allowedMaterialIds.contains)
         .take(2)
         .toSet();
     return ExplorationTurnResponse(
-      answer: answer,
-      followUpQuestion: followUp,
+      answer: effectiveAnswer,
+      followUpQuestion: effectiveFollowUp,
       boundary: boundary,
       intent: intent,
       materialIds: safeMaterials,
