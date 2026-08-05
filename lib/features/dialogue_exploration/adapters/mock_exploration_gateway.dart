@@ -37,7 +37,81 @@ final class MockExplorationGateway implements ExplorationGateway {
         sideBranch: true,
       );
     }
+    if (request.scenarioKind == ExplorationScenarioKind.publicDemo) {
+      return _routeBusinessModel(request);
+    }
     return _routeTeaching(request);
+  }
+
+  ExplorationTurnResponse _routeBusinessModel(ExplorationTurnRequest request) {
+    final question = request.question;
+    if (_containsAny(question, const ['单位经济', '单杯', '毛利'])) {
+      return _response(
+        request,
+        answer: '单位经济模型先看每卖出一杯新增多少收入、增加多少变动成本，再用贡献毛利覆盖房租和设备等固定成本。',
+        followUp: '单杯贡献毛利为正，还需要满足什么条件才能让整家店盈利？',
+        intent: ExplorationIntent.extendReasoning,
+        materialIds: const [
+          'business-model-formula',
+          'business-model-interactive',
+        ],
+      );
+    }
+    if (_containsAny(question, const ['收入', '赚钱'])) {
+      return _response(
+        request,
+        answer: '收入可以拆成客单价 × 订单量，还可以继续区分堂食、外卖、咖啡豆和会员订阅。拆开后才能看出增长来自哪里。',
+        followUp: '订单量增长时，哪些成本会同步变化，利润增长成立需要什么条件？',
+        intent: ExplorationIntent.extendReasoning,
+        materialIds: const [
+          'business-model-interactive',
+          'business-model-formula',
+        ],
+      );
+    }
+    if (_containsAny(question, const ['成本', '房租', '人工'])) {
+      return _response(
+        request,
+        answer: '成本要分固定成本和变动成本：房租与基础排班短期固定，咖啡豆、杯子和平台抽成随订单变化。',
+        followUp: '区分固定与变动成本的依据是什么，时间范围改变后结论还成立吗？',
+        intent: ExplorationIntent.clarifyBoundary,
+        materialIds: const [
+          'business-model-figure',
+          'business-model-formula',
+        ],
+      );
+    }
+    if (_containsAny(question, const ['护城河', '竞争'])) {
+      return _response(
+        request,
+        answer: '门店位置、稳定复购、供应链和品牌都可能形成优势，但只有竞争者难以低成本复制时才接近护城河。',
+        followUp: '判断一个优势是护城河，需要哪些可验证的持续性条件？',
+        intent: ExplorationIntent.connectApplication,
+        materialIds: const ['business-model-figure'],
+      );
+    }
+    if (_containsAny(question, const ['价格', '定价'])) {
+      return _response(
+        request,
+        answer: '定价同时影响单杯毛利和订单量，不能只追求更高价格；需要观察目标客群、替代品和价格弹性。',
+        followUp: '提高价格后总利润增加，需要订单量变化满足什么条件？',
+        intent: ExplorationIntent.extendReasoning,
+        materialIds: const [
+          'business-model-interactive',
+          'business-model-formula',
+        ],
+      );
+    }
+    return _response(
+      request,
+      answer: '可以先把咖啡店画成收入、固定成本和变动成本三块，再沿着定价、渠道与复购继续发散。',
+      followUp: '收入大于成本就一定能持续赚钱吗，这个判断还缺哪些成立条件？',
+      intent: ExplorationIntent.probePriorKnowledge,
+      materialIds: const [
+        'business-model-figure',
+        'business-model-interactive',
+      ],
+    );
   }
 
   ExplorationTurnResponse _routeTeaching(ExplorationTurnRequest request) {

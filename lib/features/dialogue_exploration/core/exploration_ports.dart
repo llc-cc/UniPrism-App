@@ -1,4 +1,5 @@
 import 'exploration_models.dart';
+import 'exploration_outputs.dart';
 import '../mastery/student_mastery.dart';
 import '../practice/practice_diagnosis.dart';
 
@@ -47,4 +48,14 @@ abstract interface class ExplorationGateway {
 /// 掌握证据输出端口；实现必须保留证据来源，不能把模型候选伪装成确认结果。
 abstract interface class MasteryEvidenceSink {
   Future<void> write(MasteryEvidence evidence);
+}
+
+/// 保存完整思维过程图；同一 trace ID 重复保存应更新而不是产生副本。
+abstract interface class ExplorationTraceRepository {
+  Future<void> save(ExplorationTraceRecord record);
+}
+
+/// 把学生勾选节点转换成 M2 可消费候选，稳定 ID 保证重复点击幂等。
+abstract interface class MemoryCandidateSink {
+  Future<String> upsert(ExplorationMemoryCandidate candidate);
 }
