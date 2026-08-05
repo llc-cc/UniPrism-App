@@ -6,6 +6,27 @@ enum ExplorationScenarioKind { teaching, practice, publicDemo }
 /// 对话内可调度的教学素材类型，正式数据后续由 1.1 知识库提供。
 enum ExplorationMaterialKind { figure, video, interactive, formula }
 
+/// 思维树节点表达学生提问、解法尝试、系统回应和回退等不同证据。
+enum ExplorationNodeKind {
+  studentQuestion,
+  studentHypothesis,
+  tutorResponse,
+  reasoningStep,
+  diagnosis,
+  reflection,
+  backtrack,
+}
+
+/// 节点状态保留推理结果；错误路径必须停留在 contradicted 状态。
+enum ExplorationNodeStatus {
+  exploring,
+  validated,
+  contradicted,
+  abandoned,
+  backtracked,
+  completed,
+}
+
 /// 一次对话探索的可选起点与素材边界。
 final class ExplorationScenario {
   ExplorationScenario({
@@ -43,4 +64,61 @@ final class ExplorationMaterial {
   final ExplorationMaterialKind kind;
   final String title;
   final Map<String, Object?> payload;
+}
+
+/// 思维树中的不可变节点，父子关系只能由 ExplorationTree 校验后写入。
+final class ExplorationNode {
+  ExplorationNode({
+    required this.id,
+    required this.parentId,
+    required this.kind,
+    required this.status,
+    required this.text,
+    required List<String> materialIds,
+    required this.isSideBranch,
+    required this.backtrackTargetNodeId,
+    required this.createdAt,
+    required this.strategyVersion,
+  }) : materialIds = List.unmodifiable(materialIds);
+
+  final String id;
+  final String? parentId;
+  final ExplorationNodeKind kind;
+  final ExplorationNodeStatus status;
+  final String text;
+  final List<String> materialIds;
+  final bool isSideBranch;
+  final String? backtrackTargetNodeId;
+  final DateTime createdAt;
+  final String strategyVersion;
+
+  ExplorationNode withStatus(ExplorationNodeStatus nextStatus) {
+    return ExplorationNode(
+      id: id,
+      parentId: parentId,
+      kind: kind,
+      status: nextStatus,
+      text: text,
+      materialIds: materialIds,
+      isSideBranch: isSideBranch,
+      backtrackTargetNodeId: backtrackTargetNodeId,
+      createdAt: createdAt,
+      strategyVersion: strategyVersion,
+    );
+  }
+
+  ExplorationNode asSideBranch() {
+    return ExplorationNode(
+      id: id,
+      parentId: parentId,
+      kind: kind,
+      status: status,
+      text: text,
+      materialIds: materialIds,
+      isSideBranch: true,
+      backtrackTargetNodeId: backtrackTargetNodeId,
+      createdAt: createdAt,
+      strategyVersion: strategyVersion,
+    );
+  }
 }
