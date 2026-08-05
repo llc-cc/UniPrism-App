@@ -18,3 +18,4 @@ export 'presentation/exploration_lab_page.dart';
 export 'presentation/exploration_session_page.dart';
 export 'presentation/exploration_tree_panel.dart';
 export 'teaching/teaching_exploration_strategy.dart';
+export 'teaching/teaching_strategy_engine.dart';
