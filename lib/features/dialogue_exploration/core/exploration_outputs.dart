@@ -1,4 +1,5 @@
 import 'exploration_tree.dart';
+import '../teaching/teaching_strategy_engine.dart';
 
 /// 保存的思维过程图；首版进程内存储，正式版可直接映射到事件后端。
 final class ExplorationTraceRecord {
@@ -34,6 +35,54 @@ final class ExplorationMemoryCandidate {
   final DateTime createdAt;
 }
 
+/// 从已发生的对话证据生成学习产出；没有支线或错误时明确说明证据不足。
+final class ExplorationSessionSummary {
+  const ExplorationSessionSummary({
+    required this.thinkingTree,
+    required this.understandingDepth,
+    required this.errorModel,
+    required this.interestDirection,
+    required this.reviewCard,
+  });
+
+  factory ExplorationSessionSummary.fromEvidence({
+    required ExplorationTree tree,
+    required List<TeachingStrategyDecision> strategyHistory,
+    required String reflection,
+  }) {
+    final errorTurns = strategyHistory
+        .where((item) => item.mode == TeachingDialogueMode.errorTracing)
+        .length;
+    final hasSelfExplanation = strategyHistory.any(
+      (item) => item.mode == TeachingDialogueMode.selfExplanation,
+    );
+    final sideBranches = tree.nodes
+        .where((node) => node.isSideBranch)
+        .map((node) => node.text)
+        .take(2)
+        .toList(growable: false);
+    return ExplorationSessionSummary(
+      thinkingTree: '${tree.nodes.length} 个节点 · ${tree.sideBranchCount} 条支线',
+      understandingDepth: hasSelfExplanation && reflection.trim().isNotEmpty
+          ? '已完成自我解释，并留下可复查的理解证据'
+          : '尚未完成自我解释，理解深度证据不足',
+      errorModel: errorTurns == 0
+          ? '本次没有确认的错误证据'
+          : '追踪了 $errorTurns 次错误思路，并保留原路径',
+      interestDirection: sideBranches.isEmpty
+          ? '本次没有足够支线证据，暂不推断兴趣方向'
+          : '主动探索支线：${sideBranches.join('；')}',
+      reviewCard: reflection.trim(),
+    );
+  }
+
+  final String thinkingTree;
+  final String understandingDepth;
+  final String errorModel;
+  final String interestDirection;
+  final String reviewCard;
+}
+
 /// 将思维过程图转换为版本化、可复制的 JSON 数据。
 abstract final class ExplorationTraceExporter {
   static Map<String, Object?> toVersionedJson(ExplorationTraceRecord record) {
@@ -57,6 +106,9 @@ abstract final class ExplorationTraceExporter {
               'backtrackTargetNodeId': node.backtrackTargetNodeId,
               'createdAt': node.createdAt.toUtc().toIso8601String(),
               'strategyVersion': node.strategyVersion,
+              'strategyMode': node.strategyMode,
+              'strategyGoal': node.strategyGoal,
+              'strategyReason': node.strategyReason,
             },
           )
           .toList(growable: false),

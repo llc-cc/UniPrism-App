@@ -46,6 +46,7 @@ final class _TeachingExplorationPageState
   late final TeachingSessionController _controller;
   Map<String, ExplorationMaterial> _materials = const {};
   String? _branchFromNodeId;
+  ExplorationSessionSummary? _latestSummary;
 
   @override
   void initState() {
@@ -139,7 +140,11 @@ final class _TeachingExplorationPageState
                       ],
                     ),
             ),
-            _questionComposer(state.status == TeachingSessionStatus.loading),
+            if (state.status == TeachingSessionStatus.saved &&
+                _latestSummary != null)
+              _completionBar()
+            else
+              _questionComposer(state.status == TeachingSessionStatus.loading),
           ],
         ),
       ),
@@ -323,6 +328,20 @@ final class _TeachingExplorationPageState
     final text = _inputController.text;
     if (text.trim().isEmpty) return;
     try {
+      if (_controller.state.activeDecision?.mode ==
+          TeachingDialogueMode.selfExplanation) {
+        final record = await _controller.saveTrace(reflection: text);
+        final summary = ExplorationSessionSummary.fromEvidence(
+          tree: record.tree,
+          strategyHistory: _controller.state.strategyHistory,
+          reflection: record.reflection,
+        );
+        _inputController.clear();
+        if (!mounted) return;
+        setState(() => _latestSummary = summary);
+        await _showSummary(summary);
+        return;
+      }
       await _controller.submitQuestion(
         text,
         branchFromNodeId: _branchFromNodeId,
@@ -396,6 +415,11 @@ final class _TeachingExplorationPageState
     reflectionController.dispose();
     if (reflection == null || reflection.trim().isEmpty) return;
     final record = await _controller.saveTrace(reflection: reflection);
+    _latestSummary = ExplorationSessionSummary.fromEvidence(
+      tree: record.tree,
+      strategyHistory: _controller.state.strategyHistory,
+      reflection: record.reflection,
+    );
     final json = const JsonEncoder.withIndent(
       '  ',
     ).convert(ExplorationTraceExporter.toVersionedJson(record));
@@ -411,6 +435,81 @@ final class _TeachingExplorationPageState
             onPressed: () => Navigator.pop(context),
             child: const Text('关闭'),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _completionBar() {
+    return Material(
+      elevation: 8,
+      color: Colors.white,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: FilledButton.icon(
+            onPressed: () => _showSummary(_latestSummary!),
+            icon: const Icon(Icons.fact_check_outlined),
+            label: const Text('查看本次学习产出'),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSummary(ExplorationSessionSummary summary) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '本次学习产出',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 12),
+              _SummaryRow(title: '思维树', value: summary.thinkingTree),
+              _SummaryRow(title: '理解深度', value: summary.understandingDepth),
+              _SummaryRow(title: '错误模型', value: summary.errorModel),
+              _SummaryRow(title: '兴趣方向', value: summary.interestDirection),
+              _SummaryRow(title: '复习卡片', value: summary.reviewCard),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('完成'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({required this.title, required this.value});
+
+  final String title;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text(value),
         ],
       ),
     );

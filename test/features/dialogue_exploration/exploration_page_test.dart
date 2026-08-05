@@ -130,6 +130,26 @@ void main() {
     expect(find.text('已完成'), findsWidgets);
   });
 
+  testWidgets('self explanation completes the session and shows five outputs', (
+    tester,
+  ) async {
+    await _startQuestion(tester, '为什么两个负数相乘会得到正数？');
+    await _sendTurn(tester, '负号表示相反方向');
+    await _sendTurn(tester, '还是太抽象了');
+    await _sendTurn(tester, '所以负负还是负数');
+    await _sendTurn(tester, '我来总结');
+
+    expect(find.textContaining('正在验证你的解释'), findsOneWidget);
+    await _sendTurn(tester, '乘以负数表示取相反数，两次取相反数回到原方向。');
+
+    expect(find.text('本次学习产出'), findsOneWidget);
+    expect(find.text('思维树'), findsOneWidget);
+    expect(find.text('理解深度'), findsOneWidget);
+    expect(find.text('错误模型'), findsOneWidget);
+    expect(find.text('兴趣方向'), findsOneWidget);
+    expect(find.text('复习卡片'), findsOneWidget);
+  });
+
   testWidgets('compact conversation entry has no layout overflow', (
     tester,
   ) async {
@@ -154,5 +174,14 @@ Future<void> _startQuestion(WidgetTester tester, String question) async {
     question,
   );
   await tester.tap(find.byKey(const ValueKey('exploration-start-session')));
+  await tester.pumpAndSettle();
+}
+
+Future<void> _sendTurn(WidgetTester tester, String text) async {
+  await tester.enterText(
+    find.byKey(const ValueKey('exploration-question-input')),
+    text,
+  );
+  await tester.tap(find.byKey(const ValueKey('exploration-send')));
   await tester.pumpAndSettle();
 }

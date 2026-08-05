@@ -210,10 +210,31 @@ final class TeachingSessionController extends ChangeNotifier {
       throw ArgumentError.value(reflection, 'reflection', '复述不能为空');
     }
     final current = _requiredState();
+    var completedTree = current.tree!;
+    if (completedTree.activeLeaf!.kind != ExplorationNodeKind.reflection) {
+      final decision = current.activeDecision;
+      completedTree = completedTree.append(
+        ExplorationNode(
+          id: _nextId('reflection'),
+          parentId: completedTree.activeLeafId,
+          kind: ExplorationNodeKind.reflection,
+          status: ExplorationNodeStatus.completed,
+          text: normalized,
+          materialIds: const [],
+          isSideBranch: false,
+          backtrackTargetNodeId: null,
+          createdAt: nowUtc(),
+          strategyVersion: MockExplorationGatewayVersion.value,
+          strategyMode: decision?.mode.name,
+          strategyGoal: decision?.goal.name,
+          strategyReason: decision?.reason,
+        ),
+      );
+    }
     final record = ExplorationTraceRecord(
       id: 'trace-${current.tree!.id}',
       scenarioId: current.scenario!.id,
-      tree: current.tree!,
+      tree: completedTree,
       reflection: normalized,
       savedAt: nowUtc(),
     );
@@ -223,7 +244,7 @@ final class TeachingSessionController extends ChangeNotifier {
         status: TeachingSessionStatus.saved,
         scenario: current.scenario,
         mastery: current.mastery,
-        tree: current.tree,
+        tree: completedTree,
         errorMessage: null,
         activeDecision: current.activeDecision,
         strategyHistory: current.strategyHistory,
