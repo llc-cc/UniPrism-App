@@ -6,6 +6,20 @@ enum ExplorationScenarioKind { teaching, practice, publicDemo }
 /// 对话内可调度的教学素材类型，正式数据后续由 1.1 知识库提供。
 enum ExplorationMaterialKind { figure, video, interactive, formula }
 
+/// 自由输入的边界判定需要写入节点和事件，不能只改变提示文案。
+enum ExplorationInputBoundary { inScope, aboveStage, unrelated, inappropriate }
+
+/// 当前回答采用的教学动作，便于解释为何选择该素材与追问。
+enum ExplorationIntent {
+  probePriorKnowledge,
+  repairPrerequisite,
+  clarifyBoundary,
+  extendReasoning,
+  connectApplication,
+  exploreSideBranch,
+  validateMethod,
+}
+
 /// 思维树节点表达学生提问、解法尝试、系统回应和回退等不同证据。
 enum ExplorationNodeKind {
   studentQuestion,
@@ -121,4 +135,35 @@ final class ExplorationNode {
       strategyVersion: strategyVersion,
     );
   }
+}
+
+/// Gateway 返回的结构化教学动作；页面只消费该对象，不解析模型文本协议。
+final class ExplorationTurnResponse {
+  ExplorationTurnResponse({
+    required this.answer,
+    required this.followUpQuestion,
+    required this.boundary,
+    required this.intent,
+    required Set<String> materialIds,
+    required this.isSideBranchSuggested,
+    required this.strategyVersion,
+  }) : materialIds = Set.unmodifiable(materialIds);
+
+  final String answer;
+  final String followUpQuestion;
+  final ExplorationInputBoundary boundary;
+  final ExplorationIntent intent;
+  final Set<String> materialIds;
+  final bool isSideBranchSuggested;
+  final String strategyVersion;
+}
+
+/// 输入被安全或长度规则拒绝时使用的稳定异常，拒绝内容不得生成树节点。
+final class ExplorationInputRejectedException implements Exception {
+  const ExplorationInputRejectedException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
