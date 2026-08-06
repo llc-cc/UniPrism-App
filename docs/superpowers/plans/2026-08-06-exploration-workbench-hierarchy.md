@@ -60,3 +60,19 @@
 - [ ] 运行学习会话后端全部测试与 `npx tsc --noEmit`。
 - [ ] 通过真实 HTTP 完成创建会话和三轮追问，检查答案、节点和素材变化。
 - [ ] 重启或热更新网页服务，提供刷新测试路径。
+
+### Task 4: 会话侧栏长路径优化
+
+**Files:**
+- Modify: `lib/features/dialogue_exploration/presentation/remote_exploration_page.dart`
+- Modify: `lib/features/dialogue_exploration/presentation/chapter_workspace_components.dart`
+- Test: `test/features/dialogue_exploration/live_tree_page_test.dart`
+
+**Interfaces:**
+- Consumes: `RemoteLearningSessionSnapshot.pathTo(currentNodeId)`、章节阶段预计时长
+- Produces: 最近 7 节点紧凑路径、完整树弹层入口、无倒计时会话头部、阶段预计用时
+
+- [ ] 写失败组件测试，断言会话没有章节图和倒计时，阶段卡显示预计 10 分钟。
+- [ ] 写失败组件测试，断言 12 节点路径默认只渲染最近 7 个并提示折叠数量。
+- [ ] 实现紧凑路径、完整树入口并删除会话章节图和倒计时状态。
+- [ ] 运行 1.2 Flutter 全部测试、模块分析和 Web 调试构建。
