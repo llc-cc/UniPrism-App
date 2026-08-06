@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -411,12 +413,16 @@ final class _RemoteLearningSessionPageState
     extends State<RemoteLearningSessionPage> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
-  var _treeMode = _KnowledgeTreeMode.personal;
+  Timer? _sessionClock;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_refresh);
+    // 剩余时间是会话级状态，只刷新展示，不触发后端写入或改变学习路径。
+    _sessionClock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   void _refresh() {
@@ -435,6 +441,7 @@ final class _RemoteLearningSessionPageState
   @override
   void dispose() {
     widget.controller.removeListener(_refresh);
+    _sessionClock?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -447,38 +454,33 @@ final class _RemoteLearningSessionPageState
     return Scaffold(
       backgroundColor: _surface,
       appBar: AppBar(
+        toolbarHeight: 68,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              snapshot.session.topic,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-            ),
-            Text(
-              '${snapshot.session.nodeCount}/20 个问题节点 · ${_strategyLabel(snapshot.activeStrategy)}',
-              style: const TextStyle(fontSize: 11, color: _muted),
-            ),
-          ],
+        titleSpacing: 20,
+        title: _SessionHeaderTitle(
+          snapshot: snapshot,
+          remainingLabel: _remainingLabel(snapshot.session.expiresAt),
         ),
         actions: [
-          IconButton(
-            tooltip: '导出思维树',
+          TextButton.icon(
             onPressed: _exportTree,
-            icon: const Icon(Icons.download_rounded),
+            icon: const Icon(Icons.inventory_2_outlined, size: 18),
+            label: const Text('学习素材'),
           ),
-          TextButton(
+          const SizedBox(width: 6),
+          FilledButton.icon(
             onPressed: state.status == RemoteExplorationStatus.completed
                 ? _showSummary
                 : _complete,
-            child: Text(
+            icon: const Icon(Icons.auto_awesome_rounded, size: 17),
+            label: Text(
               state.status == RemoteExplorationStatus.completed
                   ? '学习产出'
                   : '结束并总结',
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 16),
         ],
       ),
       body: SafeArea(
@@ -491,7 +493,9 @@ final class _RemoteLearningSessionPageState
                   const VerticalDivider(width: 1),
                   SizedBox(
                     key: const ValueKey('exploration-live-tree'),
-                    width: constraints.maxWidth.clamp(340, 440).toDouble(),
+                    width: (constraints.maxWidth * .3)
+                        .clamp(360.0, 560.0)
+                        .toDouble(),
                     child: _treeStage(snapshot),
                   ),
                 ],
@@ -529,9 +533,20 @@ final class _RemoteLearningSessionPageState
               mobile ? 14 : 28,
               20,
             ),
-            itemCount: visibleNodes.length,
+            itemCount: visibleNodes.length + 1,
             itemBuilder: (context, index) {
-              final node = visibleNodes[index];
+              if (index == 0) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 22),
+                  child: _CurrentExplorationCard(
+                    topic: snapshot.session.topic,
+                    strategy: _strategyLabel(snapshot.activeStrategy),
+                    chapter: state.chapter,
+                    selectedChapterNodeId: state.selectedChapterNodeId,
+                  ),
+                );
+              }
+              final node = visibleNodes[index - 1];
               return _ConversationTurn(
                 node: node,
                 materials: snapshot.materials
@@ -605,71 +620,60 @@ final class _RemoteLearningSessionPageState
     final chapter = widget.controller.state.chapter;
     return ColoredBox(
       color: const Color(0xFFFBFAFD),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-            child: SegmentedButton<_KnowledgeTreeMode>(
-              segments: const [
-                ButtonSegment(
-                  value: _KnowledgeTreeMode.chapter,
-                  label: Text(
-                    '章节知识树',
-                    key: ValueKey('tree-mode-chapter'),
-                  ),
-                  icon: Icon(Icons.hub_outlined),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _WorkbenchPanel(
+              title: '我的思维树（探索路径）',
+              icon: Icons.account_tree_rounded,
+              trailing: TextButton.icon(
+                onPressed: _exportTree,
+                icon: const Icon(Icons.download_rounded, size: 16),
+                label: const Text('导出'),
+              ),
+              subtitle: '点击节点查看，并从任一节点继续、分支或回溯',
+              child: KeyedSubtree(
+                key: const ValueKey('personal-thinking-tree'),
+                child: RemoteLearningTree(
+                  snapshot: snapshot,
+                  inspectedNodeId: widget.controller.state.inspectedNodeId,
+                  onNodeTap: widget.controller.inspectNode,
                 ),
-                ButtonSegment(
-                  value: _KnowledgeTreeMode.personal,
-                  label: Text(
-                    '我的思维树',
-                    key: ValueKey('tree-mode-personal'),
-                  ),
-                  icon: Icon(Icons.account_tree_rounded),
+              ),
+            ),
+            if (chapter != null) ...[
+              const SizedBox(height: 12),
+              _WorkbenchPanel(
+                key: const ValueKey('knowledge-overview-card'),
+                title: '知识结构图（章节地图）',
+                icon: Icons.hub_outlined,
+                subtitle: '稳定的章节路线，不会改写你的个人探索路径',
+                child: ChapterKnowledgeTree(
+                  chapter: chapter,
+                  selectedNodeId: widget.controller.state.selectedChapterNodeId,
+                  onNodeTap: widget.controller.selectChapterNode,
+                  compact: true,
                 ),
-              ],
-              selected: {_treeMode},
-              onSelectionChanged: (selection) {
-                setState(() => _treeMode = selection.single);
-              },
-            ),
-          ),
-          Padding(
-            padding: EdgeInsets.fromLTRB(18, 0, 18, 12),
-            child: Text(
-              _treeMode == _KnowledgeTreeMode.chapter
-                  ? '查看本章位置；选择不会修改个人思维轨迹'
-                  : '点击节点只查看，不会自动修改路线',
-              style: const TextStyle(fontSize: 12, color: _muted),
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 24),
-              child: _treeMode == _KnowledgeTreeMode.chapter && chapter != null
-                  ? KeyedSubtree(
-                      child: ChapterKnowledgeTree(
-                        chapter: chapter,
-                        selectedNodeId:
-                            widget.controller.state.selectedChapterNodeId,
-                        onNodeTap: widget.controller.selectChapterNode,
-                      ),
-                    )
-                  : KeyedSubtree(
-                      key: const ValueKey('personal-thinking-tree'),
-                      child: RemoteLearningTree(
-                        snapshot: snapshot,
-                        inspectedNodeId:
-                            widget.controller.state.inspectedNodeId,
-                        onNodeTap: widget.controller.inspectNode,
-                      ),
-                    ),
-            ),
-          ),
-        ],
+              ),
+            ],
+            const SizedBox(height: 12),
+            _ExplorationStatsCard(snapshot: snapshot),
+          ],
+        ),
       ),
     );
+  }
+
+  String _remainingLabel(String expiresAt) {
+    final expires = DateTime.tryParse(expiresAt)?.toLocal();
+    if (expires == null) return '--:--';
+    final remaining = expires.difference(DateTime.now());
+    final seconds = remaining.isNegative ? 0 : remaining.inSeconds;
+    final minutesPart = (seconds ~/ 60).toString().padLeft(2, '0');
+    final secondsPart = (seconds % 60).toString().padLeft(2, '0');
+    return '$minutesPart:$secondsPart';
   }
 
   Widget _selectedNodeActions(RemoteLearningSessionSnapshot snapshot) {
@@ -962,7 +966,284 @@ final class _RemoteLearningSessionPageState
   }
 }
 
-enum _KnowledgeTreeMode { chapter, personal }
+final class _SessionHeaderTitle extends StatelessWidget {
+  const _SessionHeaderTitle({
+    required this.snapshot,
+    required this.remainingLabel,
+  });
+
+  final RemoteLearningSessionSnapshot snapshot;
+  final String remainingLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
+    final topic = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          snapshot.session.topic,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+        ),
+        Text(
+          '${snapshot.session.nodeCount}/20 个问题节点',
+          style: const TextStyle(fontSize: 11, color: _muted),
+        ),
+      ],
+    );
+    if (!isDesktop) return topic;
+    final progress = (snapshot.session.nodeCount / 20).clamp(0.0, 1.0);
+    return Row(
+      children: [
+        SizedBox(width: 230, child: topic),
+        const SizedBox(width: 28),
+        Expanded(
+          child: Column(
+            key: const ValueKey('exploration-session-progress'),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    '探索进度',
+                    style: TextStyle(fontSize: 11, color: _muted),
+                  ),
+                  Text(
+                    '${snapshot.session.nodeCount}/20',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: _brand,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
+              LinearProgressIndicator(
+                value: progress,
+                minHeight: 5,
+                borderRadius: BorderRadius.circular(99),
+                backgroundColor: const Color(0xFFE9E3F1),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 24),
+        Text(
+          remainingLabel,
+          key: const ValueKey('exploration-session-timer'),
+          style: const TextStyle(
+            fontSize: 25,
+            fontWeight: FontWeight.w900,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 6),
+        const Text('/10:00', style: TextStyle(fontSize: 11, color: _muted)),
+      ],
+    );
+  }
+}
+
+final class _CurrentExplorationCard extends StatelessWidget {
+  const _CurrentExplorationCard({
+    required this.topic,
+    required this.strategy,
+    required this.chapter,
+    required this.selectedChapterNodeId,
+  });
+
+  final String topic;
+  final String strategy;
+  final LearningChapterOverviewSnapshot? chapter;
+  final String? selectedChapterNodeId;
+
+  @override
+  Widget build(BuildContext context) {
+    final node = chapter?.nodeById(selectedChapterNodeId);
+    return Container(
+      key: const ValueKey('current-exploration-card'),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A2A123D),
+            blurRadius: 18,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0E8FF),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.school_rounded, color: _brand, size: 21),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '当前探索方向',
+                  style: TextStyle(fontSize: 11, color: _muted),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  node?.hookQuestion ?? topic,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  '当前策略：$strategy',
+                  style: const TextStyle(fontSize: 12, color: _muted),
+                ),
+              ],
+            ),
+          ),
+          const Chip(label: Text('问题驱动'), visualDensity: VisualDensity.compact),
+        ],
+      ),
+    );
+  }
+}
+
+final class _WorkbenchPanel extends StatelessWidget {
+  const _WorkbenchPanel({
+    super.key,
+    required this.title,
+    required this.icon,
+    required this.subtitle,
+    required this.child,
+    this.trailing,
+  });
+
+  final String title;
+  final IconData icon;
+  final String subtitle;
+  final Widget child;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: _brand, size: 19),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              ?trailing,
+            ],
+          ),
+          const SizedBox(height: 3),
+          Text(subtitle, style: const TextStyle(fontSize: 11, color: _muted)),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+final class _ExplorationStatsCard extends StatelessWidget {
+  const _ExplorationStatsCard({required this.snapshot});
+
+  final RemoteLearningSessionSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final started = DateTime.tryParse(snapshot.session.startedAt);
+    final elapsed = started == null
+        ? 0
+        : DateTime.now()
+              .toUtc()
+              .difference(started.toUtc())
+              .inMinutes
+              .clamp(0, 99);
+    final depth = snapshot.nodes.fold<int>(
+      0,
+      (value, node) => node.depth > value ? node.depth : value,
+    );
+    final branches = snapshot.nodes.where((node) => node.isSideBranch).length;
+    return Container(
+      key: const ValueKey('exploration-stats-card'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('探索概览', style: TextStyle(fontWeight: FontWeight.w900)),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _StatItem(label: '探索时长', value: '${elapsed}m'),
+              _StatItem(
+                label: '节点数',
+                value: '${snapshot.session.nodeCount}/20',
+              ),
+              _StatItem(label: '探索深度', value: '${depth + 1}/5'),
+              _StatItem(label: '分支数', value: '$branches'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _StatItem extends StatelessWidget {
+  const _StatItem({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 10, color: _muted)),
+          const SizedBox(height: 3),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
 
 /// 远程思维树只发出节点选择事件，所有写操作由页面上的显式按钮完成。
 final class RemoteLearningTree extends StatelessWidget {

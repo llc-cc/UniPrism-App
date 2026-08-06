@@ -257,14 +257,24 @@ final class ChapterKnowledgeTree extends StatelessWidget {
     required this.chapter,
     required this.selectedNodeId,
     required this.onNodeTap,
+    this.compact = false,
   });
 
   final LearningChapterOverviewSnapshot chapter;
   final String? selectedNodeId;
   final ValueChanged<String> onNodeTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      return Column(
+        key: const ValueKey('chapter-knowledge-tree'),
+        children: chapter.nodes.indexed
+            .map((entry) => _compactNode(entry.$1, entry.$2))
+            .toList(growable: false),
+      );
+    }
     return Column(
       key: const ValueKey('chapter-knowledge-tree'),
       children: chapter.nodes.indexed
@@ -333,6 +343,84 @@ final class ChapterKnowledgeTree extends StatelessWidget {
             );
           })
           .toList(growable: false),
+    );
+  }
+
+  Widget _compactNode(int index, LearningChapterNodeSnapshot node) {
+    final selected = node.id == selectedNodeId;
+    final isLast = index == chapter.nodes.length - 1;
+    return InkWell(
+      key: ValueKey('chapter-node-${node.id}'),
+      onTap: () => onNodeTap(node.id),
+      borderRadius: BorderRadius.circular(10),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 24,
+              child: Column(
+                children: [
+                  Container(
+                    width: selected ? 10 : 8,
+                    height: selected ? 10 : 8,
+                    decoration: BoxDecoration(
+                      color: selected ? _chapterBrand : const Color(0xFF49B984),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  if (!isLast)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        color: const Color(0xFFE1DBE9),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xFFF1EAFF)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(10),
+                  border: selected ? Border.all(color: _chapterBrand) : null,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        node.title,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected
+                              ? FontWeight.w900
+                              : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (node.phase != 'LEARNING')
+                      Text(
+                        node.phase == 'PRACTICE' ? '练习' : '复习',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: _chapterMuted,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -43,7 +43,7 @@ void main() {
   );
 
   testWidgets(
-    'session switches independently between chapter and personal trees',
+    'desktop workbench keeps session status, both trees and statistics visible',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1;
@@ -59,18 +59,32 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('tree-mode-personal')), findsOneWidget);
-      expect(find.byKey(const ValueKey('tree-mode-chapter')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('exploration-session-progress')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('exploration-session-timer')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('current-exploration-card')),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('personal-thinking-tree')),
         findsOneWidget,
       );
-
-      await tester.tap(find.byKey(const ValueKey('tree-mode-chapter')));
-      await tester.pumpAndSettle();
-
       expect(
         find.byKey(const ValueKey('chapter-knowledge-tree')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('knowledge-overview-card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('exploration-stats-card')),
         findsOneWidget,
       );
       expect(find.text('相反数与方向翻转'), findsOneWidget);
