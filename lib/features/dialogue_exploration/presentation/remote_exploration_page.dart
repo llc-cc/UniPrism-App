@@ -450,12 +450,15 @@ final class _RemoteLearningSessionPageState
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         titleSpacing: 20,
-        title: _SessionHeaderTitle(snapshot: snapshot),
+        title: Text(
+          snapshot.session.topic,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+        ),
         actions: [
           TextButton.icon(
             onPressed: _exportTree,
             icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('导出思维树'),
+            label: const Text('导出探索地图'),
           ),
           const SizedBox(width: 6),
           FilledButton.icon(
@@ -476,24 +479,35 @@ final class _RemoteLearningSessionPageState
         child: LayoutBuilder(
           builder: (context, constraints) {
             if (constraints.maxWidth >= 900) {
-              return Row(
+              return Column(
                 children: [
-                  Expanded(flex: 6, child: _chatStage(snapshot, mobile: false)),
-                  const VerticalDivider(width: 1),
-                  SizedBox(
-                    key: const ValueKey('exploration-live-tree'),
-                    width: (constraints.maxWidth * .3)
-                        .clamp(360.0, 560.0)
-                        .toDouble(),
-                    child: _treeStage(snapshot),
+                  _ExplorationMissionCard(snapshot: snapshot),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 6,
+                          child: _classroomStage(snapshot, mobile: false),
+                        ),
+                        const VerticalDivider(width: 1),
+                        SizedBox(
+                          key: const ValueKey('exploration-live-tree'),
+                          width: (constraints.maxWidth * .3)
+                              .clamp(360.0, 560.0)
+                              .toDouble(),
+                          child: _treeStage(snapshot),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               );
             }
             return Column(
               children: [
-                _mobilePath(snapshot),
-                Expanded(child: _chatStage(snapshot, mobile: true)),
+                _ExplorationMissionCard(snapshot: snapshot, compact: true),
+                _mobileMapTrigger(snapshot),
+                Expanded(child: _classroomStage(snapshot, mobile: true)),
               ],
             );
           },
@@ -502,19 +516,19 @@ final class _RemoteLearningSessionPageState
     );
   }
 
-  Widget _chatStage(
+  Widget _classroomStage(
     RemoteLearningSessionSnapshot snapshot, {
     required bool mobile,
   }) {
     final state = widget.controller.state;
-    final visibleNodes = snapshot.pathTo(
+    final node = snapshot.nodeById(
       state.inspectedNodeId ?? snapshot.currentNodeId,
-    );
+    )!;
     return Column(
-      key: const ValueKey('exploration-chat-stage'),
+      key: const ValueKey('exploration-classroom-stage'),
       children: [
         Expanded(
-          child: ListView.builder(
+          child: ListView(
             controller: _scrollController,
             padding: EdgeInsets.fromLTRB(
               mobile ? 14 : 28,
@@ -522,27 +536,14 @@ final class _RemoteLearningSessionPageState
               mobile ? 14 : 28,
               20,
             ),
-            itemCount: visibleNodes.length + 1,
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 22),
-                  child: _CurrentExplorationCard(
-                    topic: snapshot.session.topic,
-                    strategy: _strategyLabel(snapshot.activeStrategy),
-                    chapter: state.chapter,
-                    selectedChapterNodeId: state.selectedChapterNodeId,
-                  ),
-                );
-              }
-              final node = visibleNodes[index - 1];
-              return _ConversationTurn(
+            children: [
+              _ExplorationClassroom(
                 node: node,
                 materials: snapshot.materials
                     .where((item) => item.nodeId == node.id)
                     .toList(growable: false),
-              );
-            },
+              ),
+            ],
           ),
         ),
         if (state.inspectedNodeId != null) _selectedNodeActions(snapshot),
@@ -559,8 +560,7 @@ final class _RemoteLearningSessionPageState
     );
   }
 
-  Widget _mobilePath(RemoteLearningSessionSnapshot snapshot) {
-    final path = snapshot.pathTo(snapshot.currentNodeId);
+  Widget _mobileMapTrigger(RemoteLearningSessionSnapshot snapshot) {
     return Material(
       key: const ValueKey('mobile-current-path'),
       color: Colors.white,
@@ -568,36 +568,20 @@ final class _RemoteLearningSessionPageState
         padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
         child: Row(
           children: [
-            const Icon(Icons.account_tree_rounded, size: 18, color: _brand),
+            const Icon(Icons.map_outlined, size: 18, color: _brand),
             const SizedBox(width: 7),
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: path.indexed
-                      .map((entry) {
-                        final (index, node) = entry;
-                        return Row(
-                          children: [
-                            if (index > 0)
-                              const Icon(Icons.chevron_right_rounded, size: 16),
-                            Text(
-                              node.question,
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        );
-                      })
-                      .toList(growable: false),
+              child: Text(
+                '已解锁 ${snapshot.nodes.length} 个理解节点',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ),
             TextButton(
               onPressed: () => _showTree(snapshot),
-              child: const Text('完整思维树'),
+              child: const Text('探索地图'),
             ),
           ],
         ),
@@ -615,15 +599,15 @@ final class _RemoteLearningSessionPageState
           children: [
             _WorkbenchPanel(
               key: const ValueKey('session-sidebar-current-path'),
-              title: '当前探索路径',
-              icon: Icons.account_tree_rounded,
+              title: '我的探索地图',
+              icon: Icons.map_outlined,
               trailing: TextButton.icon(
                 key: const ValueKey('open-full-thinking-tree'),
                 onPressed: () => _showTree(snapshot),
                 icon: const Icon(Icons.open_in_full_rounded, size: 16),
-                label: const Text('查看完整思维树'),
+                label: const Text('查看完整地图'),
               ),
-              subtitle: '默认保留最近 7 个节点；点击节点可继续、分支或回溯',
+              subtitle: '记录已解锁的理解，不记录聊天句子',
               child: KeyedSubtree(
                 key: const ValueKey('personal-thinking-tree'),
                 child: RemoteLearningTree(
@@ -635,7 +619,7 @@ final class _RemoteLearningSessionPageState
               ),
             ),
             const SizedBox(height: 12),
-            _ExplorationStatsCard(snapshot: snapshot),
+            const _LearningAssetsPreview(),
           ],
         ),
       ),
@@ -654,7 +638,7 @@ final class _RemoteLearningSessionPageState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '正在查看：${node.question}',
+            '正在查看：${_explorationConceptLabel(node)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w700),
@@ -734,7 +718,7 @@ final class _RemoteLearningSessionPageState
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: ['是什么', '为什么会这样', '如果……会怎样', '这和 X 有什么关系', '这有什么用']
+                children: ['我想验证 -2×-3', '为什么要用分配律', '给我一个反例', '我发现……']
                     .map(
                       (text) => Padding(
                         padding: const EdgeInsets.only(right: 6),
@@ -758,7 +742,7 @@ final class _RemoteLearningSessionPageState
                     maxLines: 4,
                     onSubmitted: busy ? null : (_) => _send(),
                     decoration: const InputDecoration(
-                      hintText: '继续提出你的问题…',
+                      hintText: '写下你的发现、疑问或一个反例…',
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -808,7 +792,7 @@ final class _RemoteLearningSessionPageState
               const Padding(
                 padding: EdgeInsets.all(18),
                 child: Text(
-                  '我的思维树',
+                  '我的探索地图',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
                 ),
               ),
@@ -932,145 +916,130 @@ final class _RemoteLearningSessionPageState
   }
 }
 
-final class _SessionHeaderTitle extends StatelessWidget {
-  const _SessionHeaderTitle({required this.snapshot});
+/// 将会话从“问了几句”重新表达成学生正在完成的一次探索任务。
+final class _ExplorationMissionCard extends StatelessWidget {
+  const _ExplorationMissionCard({required this.snapshot, this.compact = false});
 
   final RemoteLearningSessionSnapshot snapshot;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.sizeOf(context).width >= 900;
-    final topic = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          snapshot.session.topic,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-        ),
-        Text(
-          '${snapshot.session.nodeCount}/20 个问题节点',
-          style: const TextStyle(fontSize: 11, color: _muted),
-        ),
-      ],
-    );
-    if (!isDesktop) return topic;
-    final progress = (snapshot.session.nodeCount / 20).clamp(0.0, 1.0);
-    return Row(
-      children: [
-        SizedBox(width: 230, child: topic),
-        const SizedBox(width: 28),
-        Expanded(
-          child: Column(
-            key: const ValueKey('exploration-session-progress'),
-            mainAxisSize: MainAxisSize.min,
+    final rootQuestion = snapshot.nodes.isEmpty
+        ? snapshot.session.topic
+        : snapshot.nodes.first.question;
+    final stage = _explorationStage(snapshot);
+    final progress = (snapshot.nodes.length / 12).clamp(.08, 1.0);
+    return Container(
+      key: const ValueKey('exploration-mission-card'),
+      width: double.infinity,
+      margin: EdgeInsets.fromLTRB(compact ? 12 : 24, 12, compact ? 12 : 24, 10),
+      padding: EdgeInsets.all(compact ? 14 : 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF24133F),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '🌌 今日探索',
+            style: TextStyle(
+              color: Color(0xFFDCCBFF),
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            rootQuestion,
+            maxLines: compact ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: compact ? 18 : 21,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '当前突破：${_explorationConceptLabel(snapshot.nodeById(snapshot.currentNodeId)!)}',
+            style: const TextStyle(color: Color(0xFFD8CFE6), fontSize: 12),
+          ),
+          const SizedBox(height: 13),
+          Row(
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    '探索进度',
-                    style: TextStyle(fontSize: 11, color: _muted),
-                  ),
-                  Text(
-                    '${snapshot.session.nodeCount}/20',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: _brand,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
+              const Icon(
+                Icons.schedule_rounded,
+                color: Color(0xFFDCCBFF),
+                size: 16,
               ),
-              const SizedBox(height: 5),
-              LinearProgressIndicator(
-                value: progress,
-                minHeight: 5,
-                borderRadius: BorderRadius.circular(99),
-                backgroundColor: const Color(0xFFE9E3F1),
+              const SizedBox(width: 5),
+              const Text(
+                '预计 10 分钟',
+                style: TextStyle(color: Colors.white, fontSize: 12),
+              ),
+              const SizedBox(width: 16),
+              Text(
+                '探索阶段 $stage/3',
+                style: const TextStyle(
+                  color: Color(0xFFDCCBFF),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                const ['① 理解', '② 挑战', '③ 复习'][stage - 1],
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: progress,
+            minHeight: 6,
+            borderRadius: BorderRadius.circular(99),
+            backgroundColor: const Color(0xFF4A3865),
+            valueColor: const AlwaysStoppedAnimation(Color(0xFFA96BFF)),
+          ),
+        ],
+      ),
     );
   }
 }
 
-final class _CurrentExplorationCard extends StatelessWidget {
-  const _CurrentExplorationCard({
-    required this.topic,
-    required this.strategy,
-    required this.chapter,
-    required this.selectedChapterNodeId,
-  });
-
-  final String topic;
-  final String strategy;
-  final LearningChapterOverviewSnapshot? chapter;
-  final String? selectedChapterNodeId;
-
-  @override
-  Widget build(BuildContext context) {
-    final node = chapter?.nodeById(selectedChapterNodeId);
-    return Container(
-      key: const ValueKey('current-exploration-card'),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5DFEA)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A2A123D),
-            blurRadius: 18,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0E8FF),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.school_rounded, color: _brand, size: 21),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '当前探索方向',
-                  style: TextStyle(fontSize: 11, color: _muted),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  node?.hookQuestion ?? topic,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  '当前策略：$strategy',
-                  style: const TextStyle(fontSize: 12, color: _muted),
-                ),
-              ],
-            ),
-          ),
-          const Chip(label: Text('问题驱动'), visualDensity: VisualDensity.compact),
-        ],
-      ),
-    );
+int _explorationStage(RemoteLearningSessionSnapshot snapshot) {
+  if (snapshot.session.status == 'COMPLETED' ||
+      snapshot.activeStrategy == 'SELF_EXPLANATION') {
+    return 3;
   }
+  if (snapshot.activeStrategy == 'ERROR_TRACKING' ||
+      snapshot.nodes.length >= 6) {
+    return 2;
+  }
+  return 1;
+}
+
+/// 地图只呈现已经形成的概念，不把“是什么”“不懂”等对话动作伪装成知识节点。
+String _explorationConceptLabel(RemoteLearningNode node) {
+  final persistedLabel = node.mapLabel?.trim();
+  if (persistedLabel != null && persistedLabel.isNotEmpty) {
+    return persistedLabel;
+  }
+  final text = '${node.question} ${node.answer} ${node.followUpQuestion}';
+  if (text.contains('分配律') || text.contains('0=(-1)')) return '分配律证明';
+  if (text.contains('同号') || text.contains('异号') || text.contains('结果符号')) {
+    return '符号判断规则';
+  }
+  if (text.contains('相反数')) return '取相反数';
+  if (text.contains('方向') || text.contains('数轴')) return '数轴上的方向变化';
+  if (text.contains('顶点') || text.contains('完全平方')) return '顶点与完全平方';
+  if (text.contains('反例') || text.contains('矛盾')) return '反例检验';
+  return node.question.length > 16
+      ? '${node.question.substring(0, 16)}…'
+      : node.question;
 }
 
 final class _WorkbenchPanel extends StatelessWidget {
@@ -1124,49 +1093,39 @@ final class _WorkbenchPanel extends StatelessWidget {
   }
 }
 
-final class _ExplorationStatsCard extends StatelessWidget {
-  const _ExplorationStatsCard({required this.snapshot});
-
-  final RemoteLearningSessionSnapshot snapshot;
+/// 让学生在探索中始终看见终点：一次会话结束后会沉淀为可复用的学习资产。
+final class _LearningAssetsPreview extends StatelessWidget {
+  const _LearningAssetsPreview();
 
   @override
   Widget build(BuildContext context) {
-    final started = DateTime.tryParse(snapshot.session.startedAt);
-    final elapsed = started == null
-        ? 0
-        : DateTime.now()
-              .toUtc()
-              .difference(started.toUtc())
-              .inMinutes
-              .clamp(0, 99);
-    final depth = snapshot.nodes.fold<int>(
-      0,
-      (value, node) => node.depth > value ? node.depth : value,
-    );
-    final branches = snapshot.nodes.where((node) => node.isSideBranch).length;
     return Container(
-      key: const ValueKey('exploration-stats-card'),
+      key: const ValueKey('learning-assets-preview'),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF8F5FC),
         borderRadius: BorderRadius.circular(17),
         border: Border.all(color: const Color(0xFFE5DFEA)),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('探索概览', style: TextStyle(fontWeight: FontWeight.w900)),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _StatItem(label: '探索时长', value: '${elapsed}m'),
-              _StatItem(
-                label: '节点数',
-                value: '${snapshot.session.nodeCount}/20',
-              ),
-              _StatItem(label: '探索深度', value: '${depth + 1}/5'),
-              _StatItem(label: '分支数', value: '$branches'),
-            ],
+          Text('完成后获得', style: TextStyle(fontWeight: FontWeight.w900)),
+          SizedBox(height: 10),
+          _LearningAssetRow(
+            icon: Icons.map_outlined,
+            label: '探索地图',
+            detail: '你的理解路径',
+          ),
+          _LearningAssetRow(
+            icon: Icons.warning_amber_rounded,
+            label: '错误模型',
+            detail: '本次容易混淆的点',
+          ),
+          _LearningAssetRow(
+            icon: Icons.style_outlined,
+            label: '复习卡',
+            detail: '可转入记忆复习',
           ),
         ],
       ),
@@ -1174,21 +1133,33 @@ final class _ExplorationStatsCard extends StatelessWidget {
   }
 }
 
-final class _StatItem extends StatelessWidget {
-  const _StatItem({required this.label, required this.value});
+final class _LearningAssetRow extends StatelessWidget {
+  const _LearningAssetRow({
+    required this.icon,
+    required this.label,
+    required this.detail,
+  });
 
+  final IconData icon;
   final String label;
-  final String value;
+  final String detail;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
         children: [
-          Text(label, style: const TextStyle(fontSize: 10, color: _muted)),
-          const SizedBox(height: 3),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
+          Icon(icon, size: 17, color: _brand),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              detail,
+              style: const TextStyle(fontSize: 11, color: _muted),
+            ),
+          ),
         ],
       ),
     );
@@ -1236,7 +1207,7 @@ final class RemoteLearningTree extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
-              '已折叠 $hiddenCount 个较早节点',
+              '已折叠 $hiddenCount 个较早理解节点',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 11, color: _muted),
             ),
@@ -1302,7 +1273,7 @@ final class RemoteLearningTree extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Text(
-                        node.question,
+                        _explorationConceptLabel(node),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1363,7 +1334,7 @@ final class RemoteLearningTree extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                node.question,
+                _explorationConceptLabel(node),
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w700),
@@ -1390,91 +1361,90 @@ final class RemoteLearningTree extends StatelessWidget {
   };
 }
 
-final class _ConversationTurn extends StatelessWidget {
-  const _ConversationTurn({required this.node, required this.materials});
+/// 一次课堂只把当前认知关口放在台前；历史过程收进探索地图，避免退化为聊天记录。
+final class _ExplorationClassroom extends StatelessWidget {
+  const _ExplorationClassroom({required this.node, required this.materials});
 
   final RemoteLearningNode node;
   final List<RemoteLearningMaterial> materials;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 22),
+    return Container(
+      key: const ValueKey('ai-exploration-classroom'),
+      constraints: const BoxConstraints(maxWidth: 860),
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Align(
-            alignment: Alignment.centerRight,
-            child: Container(
-              constraints: const BoxConstraints(maxWidth: 620),
-              padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 11),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEDE4FF),
-                borderRadius: BorderRadius.circular(17),
-              ),
-              child: Text(
-                node.question,
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const Row(
             children: [
-              const CircleAvatar(
+              CircleAvatar(
                 radius: 17,
                 backgroundColor: _brand,
                 foregroundColor: Colors.white,
                 child: Icon(Icons.auto_awesome_rounded, size: 17),
               ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      node.answer,
-                      style: const TextStyle(height: 1.55, fontSize: 15),
-                    ),
-                    if (materials.isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      ...materials.map(
-                        (material) => _RemoteMaterialCard(material: material),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF0F7F4),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(
-                            Icons.psychology_alt_rounded,
-                            size: 18,
-                            color: Color(0xFF167A5A),
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              node.followUpQuestion,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF175B47),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
+              SizedBox(width: 9),
+              Text(
+                'AI 探索课堂',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
               ),
             ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '正在突破：${_explorationConceptLabel(node)}',
+            style: const TextStyle(color: _brand, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 8),
+          Text(node.answer, style: const TextStyle(height: 1.65, fontSize: 16)),
+          if (materials.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            ...materials.map(
+              (material) => _RemoteMaterialCard(material: material),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F7F4),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '本轮挑战',
+                  style: TextStyle(
+                    color: Color(0xFF167A5A),
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  node.followUpQuestion.replaceFirst('下一步可以追问：', ''),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF175B47),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 13),
+          Text(
+            '从你的问题开始：${node.question}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: _muted, fontSize: 12),
           ),
         ],
       ),
@@ -1554,7 +1524,8 @@ final class _InteractiveLearningMaterialState
   double _price = 24;
   double _orders = 120;
   double _cost = 9;
-  int _flipCount = 0;
+  int _oppositeNumber = -3;
+  final List<int> _oppositeHistory = [-3];
 
   @override
   Widget build(BuildContext context) {
@@ -1582,14 +1553,52 @@ final class _InteractiveLearningMaterialState
       );
     }
     if (key == 'sign_flip_widget') {
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(_flipCount.isEven ? '当前方向：向右（正）' : '当前方向：向左（负）'),
+          const Text('选一个数，再亲手执行“取相反数”。'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            children: [-3, -1, 1, 3]
+                .map(
+                  (value) => ChoiceChip(
+                    label: Text('$value'),
+                    selected:
+                        _oppositeHistory.length == 1 &&
+                        _oppositeNumber == value,
+                    onSelected: (_) => setState(() {
+                      _oppositeNumber = value;
+                      _oppositeHistory
+                        ..clear()
+                        ..add(value);
+                    }),
+                  ),
+                )
+                .toList(growable: false),
           ),
+          const SizedBox(height: 10),
+          Text(
+            _oppositeHistory.join('  →  '),
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+              color: _brand,
+            ),
+          ),
+          const SizedBox(height: 8),
           FilledButton.tonal(
-            onPressed: () => setState(() => _flipCount += 1),
-            child: Text('乘以 -1（$_flipCount 次）'),
+            key: const ValueKey('sign-flip-apply'),
+            onPressed: () => setState(() {
+              _oppositeNumber = -_oppositeNumber;
+              _oppositeHistory.add(_oppositeNumber);
+            }),
+            child: Text('对 $_oppositeNumber 取相反数'),
+          ),
+          const SizedBox(height: 7),
+          const Text(
+            '观察：每做一次只改变符号，不改变绝对值；连续做两次才回到起点。',
+            style: TextStyle(fontSize: 12, color: _muted),
           ),
         ],
       );
@@ -1845,12 +1854,3 @@ final class _ErrorPanel extends StatelessWidget {
     );
   }
 }
-
-String _strategyLabel(String? strategy) => switch (strategy) {
-  'QUESTION_CHAIN' => '问题链探索',
-  'SOCRATIC' => '苏格拉底追问',
-  'ERROR_TRACKING' => '错误思维追踪',
-  'ANALOGY_TRANSFER' => '类比迁移',
-  'SELF_EXPLANATION' => '自我解释',
-  _ => '自动教学策略',
-};

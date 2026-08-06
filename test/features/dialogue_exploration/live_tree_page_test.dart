@@ -44,7 +44,7 @@ void main() {
   );
 
   testWidgets(
-    'desktop workbench keeps session status, compact path and statistics visible',
+    'desktop classroom keeps the mission, exploration map and learning assets visible',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1;
@@ -61,7 +61,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.byKey(const ValueKey('exploration-session-progress')),
+        find.byKey(const ValueKey('exploration-mission-card')),
         findsOneWidget,
       );
       expect(
@@ -69,7 +69,7 @@ void main() {
         findsNothing,
       );
       expect(
-        find.byKey(const ValueKey('current-exploration-card')),
+        find.byKey(const ValueKey('ai-exploration-classroom')),
         findsOneWidget,
       );
       expect(
@@ -88,14 +88,39 @@ void main() {
         find.byKey(const ValueKey('chapter-knowledge-tree')),
         findsNothing,
       );
-      expect(find.text('查看完整思维树'), findsOneWidget);
+      expect(find.text('查看完整地图'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('exploration-stats-card')),
+        find.byKey(const ValueKey('learning-assets-preview')),
         findsOneWidget,
       );
-      expect(find.text('导出思维树'), findsOneWidget);
+      expect(find.text('导出探索地图'), findsOneWidget);
       expect(find.text('学习素材'), findsNothing);
       expect(find.text('知识结构图（章节地图）'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'session presents a guided exploration task instead of a chat log',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final controller = RemoteExplorationSessionController(api: _UiFakeApi());
+      await controller.loadChapter('negative-number-operations');
+      await controller.startFromChapterNode('negative-times-negative-concept');
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('今日探索'), findsOneWidget);
+      expect(find.text('探索阶段 1/3'), findsOneWidget);
+      expect(find.text('AI 探索课堂'), findsOneWidget);
+      expect(find.text('我的探索地图'), findsOneWidget);
+      expect(find.text('当前探索路径'), findsNothing);
+      expect(find.text('5/20 个问题节点'), findsNothing);
     },
   );
 
@@ -116,7 +141,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('已折叠 5 个较早节点'), findsOneWidget);
+    expect(find.text('已折叠 5 个较早理解节点'), findsOneWidget);
     expect(find.byKey(const ValueKey('remote-tree-node-node-0')), findsNothing);
     expect(
       find.byKey(const ValueKey('remote-tree-node-node-5')),
@@ -127,6 +152,32 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'opposite-number material lets the learner inspect a real number change',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final controller = RemoteExplorationSessionController(
+        api: _UiFakeApi(sessionSnapshot: _signFlipSnapshot()),
+      );
+      await controller.loadChapter('negative-number-operations');
+      await controller.startFromChapterNode('negative-times-negative-concept');
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('选一个数，再亲手执行“取相反数”。'), findsOneWidget);
+      expect(find.textContaining('当前方向'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('sign-flip-apply')));
+      await tester.pump();
+      expect(find.text('-3  →  3'), findsOneWidget);
+    },
+  );
 
   testWidgets('full thinking tree remains readable for a long path on mobile', (
     tester,
@@ -144,7 +195,7 @@ void main() {
       MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('完整思维树'));
+    await tester.tap(find.text('探索地图'));
     await tester.pumpAndSettle();
 
     expect(
@@ -164,30 +215,34 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('desktop keeps the conversation and live tree visible together', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1280, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final api = _UiFakeApi();
-    final controller = RemoteExplorationSessionController(api: api);
-    await controller.loadEntry('quadratic-function');
-    await controller.start(directionId: 'graph');
+  testWidgets(
+    'desktop keeps the exploration classroom and live map visible together',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _UiFakeApi();
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadEntry('quadratic-function');
+      await controller.start(directionId: 'graph');
 
-    await tester.pumpWidget(
-      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('exploration-chat-stage')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('exploration-live-tree')), findsOneWidget);
-    expect(find.text('这一步成立需要什么条件？'), findsOneWidget);
-  });
+      expect(
+        find.byKey(const ValueKey('exploration-classroom-stage')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('exploration-live-tree')),
+        findsOneWidget,
+      );
+      expect(find.text('这一步成立需要什么条件？'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'selecting a tree node is read-only and reveals explicit actions',
@@ -219,7 +274,7 @@ void main() {
   );
 
   testWidgets(
-    'mobile keeps the current path visible and can expand the full tree',
+    'mobile keeps the exploration map trigger visible and can expand the full map',
     (tester) async {
       tester.view.physicalSize = const Size(390, 780);
       tester.view.devicePixelRatio = 1;
@@ -235,9 +290,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('mobile-current-path')), findsOneWidget);
-      await tester.tap(find.text('完整思维树'));
+      await tester.tap(find.text('探索地图'));
       await tester.pumpAndSettle();
-      expect(find.text('我的思维树'), findsOneWidget);
+      expect(find.text('我的探索地图'), findsOneWidget);
     },
   );
 }
@@ -489,6 +544,54 @@ RemoteLearningSessionSnapshot _longPathSnapshot() {
     activeStrategy: 'QUESTION_CHAIN',
     nodes: nodes,
     materials: const [],
+    summary: null,
+  );
+}
+
+RemoteLearningSessionSnapshot _signFlipSnapshot() {
+  return RemoteLearningSessionSnapshot(
+    session: RemoteLearningSessionInfo(
+      id: 'learning-sign-flip',
+      exploreSessionId: 'explore-1',
+      topic: '负数乘法探索',
+      scenarioId: 'teaching',
+      atomId: 'negative-times-negative',
+      status: 'ACTIVE',
+      revision: 1,
+      nodeCount: 1,
+      startedAt: '2026-08-06T01:00:00.000Z',
+      expiresAt: '2026-08-13T01:00:00.000Z',
+      completedAt: null,
+    ),
+    currentNodeId: 'sign-node',
+    activeStrategy: 'SOCRATIC',
+    nodes: [
+      RemoteLearningNode(
+        id: 'sign-node',
+        parentId: null,
+        status: 'VALIDATED',
+        question: '为什么乘以 -1 是取相反数？',
+        answer: '先从 -3 开始，亲手对它取一次相反数。',
+        followUpQuestion: '取完一次后，数值的哪一部分变了，哪一部分没有变？',
+        strategy: 'SOCRATIC',
+        depth: 0,
+        isSideBranch: false,
+        backtrackTargetId: null,
+        confidence: .8,
+        createdAt: '2026-08-06T01:00:00.000Z',
+      ),
+    ],
+    materials: [
+      RemoteLearningMaterial(
+        id: 'sign-material',
+        nodeId: 'sign-node',
+        materialId: 'negative-sign-flip-widget',
+        type: 'INTERACTIVE',
+        title: '动手验证：取相反数',
+        componentKey: 'sign_flip_widget',
+        payload: {},
+      ),
+    ],
     summary: null,
   );
 }

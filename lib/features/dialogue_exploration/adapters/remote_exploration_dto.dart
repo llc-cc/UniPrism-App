@@ -239,6 +239,7 @@ final class RemoteLearningNode {
     required this.question,
     required this.answer,
     required this.followUpQuestion,
+    this.mapLabel,
     required this.strategy,
     required this.depth,
     required this.isSideBranch,
@@ -255,6 +256,7 @@ final class RemoteLearningNode {
       question: _nullableString(json['question']) ?? '',
       answer: _nullableString(json['answer']) ?? '',
       followUpQuestion: _nullableString(json['followUpQuestion']) ?? '',
+      mapLabel: _nullableString(json['mapLabel']),
       strategy: _nullableString(json['strategy']),
       depth: _int(json['depth']),
       isSideBranch: json['isSideBranch'] == true,
@@ -270,6 +272,7 @@ final class RemoteLearningNode {
   final String question;
   final String answer;
   final String followUpQuestion;
+  final String? mapLabel;
   final String? strategy;
   final int depth;
   final bool isSideBranch;
