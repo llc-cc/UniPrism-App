@@ -5,6 +5,7 @@ import '../adapters/remote_exploration_api.dart';
 import '../adapters/remote_exploration_dto.dart';
 import '../core/remote_exploration_session_controller.dart';
 import '../materials/parabola_painter.dart';
+import 'chapter_workspace_components.dart';
 
 const _brand = Color(0xFF6B23FF);
 const _ink = Color(0xFF27222D);
@@ -42,7 +43,7 @@ final class _RemoteExplorationLabPageState
     _controller = RemoteExplorationSessionController(
       api: widget.gateway ?? RemoteExplorationApi(),
     )..addListener(_refresh);
-    _controller.loadEntry(_atomId);
+    _controller.loadChapter('negative-number-operations');
   }
 
   void _refresh() {
@@ -61,6 +62,9 @@ final class _RemoteExplorationLabPageState
   @override
   Widget build(BuildContext context) {
     final state = _controller.state;
+    if (state.snapshot != null) {
+      return RemoteLearningSessionPage(controller: _controller);
+    }
     return Scaffold(
       backgroundColor: _surface,
       appBar: AppBar(
@@ -72,12 +76,26 @@ final class _RemoteExplorationLabPageState
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1040),
-            child: state.entry == null
+            child: state.chapter == null
                 ? _loadingOrError(state)
-                : _entryContent(state.entry!, state),
+                : ChapterOverviewPanel(
+                    chapter: state.chapter!,
+                    selectedNodeId: state.selectedChapterNodeId,
+                    questionController: _questionController,
+                    busy: state.status == RemoteExplorationStatus.submitting,
+                    onSelectNode: _controller.selectChapterNode,
+                    onStartNode: _startChapterNode,
+                  ),
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _startChapterNode(String nodeId) async {
+    await _controller.startFromChapterNode(
+      nodeId,
+      question: _questionController.text,
     );
   }
 
@@ -91,6 +109,8 @@ final class _RemoteExplorationLabPageState
     return const Center(child: CircularProgressIndicator());
   }
 
+  /// 保留原子自由入口的渲染能力，后续问题库入口可复用；章节入口不再调用它。
+  // ignore: unused_element
   Widget _entryContent(
     LearningEntrySnapshot entry,
     RemoteExplorationState state,
@@ -391,6 +411,7 @@ final class _RemoteLearningSessionPageState
     extends State<RemoteLearningSessionPage> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  var _treeMode = _KnowledgeTreeMode.personal;
 
   @override
   void initState() {
@@ -581,33 +602,69 @@ final class _RemoteLearningSessionPageState
   }
 
   Widget _treeStage(RemoteLearningSessionSnapshot snapshot) {
+    final chapter = widget.controller.state.chapter;
     return ColoredBox(
       color: const Color(0xFFFBFAFD),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(18, 18, 18, 8),
-            child: Text(
-              '我的思维树',
-              style: TextStyle(fontSize: 19, fontWeight: FontWeight.w900),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
+            child: SegmentedButton<_KnowledgeTreeMode>(
+              segments: const [
+                ButtonSegment(
+                  value: _KnowledgeTreeMode.chapter,
+                  label: Text(
+                    '章节知识树',
+                    key: ValueKey('tree-mode-chapter'),
+                  ),
+                  icon: Icon(Icons.hub_outlined),
+                ),
+                ButtonSegment(
+                  value: _KnowledgeTreeMode.personal,
+                  label: Text(
+                    '我的思维树',
+                    key: ValueKey('tree-mode-personal'),
+                  ),
+                  icon: Icon(Icons.account_tree_rounded),
+                ),
+              ],
+              selected: {_treeMode},
+              onSelectionChanged: (selection) {
+                setState(() => _treeMode = selection.single);
+              },
             ),
           ),
-          const Padding(
+          Padding(
             padding: EdgeInsets.fromLTRB(18, 0, 18, 12),
             child: Text(
-              '点击节点只查看，不会自动修改路线',
-              style: TextStyle(fontSize: 12, color: _muted),
+              _treeMode == _KnowledgeTreeMode.chapter
+                  ? '查看本章位置；选择不会修改个人思维轨迹'
+                  : '点击节点只查看，不会自动修改路线',
+              style: const TextStyle(fontSize: 12, color: _muted),
             ),
           ),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 24),
-              child: RemoteLearningTree(
-                snapshot: snapshot,
-                inspectedNodeId: widget.controller.state.inspectedNodeId,
-                onNodeTap: widget.controller.inspectNode,
-              ),
+              child: _treeMode == _KnowledgeTreeMode.chapter && chapter != null
+                  ? KeyedSubtree(
+                      child: ChapterKnowledgeTree(
+                        chapter: chapter,
+                        selectedNodeId:
+                            widget.controller.state.selectedChapterNodeId,
+                        onNodeTap: widget.controller.selectChapterNode,
+                      ),
+                    )
+                  : KeyedSubtree(
+                      key: const ValueKey('personal-thinking-tree'),
+                      child: RemoteLearningTree(
+                        snapshot: snapshot,
+                        inspectedNodeId:
+                            widget.controller.state.inspectedNodeId,
+                        onNodeTap: widget.controller.inspectNode,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -904,6 +961,8 @@ final class _RemoteLearningSessionPageState
     );
   }
 }
+
+enum _KnowledgeTreeMode { chapter, personal }
 
 /// 远程思维树只发出节点选择事件，所有写操作由页面上的显式按钮完成。
 final class RemoteLearningTree extends StatelessWidget {

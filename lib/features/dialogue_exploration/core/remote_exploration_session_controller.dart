@@ -21,6 +21,8 @@ enum RemoteComposerMode { currentPath, continueFromNode, branchFromNode }
 final class RemoteExplorationState {
   const RemoteExplorationState({
     required this.status,
+    required this.chapter,
+    required this.selectedChapterNodeId,
     required this.entry,
     required this.snapshot,
     required this.inspectedNodeId,
@@ -32,6 +34,8 @@ final class RemoteExplorationState {
 
   const RemoteExplorationState.idle()
     : status = RemoteExplorationStatus.idle,
+      chapter = null,
+      selectedChapterNodeId = null,
       entry = null,
       snapshot = null,
       inspectedNodeId = null,
@@ -41,6 +45,8 @@ final class RemoteExplorationState {
       canRetry = false;
 
   final RemoteExplorationStatus status;
+  final LearningChapterOverviewSnapshot? chapter;
+  final String? selectedChapterNodeId;
   final LearningEntrySnapshot? entry;
   final RemoteLearningSessionSnapshot? snapshot;
   final String? inspectedNodeId;
@@ -51,6 +57,9 @@ final class RemoteExplorationState {
 
   RemoteExplorationState copyWith({
     RemoteExplorationStatus? status,
+    LearningChapterOverviewSnapshot? chapter,
+    String? selectedChapterNodeId,
+    bool clearSelectedChapterNode = false,
     LearningEntrySnapshot? entry,
     RemoteLearningSessionSnapshot? snapshot,
     String? inspectedNodeId,
@@ -63,6 +72,10 @@ final class RemoteExplorationState {
   }) {
     return RemoteExplorationState(
       status: status ?? this.status,
+      chapter: chapter ?? this.chapter,
+      selectedChapterNodeId: clearSelectedChapterNode
+          ? null
+          : selectedChapterNodeId ?? this.selectedChapterNodeId,
       entry: entry ?? this.entry,
       snapshot: snapshot ?? this.snapshot,
       inspectedNodeId: clearInspectedNode
@@ -87,6 +100,63 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   var _isDisposed = false;
 
   RemoteExplorationState get state => _state;
+
+  Future<void> loadChapter(String chapterId) async {
+    _replace(
+      _state.copyWith(
+        status: RemoteExplorationStatus.loadingEntry,
+        clearError: true,
+      ),
+    );
+    try {
+      final chapter = await api.getChapterOverview(chapterId);
+      _replace(
+        _state.copyWith(
+          status: RemoteExplorationStatus.ready,
+          chapter: chapter,
+          selectedChapterNodeId: chapter.recommendedNodeId,
+          clearError: true,
+        ),
+      );
+    } catch (error) {
+      _fail(error, () => loadChapter(chapterId));
+    }
+  }
+
+  /// 选择章节节点只改变本地浏览焦点，不提前创建会话或写入学生行为。
+  void selectChapterNode(String nodeId) {
+    if (_state.chapter?.nodeById(nodeId) == null) return;
+    _replace(_state.copyWith(selectedChapterNodeId: nodeId, clearError: true));
+  }
+
+  Future<void> startFromChapterNode(String nodeId, {String? question}) async {
+    final node = _state.chapter?.nodeById(nodeId);
+    if (node == null) throw StateError('章节知识节点不存在');
+    selectChapterNode(nodeId);
+    final key = _traceId('create');
+    Future<void> operation() async {
+      _submitting();
+      try {
+        final entry = _state.entry?.atomId == node.atomId
+            ? _state.entry!
+            : await api.getEntry(node.atomId);
+        final snapshot = await api.createSession(
+          atomId: node.atomId,
+          scenarioId: _scenarioIdForPhase(node.phase),
+          question: (question ?? '').trim().isEmpty
+              ? node.hookQuestion
+              : question!.trim(),
+          idempotencyKey: key,
+        );
+        _replace(_state.copyWith(entry: entry));
+        _acceptSnapshot(snapshot);
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
 
   Future<void> loadEntry(String atomId) async {
     _replace(
@@ -339,6 +409,12 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   static String _scenarioId(String atomId) {
     if (atomId == 'inequality-proof') return 'practice';
     if (atomId == 'coffee-business-model') return 'public-demo';
+    return 'teaching';
+  }
+
+  static String _scenarioIdForPhase(String phase) {
+    if (phase == 'PRACTICE') return 'practice';
+    if (phase == 'REVIEW') return 'review';
     return 'teaching';
   }
 

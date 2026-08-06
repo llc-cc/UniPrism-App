@@ -54,6 +54,121 @@ final class LearningEntrySnapshot {
   final List<LearningDirectionSnapshot> directions;
 }
 
+/// 章节阶段只描述学习路径状态；练习和复习的具体流程由各自模块继续承载。
+final class LearningChapterPhaseSnapshot {
+  const LearningChapterPhaseSnapshot({
+    required this.kind,
+    required this.title,
+    required this.summary,
+    required this.status,
+    required this.progress,
+    required this.itemCount,
+  });
+
+  factory LearningChapterPhaseSnapshot.fromJson(Map<String, dynamic> json) {
+    return LearningChapterPhaseSnapshot(
+      kind: _requiredString(json, 'kind'),
+      title: _requiredString(json, 'title'),
+      summary: _requiredString(json, 'summary'),
+      status: _requiredString(json, 'status'),
+      progress: _doubleOrNull(json['progress']) ?? 0,
+      itemCount: _int(json['itemCount']),
+    );
+  }
+
+  final String kind;
+  final String title;
+  final String summary;
+  final String status;
+  final double progress;
+  final int itemCount;
+}
+
+/// 章节知识节点来自知识库编排，不与学生在会话中生成的个人思维节点混存。
+final class LearningChapterNodeSnapshot {
+  const LearningChapterNodeSnapshot({
+    required this.id,
+    required this.parentId,
+    required this.atomId,
+    required this.title,
+    required this.description,
+    required this.phase,
+    required this.hookQuestion,
+    required this.recommended,
+  });
+
+  factory LearningChapterNodeSnapshot.fromJson(Map<String, dynamic> json) {
+    return LearningChapterNodeSnapshot(
+      id: _requiredString(json, 'id'),
+      parentId: _nullableString(json['parentId']),
+      atomId: _requiredString(json, 'atomId'),
+      title: _requiredString(json, 'title'),
+      description: _requiredString(json, 'description'),
+      phase: _requiredString(json, 'phase'),
+      hookQuestion: _requiredString(json, 'hookQuestion'),
+      recommended: json['recommended'] == true,
+    );
+  }
+
+  final String id;
+  final String? parentId;
+  final String atomId;
+  final String title;
+  final String description;
+  final String phase;
+  final String hookQuestion;
+  final bool recommended;
+}
+
+/// 章节工作台的稳定只读快照；正式 1.1 知识库接入后保持该客户端契约不变。
+final class LearningChapterOverviewSnapshot {
+  LearningChapterOverviewSnapshot({
+    required this.chapterId,
+    required this.title,
+    required this.description,
+    required this.estimatedMinutes,
+    required this.progress,
+    required this.recommendedNodeId,
+    required List<LearningChapterPhaseSnapshot> phases,
+    required List<LearningChapterNodeSnapshot> nodes,
+  }) : phases = List.unmodifiable(phases),
+       nodes = List.unmodifiable(nodes);
+
+  factory LearningChapterOverviewSnapshot.fromJson(Map<String, dynamic> json) {
+    return LearningChapterOverviewSnapshot(
+      chapterId: _requiredString(json, 'chapterId'),
+      title: _requiredString(json, 'title'),
+      description: _requiredString(json, 'description'),
+      estimatedMinutes: _int(json['estimatedMinutes']),
+      progress: _doubleOrNull(json['progress']) ?? 0,
+      recommendedNodeId: _requiredString(json, 'recommendedNodeId'),
+      phases: _list(json['phases'])
+          .map((item) => LearningChapterPhaseSnapshot.fromJson(_map(item)))
+          .toList(growable: false),
+      nodes: _list(json['nodes'])
+          .map((item) => LearningChapterNodeSnapshot.fromJson(_map(item)))
+          .toList(growable: false),
+    );
+  }
+
+  final String chapterId;
+  final String title;
+  final String description;
+  final int estimatedMinutes;
+  final double progress;
+  final String recommendedNodeId;
+  final List<LearningChapterPhaseSnapshot> phases;
+  final List<LearningChapterNodeSnapshot> nodes;
+
+  LearningChapterNodeSnapshot? nodeById(String? id) {
+    if (id == null) return null;
+    for (final node in nodes) {
+      if (node.id == id) return node;
+    }
+    return null;
+  }
+}
+
 /// 服务端学习会话的元信息；节点数和 revision 用于显示实时进度与并发版本。
 final class RemoteLearningSessionInfo {
   const RemoteLearningSessionInfo({

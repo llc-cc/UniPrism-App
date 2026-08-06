@@ -6,32 +6,76 @@ import 'package:uniprism_app/features/dialogue_exploration/core/remote_explorati
 import 'package:uniprism_app/features/dialogue_exploration/presentation/remote_exploration_page.dart';
 
 void main() {
-  testWidgets('Learning Entry shows the core question and three directions', (
-    tester,
-  ) async {
-    final api = _UiFakeApi();
-    await tester.pumpWidget(
-      MaterialApp(home: RemoteExplorationLabPage(gateway: api)),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'chapter workspace shows learning, practice, review and the knowledge route',
+    (tester) async {
+      final api = _UiFakeApi();
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteExplorationLabPage(gateway: api)),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('二次函数探索'), findsOneWidget);
-    expect(find.text('为什么抛物线会出现？'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('learning-direction-basic')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('learning-direction-graph')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('learning-direction-application')),
-      findsOneWidget,
-    );
-    expect(find.text('推荐'), findsOneWidget);
-    expect(find.textContaining('选择教学模式'), findsNothing);
-  });
+      expect(find.text('负数运算'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('chapter-phase-learning')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chapter-phase-practice')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chapter-phase-review')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('chapter-node-opposite-number')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey('chapter-node-negative-times-negative-concept'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('进入这个知识点'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'session switches independently between chapter and personal trees',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _UiFakeApi();
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadChapter('negative-number-operations');
+      await controller.startFromChapterNode('negative-times-negative-concept');
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('tree-mode-personal')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tree-mode-chapter')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('personal-thinking-tree')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('tree-mode-chapter')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('chapter-knowledge-tree')),
+        findsOneWidget,
+      );
+      expect(find.text('相反数与方向翻转'), findsOneWidget);
+    },
+  );
 
   testWidgets('desktop keeps the conversation and live tree visible together', (
     tester,
@@ -116,6 +160,63 @@ final class _UiFakeApi implements RemoteExplorationGateway {
   int branchCalls = 0;
   int backtrackCalls = 0;
 
+  final chapter = LearningChapterOverviewSnapshot(
+    chapterId: 'negative-number-operations',
+    title: '负数运算',
+    description: '从负数意义出发理解运算规则。',
+    estimatedMinutes: 30,
+    progress: .2,
+    recommendedNodeId: 'negative-times-negative-concept',
+    phases: const [
+      LearningChapterPhaseSnapshot(
+        kind: 'LEARNING',
+        title: '学习',
+        summary: '理解概念',
+        status: 'IN_PROGRESS',
+        progress: .3,
+        itemCount: 2,
+      ),
+      LearningChapterPhaseSnapshot(
+        kind: 'PRACTICE',
+        title: '练习',
+        summary: '验证规则',
+        status: 'AVAILABLE',
+        progress: 0,
+        itemCount: 1,
+      ),
+      LearningChapterPhaseSnapshot(
+        kind: 'REVIEW',
+        title: '复习',
+        summary: '回顾易错点',
+        status: 'LOCKED',
+        progress: 0,
+        itemCount: 1,
+      ),
+    ],
+    nodes: const [
+      LearningChapterNodeSnapshot(
+        id: 'opposite-number',
+        parentId: null,
+        atomId: 'negative-times-negative',
+        title: '相反数与方向翻转',
+        description: '理解连续两次方向翻转。',
+        phase: 'LEARNING',
+        hookQuestion: '连续两次取相反数会怎样？',
+        recommended: false,
+      ),
+      LearningChapterNodeSnapshot(
+        id: 'negative-times-negative-concept',
+        parentId: 'opposite-number',
+        atomId: 'negative-times-negative',
+        title: '为什么负负得正',
+        description: '验证负数乘法规则。',
+        phase: 'LEARNING',
+        hookQuestion: '为什么两个负数相乘会得到正数？',
+        recommended: true,
+      ),
+    ],
+  );
+
   final entry = LearningEntrySnapshot(
     atomId: 'quadratic-function',
     title: '二次函数探索',
@@ -189,6 +290,11 @@ final class _UiFakeApi implements RemoteExplorationGateway {
     ],
     summary: null,
   );
+
+  @override
+  Future<LearningChapterOverviewSnapshot> getChapterOverview(
+    String chapterId,
+  ) async => chapter;
 
   @override
   Future<LearningEntrySnapshot> getEntry(String atomId) async => entry;

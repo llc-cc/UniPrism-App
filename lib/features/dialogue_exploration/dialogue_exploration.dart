@@ -20,6 +20,7 @@ export 'practice/practice_exploration_strategy.dart';
 export 'presentation/exploration_lab_page.dart';
 export 'presentation/exploration_session_page.dart';
 export 'presentation/exploration_tree_panel.dart';
+export 'presentation/chapter_workspace_components.dart';
 export 'presentation/remote_exploration_page.dart';
 export 'teaching/teaching_exploration_strategy.dart';
 export 'teaching/teaching_strategy_engine.dart';

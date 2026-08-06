@@ -4,6 +4,48 @@ import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_explo
 import 'package:uniprism_app/features/dialogue_exploration/core/remote_exploration_session_controller.dart';
 
 void main() {
+  test(
+    'loads a whole chapter and selects its recommended knowledge node',
+    () async {
+      final api = _FakeRemoteApi();
+      final controller = RemoteExplorationSessionController(api: api);
+
+      await controller.loadChapter('negative-number-operations');
+
+      expect(controller.state.chapter?.title, '负数运算');
+      expect(controller.state.chapter?.phases.map((phase) => phase.kind), [
+        'LEARNING',
+        'PRACTICE',
+        'REVIEW',
+      ]);
+      expect(
+        controller.state.selectedChapterNodeId,
+        'negative-times-negative-concept',
+      );
+    },
+  );
+
+  test(
+    'chapter node selection is read-only and can explicitly start its hook question',
+    () async {
+      final api = _FakeRemoteApi();
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadChapter('negative-number-operations');
+
+      controller.selectChapterNode('opposite-number');
+
+      expect(api.createCalls, 0);
+      expect(controller.state.selectedChapterNodeId, 'opposite-number');
+
+      await controller.startFromChapterNode('opposite-number');
+
+      expect(api.createCalls, 1);
+      expect(api.lastAtomId, 'negative-times-negative');
+      expect(api.lastScenarioId, 'teaching');
+      expect(api.lastQuestion, '连续两次取相反数，方向为什么会回到原处？');
+    },
+  );
+
   test('loads entry and creates the first server session', () async {
     final api = _FakeRemoteApi();
     final controller = RemoteExplorationSessionController(api: api);
@@ -95,7 +137,67 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
   int memoryCalls = 0;
   int completeCalls = 0;
   String? lastParentNodeId;
+  String? lastAtomId;
+  String? lastScenarioId;
+  String? lastQuestion;
   bool failNextTurn = false;
+
+  final chapter = LearningChapterOverviewSnapshot(
+    chapterId: 'negative-number-operations',
+    title: '负数运算',
+    description: '理解负数的意义和运算规则。',
+    estimatedMinutes: 30,
+    progress: .2,
+    recommendedNodeId: 'negative-times-negative-concept',
+    phases: const [
+      LearningChapterPhaseSnapshot(
+        kind: 'LEARNING',
+        title: '学习',
+        summary: '理解概念',
+        status: 'IN_PROGRESS',
+        progress: .3,
+        itemCount: 3,
+      ),
+      LearningChapterPhaseSnapshot(
+        kind: 'PRACTICE',
+        title: '练习',
+        summary: '验证规则',
+        status: 'AVAILABLE',
+        progress: 0,
+        itemCount: 1,
+      ),
+      LearningChapterPhaseSnapshot(
+        kind: 'REVIEW',
+        title: '复习',
+        summary: '复习易错点',
+        status: 'LOCKED',
+        progress: 0,
+        itemCount: 1,
+      ),
+    ],
+    nodes: const [
+      LearningChapterNodeSnapshot(
+        id: 'opposite-number',
+        parentId: null,
+        atomId: 'negative-times-negative',
+        title: '相反数与方向翻转',
+        description: '理解两次方向翻转。',
+        phase: 'LEARNING',
+        hookQuestion: '连续两次取相反数，方向为什么会回到原处？',
+        recommended: false,
+      ),
+      LearningChapterNodeSnapshot(
+        id: 'negative-times-negative-concept',
+        parentId: 'opposite-number',
+        atomId: 'negative-times-negative',
+        title: '为什么负负得正',
+        description: '验证负数乘法规则。',
+        phase: 'LEARNING',
+        hookQuestion: '为什么两个负数相乘会得到正数？',
+        recommended: true,
+      ),
+    ],
+  );
 
   final entry = LearningEntrySnapshot(
     atomId: 'quadratic-function',
@@ -153,6 +255,11 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
   Future<LearningEntrySnapshot> getEntry(String atomId) async => entry;
 
   @override
+  Future<LearningChapterOverviewSnapshot> getChapterOverview(
+    String chapterId,
+  ) async => chapter;
+
+  @override
   Future<RemoteLearningSessionSnapshot> createSession({
     required String atomId,
     required String scenarioId,
@@ -161,6 +268,9 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
     String? idempotencyKey,
   }) async {
     createCalls += 1;
+    lastAtomId = atomId;
+    lastScenarioId = scenarioId;
+    lastQuestion = question;
     return snapshot;
   }
 

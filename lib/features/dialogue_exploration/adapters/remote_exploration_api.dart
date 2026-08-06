@@ -8,6 +8,8 @@ import 'remote_exploration_dto.dart';
 
 /// 远程 1.2 接口边界；Widget 与 Controller 均不直接处理 URL、鉴权头或 JSON。
 abstract interface class RemoteExplorationGateway {
+  Future<LearningChapterOverviewSnapshot> getChapterOverview(String chapterId);
+
   Future<LearningEntrySnapshot> getEntry(String atomId);
 
   Future<RemoteLearningSessionSnapshot> createSession({
@@ -85,6 +87,17 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
   String? _anonymousId;
   String? _exploreSessionId;
   String? _latestLearningSessionId;
+
+  @override
+  Future<LearningChapterOverviewSnapshot> getChapterOverview(
+    String chapterId,
+  ) async {
+    final data = await _request(
+      'GET',
+      '/api/learning-chapters/${Uri.encodeComponent(chapterId)}',
+    );
+    return LearningChapterOverviewSnapshot.fromJson(data);
+  }
 
   @override
   Future<LearningEntrySnapshot> getEntry(String atomId) async {
