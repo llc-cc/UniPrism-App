@@ -9,12 +9,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reactive_mind_map/reactive_mind_map.dart';
 
+import 'features/dialogue_exploration/presentation/remote_exploration_page.dart';
+
 part 'app_config.dart';
 part 'agent_experience.dart';
 part 'assessment.dart';
 part 'compliance.dart';
 part 'content_ingestion_preview.dart';
 part 'content_source_test.dart';
+part 'developer_tools.dart';
 part 'github_content_source_test.dart';
 part 'knowledge_forest.dart';
 part 'knowledge_models.dart';
@@ -2760,16 +2763,6 @@ class _HomePageState extends State<HomePage> {
     _loadMajorCards();
   }
 
-  void _openZhihuContentTest() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => ZhihuContentTestPage(
-          recommendedMajors: _currentRecommendedMajorNames,
-        ),
-      ),
-    );
-  }
-
   List<String> get _currentRecommendedMajorNames => _majorCards
       .where((card) => !card.locked)
       .map((card) => card.name?.trim() ?? '')
@@ -2818,16 +2811,6 @@ class _HomePageState extends State<HomePage> {
         .toList(growable: false);
   }
 
-  void _openGitHubContentTest() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => GitHubContentTestPage(
-          recommendedMajors: _currentRecommendedMajorNames,
-        ),
-      ),
-    );
-  }
-
   /// 打开 Agent，并传入只用于回答个性化的用户画像。
   void _openAgent() {
     Navigator.of(context).push<void>(
@@ -2840,17 +2823,21 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// 入库预览仅在开发工具开启时可进入。
-  void _openContentIngestionPreview() {
+  /// 知识森林是长期资产入口，因此从首页直接可达，不依赖先进入 Agent。
+  void _openKnowledgeForest() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => const ContentIngestionPreviewPage()),
+      MaterialPageRoute(
+        builder: (_) =>
+            KnowledgeForestPage(store: KnowledgeForestStore.instance),
+      ),
     );
   }
 
-  void _openUnifiedContentAnswerTest() {
+  /// 内部诊断能力集中到独立页面，避免与用户核心入口竞争注意力。
+  void _openDeveloperTools() {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => UnifiedContentAnswerTestPage(
+        builder: (_) => DeveloperToolsPage(
           recommendedMajors: _currentRecommendedMajorNames,
           interests: _agentInterestTags,
         ),
@@ -3005,91 +2992,22 @@ class _HomePageState extends State<HomePage> {
               if (AppConfig.agentFeatureVisible) ...[
                 const SizedBox(height: 16),
                 _AgentHomeEntry(onTap: _openAgent),
+                const SizedBox(height: 12),
+                _KnowledgeForestHomeEntry(onTap: _openKnowledgeForest),
               ],
               if (AppConfig.developerToolsEnabled) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
-                    onPressed: _openContentIngestionPreview,
-                    icon: const Icon(Icons.storage_rounded),
-                    label: const Text('真实内容入库预览'),
+                    key: const ValueKey('developer-tools-home-entry'),
+                    onPressed: _openDeveloperTools,
+                    icon: const Icon(Icons.developer_mode_rounded),
+                    label: const Text('开发者工具'),
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(46),
-                      foregroundColor: const Color(0xFF1C6B52),
-                      side: const BorderSide(color: Color(0xFF7BBFA9)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _openZhihuContentTest,
-                    icon: const Icon(Icons.travel_explore_rounded),
-                    label: const Text('推荐专业 × 知乎真实性测试'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      foregroundColor: const Color(0xFF5420BF),
-                      side: const BorderSide(color: Color(0xFFB99AFF)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _openGitHubContentTest,
-                    icon: const Icon(Icons.code_rounded),
-                    label: const Text('推荐专业 × GitHub真实性测试'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      foregroundColor: const Color(0xFF24292F),
-                      side: const BorderSide(color: Color(0xFF8C959F)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _openUnifiedContentAnswerTest,
-                    icon: const Icon(Icons.auto_awesome_rounded),
-                    label: const Text('推荐专业 × Agent统一回答测试'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      backgroundColor: const Color(0xFF6A52A3),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pushNamed('/report-notification-demo'),
-                    icon: const Icon(Icons.notifications_active_outlined),
-                    label: const Text('报告生成通知测试'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      foregroundColor: const Color(0xFF5420BF),
-                      side: const BorderSide(color: Color(0xFFB99AFF)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () =>
-                        Navigator.of(context).pushNamed('/landscape-test'),
-                    icon: const Icon(Icons.sports_esports_rounded),
-                    label: const Text('横屏贪吃蛇'),
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      foregroundColor: const Color(0xFF5420BF),
-                      side: const BorderSide(color: Color(0xFFB99AFF)),
+                      foregroundColor: const Color(0xFF6D6875),
+                      side: const BorderSide(color: Color(0xFFD8D3E0)),
                     ),
                   ),
                 ),

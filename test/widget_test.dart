@@ -13,6 +13,13 @@ Future<void> pumpAtSize(WidgetTester tester, Size size, Widget child) async {
   await tester.pump();
 }
 
+void expectOnlyNetworkImageExceptions(WidgetTester tester) {
+  Object? pendingException;
+  while ((pendingException = tester.takeException()) != null) {
+    expect(pendingException, isA<NetworkImageLoadException>());
+  }
+}
+
 void main() {
   test('persona card snapshot parses the backend response', () {
     final snapshot = PersonaCardSnapshot.fromJson({
@@ -222,6 +229,84 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('home opens the knowledge forest from a visible entry', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 1600), const HomePage());
+
+    // HomePage 的远程装饰图在 Widget 测试环境固定返回 400；该异常与导航行为无关。
+    expectOnlyNetworkImageExceptions(tester);
+
+    final knowledgeEntry = find.byKey(
+      const ValueKey('knowledge-forest-home-entry'),
+    );
+    expect(knowledgeEntry, findsOneWidget);
+
+    await tester.tap(knowledgeEntry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('我的知识森林'), findsOneWidget);
+    expectOnlyNetworkImageExceptions(tester);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('home collapses diagnostics into one developer tools entry', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 2400), const HomePage());
+    expectOnlyNetworkImageExceptions(tester);
+
+    expect(
+      find.byKey(const ValueKey('developer-tools-home-entry')),
+      findsOneWidget,
+    );
+    expect(find.text('真实内容入库预览'), findsNothing);
+    expect(find.text('推荐专业 × 知乎真实性测试'), findsNothing);
+    expect(find.text('推荐专业 × GitHub真实性测试'), findsNothing);
+    expect(find.text('推荐专业 × Agent统一回答测试'), findsNothing);
+    expect(find.text('报告生成通知测试'), findsNothing);
+    expect(find.text('横屏贪吃蛇'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('developer tools page keeps every existing diagnostic entry', (
+    tester,
+  ) async {
+    await pumpAtSize(
+      tester,
+      const Size(390, 1000),
+      const DeveloperToolsPage(recommendedMajors: ['人工智能'], interests: ['创造']),
+    );
+
+    expect(find.text('真实内容入库预览'), findsOneWidget);
+    expect(find.text('推荐专业 × 知乎真实性测试'), findsOneWidget);
+    expect(find.text('推荐专业 × GitHub真实性测试'), findsOneWidget);
+    expect(find.text('推荐专业 × Agent统一回答测试'), findsOneWidget);
+    expect(find.text('报告生成通知测试'), findsOneWidget);
+    expect(find.text('横屏贪吃蛇'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('developer tools opens the 1.2 dialogue exploration lab', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 1000), const DeveloperToolsPage());
+
+    final entry = find.byKey(
+      const ValueKey('developer-tool-dialogue-exploration'),
+    );
+    expect(entry, findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('1.2 AI 探索课堂'), findsOneWidget);
+  });
+
   testWidgets('popular major cards are display-only', (tester) async {
     await pumpAtSize(
       tester,
@@ -417,7 +502,10 @@ void main() {
       ),
     );
 
-    expect(find.byKey(const ValueKey('zhihu-recommended-majors')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('zhihu-recommended-majors')),
+      findsOneWidget,
+    );
     expect(find.text('人工智能'), findsOneWidget);
     expect(find.text('计算机科学与技术'), findsOneWidget);
     expect(find.text('补充兴趣标签（用逗号分隔）'), findsOneWidget);
