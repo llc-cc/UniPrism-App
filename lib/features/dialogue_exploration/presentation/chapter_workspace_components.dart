@@ -42,6 +42,8 @@ final class ChapterOverviewPanel extends StatelessWidget {
               final cardWidth = constraints.maxWidth >= 760
                   ? (constraints.maxWidth - 24) / 3
                   : constraints.maxWidth;
+              final phaseMinutes =
+                  (chapter.estimatedMinutes / chapter.phases.length).ceil();
               return Wrap(
                 spacing: 12,
                 runSpacing: 12,
@@ -49,7 +51,10 @@ final class ChapterOverviewPanel extends StatelessWidget {
                     .map(
                       (phase) => SizedBox(
                         width: cardWidth,
-                        child: _ChapterPhaseCard(phase: phase),
+                        child: _ChapterPhaseCard(
+                          phase: phase,
+                          estimatedMinutes: phaseMinutes,
+                        ),
                       ),
                     )
                     .toList(growable: false),
@@ -190,9 +195,13 @@ final class _ChapterHeader extends StatelessWidget {
 }
 
 final class _ChapterPhaseCard extends StatelessWidget {
-  const _ChapterPhaseCard({required this.phase});
+  const _ChapterPhaseCard({
+    required this.phase,
+    required this.estimatedMinutes,
+  });
 
   final LearningChapterPhaseSnapshot phase;
+  final int estimatedMinutes;
 
   @override
   Widget build(BuildContext context) {
@@ -239,6 +248,15 @@ final class _ChapterPhaseCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(phase.summary, style: const TextStyle(color: _chapterMuted)),
+          const SizedBox(height: 6),
+          Text(
+            '预计 $estimatedMinutes 分钟',
+            style: const TextStyle(
+              fontSize: 11,
+              color: _chapterBrand,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: 10),
           LinearProgressIndicator(
             value: phase.progress.clamp(0, 1),

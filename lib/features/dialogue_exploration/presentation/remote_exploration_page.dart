@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -398,7 +396,7 @@ final class _DirectionCard extends StatelessWidget {
   }
 }
 
-/// A+C 探索课堂：桌面常驻双栏，手机常驻当前路径并可展开完整知识树。
+/// 探索课堂桌面常驻对话与当前路径，手机可展开完整思维树。
 final class RemoteLearningSessionPage extends StatefulWidget {
   const RemoteLearningSessionPage({super.key, required this.controller});
 
@@ -413,16 +411,11 @@ final class _RemoteLearningSessionPageState
     extends State<RemoteLearningSessionPage> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
-  Timer? _sessionClock;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_refresh);
-    // 剩余时间是会话级状态，只刷新展示，不触发后端写入或改变学习路径。
-    _sessionClock = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
   }
 
   void _refresh() {
@@ -441,7 +434,6 @@ final class _RemoteLearningSessionPageState
   @override
   void dispose() {
     widget.controller.removeListener(_refresh);
-    _sessionClock?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -458,10 +450,7 @@ final class _RemoteLearningSessionPageState
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         titleSpacing: 20,
-        title: _SessionHeaderTitle(
-          snapshot: snapshot,
-          remainingLabel: _remainingLabel(snapshot.session.expiresAt),
-        ),
+        title: _SessionHeaderTitle(snapshot: snapshot),
         actions: [
           TextButton.icon(
             onPressed: _exportTree,
@@ -608,7 +597,7 @@ final class _RemoteLearningSessionPageState
             ),
             TextButton(
               onPressed: () => _showTree(snapshot),
-              child: const Text('完整知识树'),
+              child: const Text('完整思维树'),
             ),
           ],
         ),
@@ -617,7 +606,6 @@ final class _RemoteLearningSessionPageState
   }
 
   Widget _treeStage(RemoteLearningSessionSnapshot snapshot) {
-    final chapter = widget.controller.state.chapter;
     return ColoredBox(
       color: const Color(0xFFFBFAFD),
       child: SingleChildScrollView(
@@ -626,54 +614,32 @@ final class _RemoteLearningSessionPageState
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _WorkbenchPanel(
-              title: '我的思维树（探索路径）',
+              key: const ValueKey('session-sidebar-current-path'),
+              title: '当前探索路径',
               icon: Icons.account_tree_rounded,
               trailing: TextButton.icon(
-                onPressed: _exportTree,
-                icon: const Icon(Icons.download_rounded, size: 16),
-                label: const Text('导出'),
+                key: const ValueKey('open-full-thinking-tree'),
+                onPressed: () => _showTree(snapshot),
+                icon: const Icon(Icons.open_in_full_rounded, size: 16),
+                label: const Text('查看完整思维树'),
               ),
-              subtitle: '点击节点查看，并从任一节点继续、分支或回溯',
+              subtitle: '默认保留最近 7 个节点；点击节点可继续、分支或回溯',
               child: KeyedSubtree(
                 key: const ValueKey('personal-thinking-tree'),
                 child: RemoteLearningTree(
                   snapshot: snapshot,
                   inspectedNodeId: widget.controller.state.inspectedNodeId,
                   onNodeTap: widget.controller.inspectNode,
+                  maxVisiblePathNodes: 7,
                 ),
               ),
             ),
-            if (chapter != null) ...[
-              const SizedBox(height: 12),
-              _WorkbenchPanel(
-                key: const ValueKey('knowledge-overview-card'),
-                title: '知识结构图（章节地图）',
-                icon: Icons.hub_outlined,
-                subtitle: '稳定的章节路线，不会改写你的个人探索路径',
-                child: ChapterKnowledgeTree(
-                  chapter: chapter,
-                  selectedNodeId: widget.controller.state.selectedChapterNodeId,
-                  onNodeTap: widget.controller.selectChapterNode,
-                  compact: true,
-                ),
-              ),
-            ],
             const SizedBox(height: 12),
             _ExplorationStatsCard(snapshot: snapshot),
           ],
         ),
       ),
     );
-  }
-
-  String _remainingLabel(String expiresAt) {
-    final expires = DateTime.tryParse(expiresAt)?.toLocal();
-    if (expires == null) return '--:--';
-    final remaining = expires.difference(DateTime.now());
-    final seconds = remaining.isNegative ? 0 : remaining.inSeconds;
-    final minutesPart = (seconds ~/ 60).toString().padLeft(2, '0');
-    final secondsPart = (seconds % 60).toString().padLeft(2, '0');
-    return '$minutesPart:$secondsPart';
   }
 
   Widget _selectedNodeActions(RemoteLearningSessionSnapshot snapshot) {
@@ -967,13 +933,9 @@ final class _RemoteLearningSessionPageState
 }
 
 final class _SessionHeaderTitle extends StatelessWidget {
-  const _SessionHeaderTitle({
-    required this.snapshot,
-    required this.remainingLabel,
-  });
+  const _SessionHeaderTitle({required this.snapshot});
 
   final RemoteLearningSessionSnapshot snapshot;
-  final String remainingLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1032,18 +994,6 @@ final class _SessionHeaderTitle extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 24),
-        Text(
-          remainingLabel,
-          key: const ValueKey('exploration-session-timer'),
-          style: const TextStyle(
-            fontSize: 25,
-            fontWeight: FontWeight.w900,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-        ),
-        const SizedBox(width: 6),
-        const Text('/10:00', style: TextStyle(fontSize: 11, color: _muted)),
       ],
     );
   }
@@ -1252,86 +1202,175 @@ final class RemoteLearningTree extends StatelessWidget {
     required this.snapshot,
     required this.inspectedNodeId,
     required this.onNodeTap,
+    this.maxVisiblePathNodes,
   });
 
   final RemoteLearningSessionSnapshot snapshot;
   final String? inspectedNodeId;
   final ValueChanged<String> onNodeTap;
+  final int? maxVisiblePathNodes;
 
   @override
   Widget build(BuildContext context) {
-    final roots = snapshot.nodes.where((node) => node.parentId == null);
+    final pathLimit = maxVisiblePathNodes;
+    if (pathLimit != null) return _compactCurrentPath(pathLimit);
     return Column(
-      children: roots.map((node) => _node(node, 0)).toList(growable: false),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: snapshot.nodes.map(_fullOutlineNode).toList(growable: false),
     );
   }
 
-  Widget _node(RemoteLearningNode node, int depth) {
-    final children = snapshot.nodes
-        .where((candidate) => candidate.parentId == node.id)
-        .toList(growable: false);
+  Widget _compactCurrentPath(int limit) {
+    final path = snapshot.pathTo(snapshot.currentNodeId);
+    final hiddenCount = path.length > limit ? path.length - limit : 0;
+    final visiblePath = path.skip(hiddenCount).toList(growable: false);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hiddenCount > 0)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF4F1F7),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '已折叠 $hiddenCount 个较早节点',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 11, color: _muted),
+            ),
+          ),
+        ...visiblePath.indexed.map(
+          (entry) => _compactPathNode(
+            entry.$2,
+            isLast: entry.$1 == visiblePath.length - 1,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _compactPathNode(RemoteLearningNode node, {required bool isLast}) {
     final selected = inspectedNodeId == node.id;
     final current = snapshot.currentNodeId == node.id;
-    return Padding(
-      padding: EdgeInsets.only(left: depth * 14.0, bottom: 8),
-      child: Column(
+    return IntrinsicHeight(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
-            key: ValueKey('remote-tree-node-${node.id}'),
-            borderRadius: BorderRadius.circular(13),
-            onTap: () => onNodeTap(node.id),
-            child: Container(
-              padding: const EdgeInsets.all(11),
-              decoration: BoxDecoration(
-                color: _treeColor(node.status, selected),
-                borderRadius: BorderRadius.circular(13),
-                border: Border.all(
-                  color: selected || current ? _brand : const Color(0xFFDDD7E6),
-                  width: selected ? 2 : 1,
+          SizedBox(
+            width: 24,
+            child: Column(
+              children: [
+                Container(
+                  width: current ? 10 : 8,
+                  height: current ? 10 : 8,
+                  margin: const EdgeInsets.only(top: 14),
+                  decoration: BoxDecoration(
+                    color: current ? _brand : const Color(0xFFB9B1C4),
+                    shape: BoxShape.circle,
+                  ),
                 ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 5,
-                    runSpacing: 4,
-                    children: [
-                      _TreePill(_statusLabel(node.status)),
-                      if (current) const _TreePill('当前'),
-                      if (node.isSideBranch) const _TreePill('支线'),
-                      if (node.backtrackTargetId != null)
-                        const _TreePill('已回溯'),
-                    ],
+                if (!isLast)
+                  Expanded(
+                    child: Container(width: 2, color: const Color(0xFFDED7E8)),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    node.question,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: InkWell(
+              key: ValueKey('remote-tree-node-${node.id}'),
+              borderRadius: BorderRadius.circular(11),
+              onTap: () => onNodeTap(node.id),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 7),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: selected || current
+                      ? const Color(0xFFF4EEFF)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(11),
+                  border: selected || current
+                      ? Border.all(color: _brand)
+                      : null,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        node.question,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: current
+                              ? FontWeight.w900
+                              : FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (current) const _TreePill('当前'),
+                    if (node.isSideBranch) const _TreePill('支线'),
+                  ],
+                ),
               ),
             ),
           ),
-          if (children.isNotEmpty)
-            Container(
-              margin: const EdgeInsets.only(left: 10, top: 7),
-              padding: const EdgeInsets.only(left: 8),
-              decoration: const BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: Color(0xFFD8D0E5), width: 2),
-                ),
-              ),
-              child: Column(
-                children: children
-                    .map((child) => _node(child, depth + 1))
-                    .toList(growable: false),
-              ),
-            ),
         ],
+      ),
+    );
+  }
+
+  Widget _fullOutlineNode(RemoteLearningNode node) {
+    final selected = inspectedNodeId == node.id;
+    final current = snapshot.currentNodeId == node.id;
+    // 完整树按真实深度表达层级，但窄屏仅保留轻量缩进；真实层级继续由标签呈现，
+    // 避免长问题链把卡片正文压到不可读。
+    final visualDepth = node.depth.clamp(0, 4);
+    return Padding(
+      padding: EdgeInsets.only(left: visualDepth * 4.0, bottom: 8),
+      child: InkWell(
+        key: ValueKey('remote-tree-node-${node.id}'),
+        borderRadius: BorderRadius.circular(13),
+        onTap: () => onNodeTap(node.id),
+        child: Container(
+          padding: const EdgeInsets.all(11),
+          decoration: BoxDecoration(
+            color: _treeColor(node.status, selected),
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: selected || current ? _brand : const Color(0xFFDDD7E6),
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 5,
+                runSpacing: 4,
+                children: [
+                  _TreePill('第 ${node.depth + 1} 层'),
+                  _TreePill(_statusLabel(node.status)),
+                  if (current) const _TreePill('当前'),
+                  if (node.isSideBranch) const _TreePill('支线'),
+                  if (node.backtrackTargetId != null) const _TreePill('已回溯'),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                node.question,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

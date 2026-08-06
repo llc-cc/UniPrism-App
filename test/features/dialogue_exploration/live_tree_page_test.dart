@@ -38,12 +38,13 @@ void main() {
         ),
         findsOneWidget,
       );
+      expect(find.text('预计 10 分钟'), findsNWidgets(3));
       expect(find.text('进入这个知识点'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'desktop workbench keeps session status, both trees and statistics visible',
+    'desktop workbench keeps session status, compact path and statistics visible',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1;
@@ -65,7 +66,7 @@ void main() {
       );
       expect(
         find.byKey(const ValueKey('exploration-session-timer')),
-        findsOneWidget,
+        findsNothing,
       );
       expect(
         find.byKey(const ValueKey('current-exploration-card')),
@@ -76,22 +77,92 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('chapter-knowledge-tree')),
+        find.byKey(const ValueKey('session-sidebar-current-path')),
         findsOneWidget,
       );
       expect(
         find.byKey(const ValueKey('knowledge-overview-card')),
-        findsOneWidget,
+        findsNothing,
       );
+      expect(
+        find.byKey(const ValueKey('chapter-knowledge-tree')),
+        findsNothing,
+      );
+      expect(find.text('查看完整思维树'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('exploration-stats-card')),
         findsOneWidget,
       );
       expect(find.text('导出思维树'), findsOneWidget);
       expect(find.text('学习素材'), findsNothing);
-      expect(find.text('相反数与方向翻转'), findsOneWidget);
+      expect(find.text('知识结构图（章节地图）'), findsNothing);
     },
   );
+
+  testWidgets('long session sidebar only keeps the latest seven path nodes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _UiFakeApi(sessionSnapshot: _longPathSnapshot());
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadChapter('negative-number-operations');
+    await controller.startFromChapterNode('negative-times-negative-concept');
+
+    await tester.pumpWidget(
+      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('已折叠 5 个较早节点'), findsOneWidget);
+    expect(find.byKey(const ValueKey('remote-tree-node-node-0')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('remote-tree-node-node-5')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('remote-tree-node-node-11')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('full thinking tree remains readable for a long path on mobile', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 780);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _UiFakeApi(sessionSnapshot: _longPathSnapshot());
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadChapter('negative-number-operations');
+    await controller.startFromChapterNode('negative-times-negative-concept');
+
+    await tester.pumpWidget(
+      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('完整思维树'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('remote-tree-node-node-0')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('remote-tree-node-node-11')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .getSize(find.byKey(const ValueKey('remote-tree-node-node-11')))
+          .width,
+      greaterThanOrEqualTo(220),
+    );
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('desktop keeps the conversation and live tree visible together', (
     tester,
@@ -164,7 +235,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('mobile-current-path')), findsOneWidget);
-      await tester.tap(find.text('完整知识树'));
+      await tester.tap(find.text('完整思维树'));
       await tester.pumpAndSettle();
       expect(find.text('我的思维树'), findsOneWidget);
     },
@@ -172,6 +243,9 @@ void main() {
 }
 
 final class _UiFakeApi implements RemoteExplorationGateway {
+  _UiFakeApi({this._sessionSnapshot});
+
+  final RemoteLearningSessionSnapshot? _sessionSnapshot;
   int turnCalls = 0;
   int branchCalls = 0;
   int backtrackCalls = 0;
@@ -261,51 +335,53 @@ final class _UiFakeApi implements RemoteExplorationGateway {
     ],
   );
 
-  RemoteLearningSessionSnapshot get snapshot => RemoteLearningSessionSnapshot(
-    session: const RemoteLearningSessionInfo(
-      id: 'learning-1',
-      exploreSessionId: 'explore-1',
-      topic: '二次函数探索',
-      scenarioId: 'teaching',
-      atomId: 'quadratic-function',
-      status: 'ACTIVE',
-      revision: 1,
-      nodeCount: 1,
-      startedAt: '2026-08-06T01:00:00.000Z',
-      expiresAt: '2026-08-06T01:10:00.000Z',
-      completedAt: null,
-    ),
-    currentNodeId: 'node-1',
-    activeStrategy: 'QUESTION_CHAIN',
-    nodes: const [
-      RemoteLearningNode(
-        id: 'node-1',
-        parentId: null,
-        status: 'VALIDATED',
-        question: '二次函数的顶点为什么在这里？',
-        answer: '顶点来自完全平方结构。',
-        followUpQuestion: '这一步成立需要什么条件？',
-        strategy: 'QUESTION_CHAIN',
-        depth: 0,
-        isSideBranch: false,
-        backtrackTargetId: null,
-        confidence: .8,
-        createdAt: '2026-08-06T01:00:00.000Z',
-      ),
-    ],
-    materials: const [
-      RemoteLearningMaterial(
-        id: 'material-1',
-        nodeId: 'node-1',
-        materialId: 'quadratic-parabola-widget',
-        type: 'INTERACTIVE',
-        title: '拖动参数观察抛物线',
-        componentKey: 'parabola_widget',
-        payload: {},
-      ),
-    ],
-    summary: null,
-  );
+  RemoteLearningSessionSnapshot get snapshot =>
+      _sessionSnapshot ??
+      RemoteLearningSessionSnapshot(
+        session: const RemoteLearningSessionInfo(
+          id: 'learning-1',
+          exploreSessionId: 'explore-1',
+          topic: '二次函数探索',
+          scenarioId: 'teaching',
+          atomId: 'quadratic-function',
+          status: 'ACTIVE',
+          revision: 1,
+          nodeCount: 1,
+          startedAt: '2026-08-06T01:00:00.000Z',
+          expiresAt: '2026-08-06T01:10:00.000Z',
+          completedAt: null,
+        ),
+        currentNodeId: 'node-1',
+        activeStrategy: 'QUESTION_CHAIN',
+        nodes: const [
+          RemoteLearningNode(
+            id: 'node-1',
+            parentId: null,
+            status: 'VALIDATED',
+            question: '二次函数的顶点为什么在这里？',
+            answer: '顶点来自完全平方结构。',
+            followUpQuestion: '这一步成立需要什么条件？',
+            strategy: 'QUESTION_CHAIN',
+            depth: 0,
+            isSideBranch: false,
+            backtrackTargetId: null,
+            confidence: .8,
+            createdAt: '2026-08-06T01:00:00.000Z',
+          ),
+        ],
+        materials: const [
+          RemoteLearningMaterial(
+            id: 'material-1',
+            nodeId: 'node-1',
+            materialId: 'quadratic-parabola-widget',
+            type: 'INTERACTIVE',
+            title: '拖动参数观察抛物线',
+            componentKey: 'parabola_widget',
+            payload: {},
+          ),
+        ],
+        summary: null,
+      );
 
   @override
   Future<LearningChapterOverviewSnapshot> getChapterOverview(
@@ -375,4 +451,44 @@ final class _UiFakeApi implements RemoteExplorationGateway {
 
   @override
   Future<String> exportTree(String sessionId) async => '{"schemaVersion":1}';
+}
+
+RemoteLearningSessionSnapshot _longPathSnapshot() {
+  final nodes = List.generate(
+    12,
+    (index) => RemoteLearningNode(
+      id: 'node-$index',
+      parentId: index == 0 ? null : 'node-${index - 1}',
+      status: 'VALIDATED',
+      question: '第 ${index + 1} 个探索问题',
+      answer: '第 ${index + 1} 个回答',
+      followUpQuestion: '下一步可以追问：第 ${index + 2} 个问题是什么？',
+      strategy: 'QUESTION_CHAIN',
+      depth: index,
+      isSideBranch: false,
+      backtrackTargetId: null,
+      confidence: .8,
+      createdAt: '2026-08-06T01:${index.toString().padLeft(2, '0')}:00.000Z',
+    ),
+  );
+  return RemoteLearningSessionSnapshot(
+    session: const RemoteLearningSessionInfo(
+      id: 'learning-long',
+      exploreSessionId: 'explore-1',
+      topic: '负数乘法探索',
+      scenarioId: 'teaching',
+      atomId: 'negative-times-negative',
+      status: 'ACTIVE',
+      revision: 12,
+      nodeCount: 12,
+      startedAt: '2026-08-06T01:00:00.000Z',
+      expiresAt: '2026-08-06T01:10:00.000Z',
+      completedAt: null,
+    ),
+    currentNodeId: 'node-11',
+    activeStrategy: 'QUESTION_CHAIN',
+    nodes: nodes,
+    materials: const [],
+    summary: null,
+  );
 }
