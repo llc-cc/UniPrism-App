@@ -465,8 +465,8 @@ final class _RemoteLearningSessionPageState
         actions: [
           TextButton.icon(
             onPressed: _exportTree,
-            icon: const Icon(Icons.inventory_2_outlined, size: 18),
-            label: const Text('学习素材'),
+            icon: const Icon(Icons.download_rounded, size: 18),
+            label: const Text('导出思维树'),
           ),
           const SizedBox(width: 6),
           FilledButton.icon(

@@ -87,6 +87,8 @@ void main() {
         find.byKey(const ValueKey('exploration-stats-card')),
         findsOneWidget,
       );
+      expect(find.text('导出思维树'), findsOneWidget);
+      expect(find.text('学习素材'), findsNothing);
       expect(find.text('相反数与方向翻转'), findsOneWidget);
     },
   );
