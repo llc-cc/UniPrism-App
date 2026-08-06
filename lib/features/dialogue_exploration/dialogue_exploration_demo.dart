@@ -11,7 +11,7 @@ void main() {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF6B23FF)),
       ),
-      home: const ExplorationLabPage(),
+      home: const RemoteExplorationLabPage(),
     ),
   );
 }
