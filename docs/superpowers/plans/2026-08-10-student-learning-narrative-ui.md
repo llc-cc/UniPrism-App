@@ -156,3 +156,52 @@ Expected: PASS；若存在无关历史失败，记录具体测试与本次相关
 - [ ] **Step 4: 在 1280px 与 390px Widget 尺寸复核关键入口**
 
 确认 `open-concept-map`、`guided-asset-complete-button`、`guided-start-micro-check-button` 与 `guided-start-reflection-button` 仍可见或可滚动到达。
+
+### Task 5: 章节总览结构收敛
+
+**Files:**
+- Modify: `lib/features/dialogue_exploration/presentation/chapter_workspace_components.dart`
+- Modify: `test/features/dialogue_exploration/live_tree_page_test.dart`
+
+**Interfaces:**
+- Consumes: `LearningChapterOverviewSnapshot`、当前选中节点、两个既有问题控制器及原有创建会话回调。
+- Produces: `student-mission-hero`、`chapter-learning-journey-strip`、`chapter-question-switcher`、`direct-ai-teacher-entry` 四个可测试的学生界面边界。
+
+- [ ] **Step 1: 写结构失败测试**
+
+```dart
+expect(find.byKey(const ValueKey('student-mission-hero')), findsOneWidget);
+expect(find.byKey(const ValueKey('chapter-learning-journey-strip')), findsOneWidget);
+expect(find.byKey(const ValueKey('chapter-question-switcher')), findsOneWidget);
+expect(find.byKey(const ValueKey('direct-ai-teacher-entry')), findsOneWidget);
+expect(find.text('从一个问题开始探索'), findsNothing);
+expect(find.text('预计 10 分钟'), findsNothing);
+```
+
+- [ ] **Step 2: 运行单文件测试并确认旧骨架导致失败**
+
+Run: `flutter test test/features/dialogue_exploration/live_tree_page_test.dart`
+
+Expected: FAIL，缺少新的任务卡、旅程条与折叠入口，并仍存在重复预览内容。
+
+- [ ] **Step 3: 实现单一主任务结构**
+
+将章节标题、当前节点问题、可选猜想输入与开始动作合并为 `_StudentMissionHero`；按钮调用 `onStartNode(selected.id, questionController.text)`，空白问题继续由既有控制器规则归一化。将阶段卡改成 `_ChapterLearningJourneyStrip`，不改变阶段数据来源。
+
+- [ ] **Step 4: 折叠问题切换与独立 AI 入口**
+
+用 `_ChapterQuestionSwitcher` 包裹 `ChapterKnowledgeTree`，用 `_DirectAiTeacherEntry` 的折叠状态隐藏独立问题表单；保留 `chapter-node-*`、`direct-ai-teacher-question` 和 `direct-ai-teacher-start` 的原回调边界。
+
+- [ ] **Step 5: 运行单文件测试确认通过**
+
+Run: `flutter test test/features/dialogue_exploration/live_tree_page_test.dart`
+
+Expected: PASS，包括主任务创建会话、展开后切换节点与独立提问三条真实交互。
+
+- [ ] **Step 6: 全量验证**
+
+Run: `dart analyze lib/main.dart test`
+
+Run: `flutter test`
+
+Expected: 无本次新增错误，完整测试通过。
