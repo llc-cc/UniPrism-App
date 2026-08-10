@@ -205,3 +205,45 @@ Run: `dart analyze lib/main.dart test`
 Run: `flutter test`
 
 Expected: 无本次新增错误，完整测试通过。
+
+### Task 6: 修复展开换题后的操作死角
+
+**Files:**
+- Modify: `lib/features/dialogue_exploration/presentation/chapter_workspace_components.dart`
+- Modify: `test/features/dialogue_exploration/live_tree_page_test.dart`
+
+**Interfaces:**
+- Consumes: `_ChapterQuestionSwitcher` 的当前节点、`busy` 状态与 `onStartNode(String nodeId, String? question)` 回调。
+- Produces: 仅在换题列表展开时可见的 `chapter-enter-switched-node` 操作。
+
+- [ ] **Step 1: 写失败的真实交互测试**
+
+```dart
+await tester.tap(find.byKey(const ValueKey('chapter-question-switcher')));
+await tester.pumpAndSettle();
+await tester.tap(find.byKey(const ValueKey('chapter-node-opposite-number')));
+await tester.pumpAndSettle();
+await tester.tap(find.byKey(const ValueKey('chapter-enter-switched-node')));
+await tester.pumpAndSettle();
+expect(api.lastCreateQuestion, '连续两次取相反数会怎样？');
+```
+
+- [ ] **Step 2: 运行单文件测试确认入口缺失**
+
+Run: `flutter test test/features/dialogue_exploration/live_tree_page_test.dart --plain-name "chapter question switcher keeps a nearby start action"`
+
+Expected: FAIL，提示找不到 `chapter-enter-switched-node`。
+
+- [ ] **Step 3: 实现最小就近入口**
+
+为 `_ChapterQuestionSwitcher` 增加 `busy` 与 `onStart` 参数，在 `ChapterKnowledgeTree` 下方渲染一个右对齐按钮；按钮只调用 `onStart(selected.id)`，不复制控制器或接口逻辑。
+
+- [ ] **Step 4: 验证单文件与全量测试**
+
+Run: `flutter test test/features/dialogue_exploration/live_tree_page_test.dart`
+
+Run: `dart analyze lib/main.dart test`
+
+Run: `flutter test`
+
+Expected: 展开列表的入口交互通过，静态分析无本次新增错误，完整测试通过。
