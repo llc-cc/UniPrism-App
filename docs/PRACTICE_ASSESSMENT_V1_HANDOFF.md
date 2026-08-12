@@ -86,7 +86,7 @@ dart analyze lib/features/practice_assessment test/features/practice_assessment
 flutter test test/features/practice_assessment test/widget_test.dart test/developer_tools_web_test.dart
 ```
 
-本次已验证：练习模块静态分析无问题；练习模块 31 项测试通过；练习模块、开发者入口和 Widget 相关回归共 63 项通过。
+本次已验证：练习模块静态分析无问题；练习模块 38 项测试通过；Flutter 全仓 218 项测试通过。
 
 ## 小模型怎么训练
 
