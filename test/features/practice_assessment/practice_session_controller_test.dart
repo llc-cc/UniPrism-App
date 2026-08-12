@@ -143,6 +143,26 @@ void main() {
 
     expect(remote.calls.take(3), ['saveDraft', 'recordEvents', 'submitAttempt']);
   });
+
+  test('提交响应丢失后重试沿用已保存草稿和同一服务端版本', () async {
+    final remote = _RecordingRepository(
+      paper: await repository.loadPaper(),
+      failNextAttempt: true,
+    );
+    final remoteController = PracticeSessionController(repository: remote);
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+    remoteController.updateAnswer('B');
+
+    await remoteController.submitCurrent();
+    expect(remoteController.state.status, PracticeSessionStatus.failure);
+    expect(remote.savedDraftVersions, [1]);
+
+    await remoteController.retrySubmission();
+
+    expect(remote.savedDraftVersions, [1, 1]);
+    expect(remote.calls.where((call) => call == 'saveDraft'), hasLength(1));
+  });
 }
 
 final class _RecordingRepository implements PracticeRepository {
@@ -150,12 +170,15 @@ final class _RecordingRepository implements PracticeRepository {
     required this.paper,
     this.currentQuestionNumber = 1,
     this.drafts = const {},
+    this.failNextAttempt = false,
   });
 
   final PracticePaper paper;
   final int currentQuestionNumber;
   final Map<String, PracticeDraft> drafts;
+  bool failNextAttempt;
   final List<String> calls = [];
+  final List<int> savedDraftVersions = [];
 
   @override
   PracticeConnectionMode get connectionMode => PracticeConnectionMode.remote;
@@ -201,6 +224,11 @@ final class _RecordingRepository implements PracticeRepository {
     required PracticeAttemptFacts facts,
   }) async {
     calls.add('submitAttempt');
+    savedDraftVersions.add(draft.serverVersion);
+    if (failNextAttempt) {
+      failNextAttempt = false;
+      throw StateError('response lost');
+    }
     return const RuleBasedAttemptAssessor().assess(
       question: question,
       draft: draft,

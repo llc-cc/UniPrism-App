@@ -87,6 +87,7 @@ final class PracticeSessionController extends ChangeNotifier {
   PracticeSessionState _state = PracticeSessionState.idle();
   final Map<String, int> _submissionCounts = {};
   final Map<String, bool> _editedAfterResult = {};
+  final Set<String> _dirtyQuestionIds = {};
   DateTime? _openedAt;
   PracticeEventRecorder? _eventRecorder;
   bool _isDisposed = false;
@@ -115,6 +116,7 @@ final class PracticeSessionController extends ChangeNotifier {
       final snapshot = await repository.loadOrCreateSession();
       if (_isDisposed || generation != _operationGeneration) return;
       _eventRecorder?.dispose();
+      _dirtyQuestionIds.clear();
       _eventRecorder = PracticeEventRecorder(
         sendBatch: (events) => repository.recordEvents(
           sessionId: snapshot.sessionId,
@@ -225,13 +227,16 @@ final class PracticeSessionController extends ChangeNotifier {
     _emit(_copy(status: PracticeSessionStatus.submitting, errorMessage: null));
     try {
       // 提交必须基于服务端确认的最新草稿；过程事件先刷新，避免评分读取到落后的证据。
-      final savedDraft = await repository.saveDraft(
-        sessionId: sessionId,
-        question: question,
-        draft: draft,
-        currentQuestionNumber: question.number,
-      );
+      final savedDraft = _dirtyQuestionIds.contains(question.id)
+          ? await repository.saveDraft(
+              sessionId: sessionId,
+              question: question,
+              draft: draft,
+              currentQuestionNumber: question.number,
+            )
+          : draft;
       if (_isDisposed || generation != _operationGeneration) return;
+      _dirtyQuestionIds.remove(question.id);
       final drafts = Map<String, PracticeDraft>.of(_state.drafts)
         ..[question.id] = savedDraft;
       _emit(_copy(drafts: drafts));
@@ -304,6 +309,7 @@ final class PracticeSessionController extends ChangeNotifier {
     }
     final drafts = Map<String, PracticeDraft>.of(_state.drafts)
       ..[question.id] = next;
+    _dirtyQuestionIds.add(question.id);
     _emit(_copy(drafts: drafts, errorMessage: null));
   }
 
