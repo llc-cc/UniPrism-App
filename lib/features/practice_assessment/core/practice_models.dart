@@ -113,7 +113,7 @@ final class PracticeQuestion {
     required Map<String, String> options,
     required List<String> knowledgePoints,
     required this.difficulty,
-    required this.rubric,
+    this.rubric,
   }) : options = Map.unmodifiable(options),
        knowledgePoints = List.unmodifiable(knowledgePoints) {
     if (id.trim().isEmpty || number <= 0 || prompt.trim().isEmpty) {
@@ -134,7 +134,8 @@ final class PracticeQuestion {
   final Map<String, String> options;
   final List<String> knowledgePoints;
   final QuestionDifficultyProfile difficulty;
-  final QuestionRubric rubric;
+  /// 远程学生端不会收到服务端答案与 rubric；仅 Mock 规则评分持有此字段。
+  final QuestionRubric? rubric;
 }
 
 /// 一套版本化练习卷；来源授权状态必须在 UI 中如实展示。
@@ -169,23 +170,82 @@ final class PracticeDraft {
     this.answer = '',
     this.reasoning = '',
     this.revisionCount = 0,
+    this.serverVersion = 0,
   });
 
   final String answer;
   final String reasoning;
   final int revisionCount;
+  final int serverVersion;
 
   PracticeDraft copyWith({
     String? answer,
     String? reasoning,
     int? revisionCount,
+    int? serverVersion,
   }) {
     return PracticeDraft(
       answer: answer ?? this.answer,
       reasoning: reasoning ?? this.reasoning,
       revisionCount: revisionCount ?? this.revisionCount,
+      serverVersion: serverVersion ?? this.serverVersion,
     );
   }
+}
+
+enum PracticeConnectionMode { mock, remote }
+
+enum PracticeRemoteSessionStatus { active, completed, expired }
+
+/// 后端会话快照包含可恢复草稿和学生可见结果，不包含标准答案与 rubric。
+final class PracticeSessionSnapshot {
+  PracticeSessionSnapshot({
+    required this.sessionId,
+    required this.status,
+    required this.revision,
+    required this.currentQuestionNumber,
+    required this.paper,
+    required Map<String, PracticeDraft> drafts,
+    required Map<String, AttemptAssessment> results,
+    required this.assessorMode,
+  }) : drafts = Map.unmodifiable(drafts),
+       results = Map.unmodifiable(results);
+
+  final String sessionId;
+  final PracticeRemoteSessionStatus status;
+  final int revision;
+  final int currentQuestionNumber;
+  final PracticePaper paper;
+  final Map<String, PracticeDraft> drafts;
+  final Map<String, AttemptAssessment> results;
+  final String assessorMode;
+}
+
+enum PracticeEventType {
+  questionViewed,
+  answerStarted,
+  answerChanged,
+  reasoningStarted,
+  reasoningChanged,
+  hintRequested,
+  questionRevisited,
+  attemptSubmitted,
+}
+
+final class PracticeEvent {
+  PracticeEvent({
+    required this.clientEventId,
+    required this.questionId,
+    required this.eventType,
+    required Map<String, Object?> payload,
+    required this.clientOccurredAt,
+  }) : payload = Map.unmodifiable(payload);
+
+  final String clientEventId;
+  final String questionId;
+  final PracticeEventType eventType;
+  final Map<String, Object?> payload;
+  final DateTime clientOccurredAt;
 }
 
 /// 一次提交时由服务端或会话控制器派生的确定事实。

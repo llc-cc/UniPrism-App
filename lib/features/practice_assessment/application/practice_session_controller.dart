@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../adapters/practice_event_recorder.dart';
 import '../core/practice_models.dart';
 import '../core/practice_ports.dart';
 
@@ -22,6 +23,9 @@ final class PracticeSessionState {
     required Map<String, PracticeDraft> drafts,
     required Map<String, AttemptAssessment> results,
     required this.errorMessage,
+    required this.sessionId,
+    required this.connectionMode,
+    required this.assessorMode,
   }) : drafts = Map.unmodifiable(drafts),
        results = Map.unmodifiable(results);
 
@@ -32,6 +36,9 @@ final class PracticeSessionState {
     drafts: const {},
     results: const {},
     errorMessage: null,
+    sessionId: null,
+    connectionMode: null,
+    assessorMode: null,
   );
 
   final PracticeSessionStatus status;
@@ -40,6 +47,9 @@ final class PracticeSessionState {
   final Map<String, PracticeDraft> drafts;
   final Map<String, AttemptAssessment> results;
   final String? errorMessage;
+  final String? sessionId;
+  final PracticeConnectionMode? connectionMode;
+  final String? assessorMode;
 
   PracticeQuestion? get currentQuestion {
     final items = paper?.questions;
@@ -78,6 +88,7 @@ final class PracticeSessionController extends ChangeNotifier {
   final Map<String, int> _submissionCounts = {};
   final Map<String, bool> _editedAfterResult = {};
   DateTime? _openedAt;
+  PracticeEventRecorder? _eventRecorder;
   bool _isDisposed = false;
   int _operationGeneration = 0;
 
@@ -95,21 +106,44 @@ final class PracticeSessionController extends ChangeNotifier {
         drafts: _state.drafts,
         results: _state.results,
         errorMessage: null,
+        sessionId: _state.sessionId,
+        connectionMode: _state.connectionMode,
+        assessorMode: _state.assessorMode,
       ),
     );
     try {
-      final paper = await repository.loadPaper();
+      final snapshot = await repository.loadOrCreateSession();
       if (_isDisposed || generation != _operationGeneration) return;
+      _eventRecorder?.dispose();
+      _eventRecorder = PracticeEventRecorder(
+        sendBatch: (events) => repository.recordEvents(
+          sessionId: snapshot.sessionId,
+          events: events,
+        ),
+        // Mock 不需要后台刷新；避免演示页与 Widget 测试持有无意义定时器。
+        scheduleFlush:
+            repository.connectionMode == PracticeConnectionMode.remote,
+      );
+      final index = (snapshot.currentQuestionNumber - 1).clamp(
+        0,
+        snapshot.paper.questions.length - 1,
+      ).toInt();
       _emit(
         PracticeSessionState(
-          status: PracticeSessionStatus.ready,
-          paper: paper,
-          currentIndex: 0,
-          drafts: _state.drafts,
-          results: _state.results,
+          status: snapshot.status == PracticeRemoteSessionStatus.completed
+              ? PracticeSessionStatus.completed
+              : PracticeSessionStatus.ready,
+          paper: snapshot.paper,
+          currentIndex: index,
+          drafts: snapshot.drafts,
+          results: snapshot.results,
           errorMessage: null,
+          sessionId: snapshot.sessionId,
+          connectionMode: repository.connectionMode,
+          assessorMode: snapshot.assessorMode,
         ),
       );
+      _recordCurrent(PracticeEventType.questionViewed);
     } catch (error) {
       if (_isDisposed || generation != _operationGeneration) return;
       _emit(
@@ -120,10 +154,18 @@ final class PracticeSessionController extends ChangeNotifier {
 
   void updateAnswer(String answer) {
     _updateDraft((draft) => draft.copyWith(answer: answer));
+    _recordCurrent(
+      PracticeEventType.answerChanged,
+      payload: {'lengthBand': _lengthBand(answer.length)},
+    );
   }
 
   void updateReasoning(String reasoning) {
     _updateDraft((draft) => draft.copyWith(reasoning: reasoning));
+    _recordCurrent(
+      PracticeEventType.reasoningChanged,
+      payload: {'lengthBand': _lengthBand(reasoning.length)},
+    );
   }
 
   void toggleOption(String option) {
@@ -156,6 +198,7 @@ final class PracticeSessionController extends ChangeNotifier {
       return;
     }
     _emit(_copy(currentIndex: index, errorMessage: null));
+    _recordCurrent(PracticeEventType.questionViewed);
   }
 
   void previousQuestion() => selectQuestion(_state.currentIndex - 1);
@@ -166,7 +209,8 @@ final class PracticeSessionController extends ChangeNotifier {
   Future<void> submitCurrent() async {
     if (_state.status == PracticeSessionStatus.submitting) return;
     final question = _state.currentQuestion;
-    if (question == null) return;
+    final sessionId = _state.sessionId;
+    if (question == null || sessionId == null) return;
     final draft = _state.currentDraft;
     if (draft.answer.trim().isEmpty) {
       _emit(
@@ -180,9 +224,23 @@ final class PracticeSessionController extends ChangeNotifier {
     _submissionCounts[question.id] = nextSubmissionCount;
     _emit(_copy(status: PracticeSessionStatus.submitting, errorMessage: null));
     try {
-      final assessment = await repository.submitAttempt(
+      // 提交必须基于服务端确认的最新草稿；过程事件先刷新，避免评分读取到落后的证据。
+      final savedDraft = await repository.saveDraft(
+        sessionId: sessionId,
         question: question,
         draft: draft,
+        currentQuestionNumber: question.number,
+      );
+      if (_isDisposed || generation != _operationGeneration) return;
+      final drafts = Map<String, PracticeDraft>.of(_state.drafts)
+        ..[question.id] = savedDraft;
+      _emit(_copy(drafts: drafts));
+      _recordCurrent(PracticeEventType.attemptSubmitted);
+      await _eventRecorder?.flush();
+      final assessment = await repository.submitAttempt(
+        sessionId: sessionId,
+        question: question,
+        draft: savedDraft,
         facts: PracticeAttemptFacts(
           hintCount: 0,
           submissionCount: nextSubmissionCount,
@@ -214,10 +272,15 @@ final class PracticeSessionController extends ChangeNotifier {
 
   Future<void> retrySubmission() => submitCurrent();
 
-  void complete() {
+  Future<void> complete() async {
     final paper = _state.paper;
     if (paper == null || _state.results.length != paper.questions.length) {
       throw StateError('完成整卷前必须提交全部题目');
+    }
+    final sessionId = _state.sessionId;
+    if (sessionId != null) {
+      await _eventRecorder?.flush();
+      await repository.completeSession(sessionId);
     }
     _emit(_copy(status: PracticeSessionStatus.completed, errorMessage: null));
   }
@@ -251,6 +314,9 @@ final class PracticeSessionController extends ChangeNotifier {
     Map<String, PracticeDraft>? drafts,
     Map<String, AttemptAssessment>? results,
     String? errorMessage,
+    String? sessionId,
+    PracticeConnectionMode? connectionMode,
+    String? assessorMode,
   }) {
     return PracticeSessionState(
       status: status ?? _state.status,
@@ -259,6 +325,9 @@ final class PracticeSessionController extends ChangeNotifier {
       drafts: drafts ?? _state.drafts,
       results: results ?? _state.results,
       errorMessage: errorMessage,
+      sessionId: sessionId ?? _state.sessionId,
+      connectionMode: connectionMode ?? _state.connectionMode,
+      assessorMode: assessorMode ?? _state.assessorMode,
     );
   }
 
@@ -268,10 +337,32 @@ final class PracticeSessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _recordCurrent(
+    PracticeEventType type, {
+    Map<String, Object?> payload = const {},
+  }) {
+    final questionId = _state.currentQuestion?.id;
+    if (questionId == null) return;
+    _eventRecorder?.record(
+      questionId: questionId,
+      eventType: type,
+      payload: payload,
+    );
+  }
+
+  String _lengthBand(int length) {
+    if (length == 0) return '0';
+    if (length <= 20) return '1-20';
+    if (length <= 100) return '21-100';
+    if (length <= 500) return '101-500';
+    return '501+';
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
     _operationGeneration += 1;
+    _eventRecorder?.dispose();
     super.dispose();
   }
 }

@@ -1,4 +1,9 @@
 export 'adapters/mock_gaokao_math_repository.dart';
+export 'adapters/practice_api_client.dart';
+export 'adapters/practice_dto_mapper.dart';
+export 'adapters/practice_event_recorder.dart';
+export 'adapters/practice_participant_token_store.dart';
+export 'adapters/remote_practice_repository.dart';
 export 'application/practice_session_controller.dart';
 export 'core/ability_profile_aggregator.dart';
 export 'core/practice_models.dart';

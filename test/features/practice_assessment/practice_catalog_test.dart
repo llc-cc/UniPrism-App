@@ -38,7 +38,7 @@ void main() {
     expect(
       paper.questions.every(
         (item) =>
-            item.rubric.steps.isNotEmpty && item.options.isNotEmpty ||
+            item.rubric!.steps.isNotEmpty && item.options.isNotEmpty ||
             item.type == PracticeQuestionType.fillBlank ||
             item.type == PracticeQuestionType.solution,
       ),

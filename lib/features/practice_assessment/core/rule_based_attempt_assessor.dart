@@ -11,8 +11,12 @@ final class RuleBasedAttemptAssessor implements AttemptAssessor {
     required PracticeDraft draft,
     required PracticeAttemptFacts facts,
   }) {
+    final rubric = question.rubric;
+    if (rubric == null) {
+      throw StateError('远程脱敏题目不能在客户端执行规则评分');
+    }
     final normalizedAnswer = _normalizeAnswer(question.type, draft.answer);
-    final expectedAnswers = question.rubric.expectedAnswers
+    final expectedAnswers = rubric.expectedAnswers
         .map((item) => _normalizeAnswer(question.type, item))
         .toSet();
     final isAnswerCorrect = expectedAnswers.contains(normalizedAnswer);
@@ -54,7 +58,7 @@ final class RuleBasedAttemptAssessor implements AttemptAssessor {
       matchedStepIds: matchedSteps.map((item) => item.id).toList(),
       observations: observations,
       assessorVersion: 'rule-v1',
-      rubricVersion: question.rubric.version,
+      rubricVersion: rubric.version,
     );
   }
 
@@ -118,7 +122,8 @@ final class RuleBasedAttemptAssessor implements AttemptAssessor {
       );
     }
 
-    if (!question.rubric.observableDimensions.contains(dimension)) {
+    final rubric = question.rubric;
+    if (rubric == null || !rubric.observableDimensions.contains(dimension)) {
       return _missing(dimension, AbilityEvidenceStatus.notApplicable);
     }
 
@@ -198,14 +203,16 @@ final class RuleBasedAttemptAssessor implements AttemptAssessor {
   }
 
   List<String> _firstErrorTag(PracticeQuestion question) =>
-      question.rubric.errorTags.isEmpty
+      question.rubric == null || question.rubric!.errorTags.isEmpty
       ? const []
-      : <String>[question.rubric.errorTags.first];
+      : <String>[question.rubric!.errorTags.first];
 
   List<RubricStep> _matchedSteps(PracticeQuestion question, String reasoning) {
     final normalized = _normalizeFreeText(reasoning);
     if (normalized.isEmpty) return const [];
-    return question.rubric.steps
+    final rubric = question.rubric;
+    if (rubric == null) return const [];
+    return rubric.steps
         .where((step) {
           return step.keywords.any(
             (keyword) => normalized.contains(_normalizeFreeText(keyword)),

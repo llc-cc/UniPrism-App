@@ -100,13 +100,116 @@ void main() {
     final questions = controller.state.paper!.questions;
     for (var index = 0; index < questions.length; index++) {
       controller.selectQuestion(index);
-      controller.updateAnswer(questions[index].rubric.expectedAnswers.first);
+      controller.updateAnswer(questions[index].rubric!.expectedAnswers.first);
       await controller.submitCurrent();
     }
 
-    controller.complete();
+    await controller.complete();
     expect(controller.state.status, PracticeSessionStatus.completed);
   });
+
+  test('远程加载恢复服务端当前题号和草稿版本', () async {
+    final paper = await repository.loadPaper();
+    final remote = _RecordingRepository(
+      paper: paper,
+      currentQuestionNumber: 5,
+      drafts: {
+        paper.questions[4].id: const PracticeDraft(
+          answer: 'B',
+          reasoning: '标准方程',
+          serverVersion: 3,
+        ),
+      },
+    );
+    final remoteController = PracticeSessionController(repository: remote);
+    addTearDown(remoteController.dispose);
+
+    await remoteController.load();
+
+    expect(remoteController.state.sessionId, 'remote-session');
+    expect(remoteController.state.currentIndex, 4);
+    expect(remoteController.state.currentDraft.answer, 'B');
+    expect(remoteController.state.currentDraft.serverVersion, 3);
+  });
+
+  test('提交前依次保存最新草稿、刷新事件再创建正式提交', () async {
+    final remote = _RecordingRepository(paper: await repository.loadPaper());
+    final remoteController = PracticeSessionController(repository: remote);
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+    remoteController.updateAnswer('B');
+
+    await remoteController.submitCurrent();
+
+    expect(remote.calls.take(3), ['saveDraft', 'recordEvents', 'submitAttempt']);
+  });
+}
+
+final class _RecordingRepository implements PracticeRepository {
+  _RecordingRepository({
+    required this.paper,
+    this.currentQuestionNumber = 1,
+    this.drafts = const {},
+  });
+
+  final PracticePaper paper;
+  final int currentQuestionNumber;
+  final Map<String, PracticeDraft> drafts;
+  final List<String> calls = [];
+
+  @override
+  PracticeConnectionMode get connectionMode => PracticeConnectionMode.remote;
+
+  @override
+  Future<PracticeSessionSnapshot> loadOrCreateSession() async =>
+      PracticeSessionSnapshot(
+        sessionId: 'remote-session',
+        status: PracticeRemoteSessionStatus.active,
+        revision: 1,
+        currentQuestionNumber: currentQuestionNumber,
+        paper: paper,
+        drafts: drafts,
+        results: const {},
+        assessorMode: 'RULES',
+      );
+
+  @override
+  Future<PracticePaper> loadPaper() async => paper;
+
+  @override
+  Future<PracticeDraft> saveDraft({
+    required String sessionId,
+    required PracticeQuestion question,
+    required PracticeDraft draft,
+    required int currentQuestionNumber,
+  }) async {
+    calls.add('saveDraft');
+    return draft.copyWith(serverVersion: draft.serverVersion + 1);
+  }
+
+  @override
+  Future<void> recordEvents({
+    required String sessionId,
+    required List<PracticeEvent> events,
+  }) async => calls.add('recordEvents');
+
+  @override
+  Future<AttemptAssessment> submitAttempt({
+    required String sessionId,
+    required PracticeQuestion question,
+    required PracticeDraft draft,
+    required PracticeAttemptFacts facts,
+  }) async {
+    calls.add('submitAttempt');
+    return const RuleBasedAttemptAssessor().assess(
+      question: question,
+      draft: draft,
+      facts: facts,
+    );
+  }
+
+  @override
+  Future<void> completeSession(String sessionId) async => calls.add('complete');
 }
 
 final class _BlockingRepository implements PracticeRepository {
@@ -116,13 +219,44 @@ final class _BlockingRepository implements PracticeRepository {
   final Completer<void> _gate = Completer<void>();
   int submissionCount = 0;
 
+  @override
+  PracticeConnectionMode get connectionMode => PracticeConnectionMode.mock;
+
   void release() => _gate.complete();
 
   @override
   Future<PracticePaper> loadPaper() async => paper;
 
   @override
+  Future<PracticeSessionSnapshot> loadOrCreateSession() async =>
+      PracticeSessionSnapshot(
+        sessionId: 'blocking-session',
+        status: PracticeRemoteSessionStatus.active,
+        revision: 0,
+        currentQuestionNumber: 1,
+        paper: paper,
+        drafts: const {},
+        results: const {},
+        assessorMode: 'RULES',
+      );
+
+  @override
+  Future<PracticeDraft> saveDraft({
+    required String sessionId,
+    required PracticeQuestion question,
+    required PracticeDraft draft,
+    required int currentQuestionNumber,
+  }) async => draft.copyWith(serverVersion: draft.serverVersion + 1);
+
+  @override
+  Future<void> recordEvents({
+    required String sessionId,
+    required List<PracticeEvent> events,
+  }) async {}
+
+  @override
   Future<AttemptAssessment> submitAttempt({
+    required String sessionId,
     required PracticeQuestion question,
     required PracticeDraft draft,
     required PracticeAttemptFacts facts,
@@ -135,4 +269,7 @@ final class _BlockingRepository implements PracticeRepository {
       facts: facts,
     );
   }
+
+  @override
+  Future<void> completeSession(String sessionId) async {}
 }

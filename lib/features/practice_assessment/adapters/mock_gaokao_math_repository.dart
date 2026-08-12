@@ -12,6 +12,9 @@ final class MockGaokaoMathRepository implements PracticeRepository {
 
   bool failNextSubmission = false;
 
+  @override
+  PracticeConnectionMode get connectionMode => PracticeConnectionMode.mock;
+
   Map<String, AttemptAssessment> get assessments =>
       Map.unmodifiable(_assessments);
 
@@ -19,7 +22,35 @@ final class MockGaokaoMathRepository implements PracticeRepository {
   Future<PracticePaper> loadPaper() async => _paper;
 
   @override
+  Future<PracticeSessionSnapshot> loadOrCreateSession() async =>
+      PracticeSessionSnapshot(
+        sessionId: 'mock-practice-session',
+        status: PracticeRemoteSessionStatus.active,
+        revision: 0,
+        currentQuestionNumber: 1,
+        paper: _paper,
+        drafts: const {},
+        results: _assessments,
+        assessorMode: 'RULES',
+      );
+
+  @override
+  Future<PracticeDraft> saveDraft({
+    required String sessionId,
+    required PracticeQuestion question,
+    required PracticeDraft draft,
+    required int currentQuestionNumber,
+  }) async => draft.copyWith(serverVersion: draft.serverVersion + 1);
+
+  @override
+  Future<void> recordEvents({
+    required String sessionId,
+    required List<PracticeEvent> events,
+  }) async {}
+
+  @override
   Future<AttemptAssessment> submitAttempt({
+    required String sessionId,
     required PracticeQuestion question,
     required PracticeDraft draft,
     required PracticeAttemptFacts facts,
@@ -36,6 +67,9 @@ final class MockGaokaoMathRepository implements PracticeRepository {
     _assessments[question.id] = assessment;
     return assessment;
   }
+
+  @override
+  Future<void> completeSession(String sessionId) async {}
 }
 
 final PracticePaper _paper = PracticePaper(
