@@ -1,8 +1,21 @@
 import '../core/practice_models.dart';
 import '../core/practice_ports.dart';
+import '../core/rule_based_attempt_assessor.dart';
 
 /// 提供新高考数学 19 题结构演示；题干为自造内容，不冒充官方真题。
 final class MockGaokaoMathRepository implements PracticeRepository {
+  MockGaokaoMathRepository({
+    AttemptAssessor assessor = const RuleBasedAttemptAssessor(),
+  }) : _assessor = assessor;
+
+  final AttemptAssessor _assessor;
+  final Map<String, AttemptAssessment> _assessments = {};
+
+  bool failNextSubmission = false;
+
+  Map<String, AttemptAssessment> get assessments =>
+      Map.unmodifiable(_assessments);
+
   @override
   Future<PracticePaper> loadPaper() async => _paper;
 
@@ -11,8 +24,18 @@ final class MockGaokaoMathRepository implements PracticeRepository {
     required PracticeQuestion question,
     required PracticeDraft draft,
     required PracticeAttemptFacts facts,
-  }) {
-    throw UnsupportedError('规则评分器将在下一实现切片接入');
+  }) async {
+    if (failNextSubmission) {
+      failNextSubmission = false;
+      throw StateError('模拟网络失败');
+    }
+    final assessment = _assessor.assess(
+      question: question,
+      draft: draft,
+      facts: facts,
+    );
+    _assessments[question.id] = assessment;
+    return assessment;
   }
 }
 
