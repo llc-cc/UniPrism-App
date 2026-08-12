@@ -321,6 +321,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('练习评分实验室'), findsOneWidget);
+    expect(find.textContaining('演示 Mock'), findsWidgets);
   });
 
   testWidgets('popular major cards are display-only', (tester) async {

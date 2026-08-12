@@ -34,8 +34,18 @@ class DeveloperToolsPage extends StatelessWidget {
             key: const ValueKey('developer-tool-practice-assessment'),
             icon: Icons.fact_check_rounded,
             title: '练习评分实验室',
-            description: '19 题作答、规则判题与能力证据',
-            onTap: () => _push(context, PracticeAssessmentLabPage.mock()),
+            description: AppConfig.practiceAssessmentRemote
+                ? '后端会话、规则判题与能力证据'
+                : '演示 Mock：19 题本地规则判题',
+            onTap: () => _push(
+              context,
+              AppConfig.practiceAssessmentRemote
+                  ? PracticeAssessmentLabPage.remote(
+                      baseUrl: AppConfig.apiBaseUrl,
+                      bearerTokenProvider: () async => AuthService.instance.token,
+                    )
+                  : PracticeAssessmentLabPage.mock(),
+            ),
           ),
           _DeveloperToolEntry(
             key: const ValueKey('developer-tool-dialogue-exploration'),

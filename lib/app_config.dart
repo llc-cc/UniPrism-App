@@ -22,6 +22,10 @@ abstract final class AppConfig {
     'AGENT_ENABLED',
     defaultValue: false,
   );
+  static const practiceAssessmentRemote = bool.fromEnvironment(
+    'PRACTICE_ASSESSMENT_REMOTE',
+    defaultValue: false,
+  );
   static const _agentMockRequested = bool.fromEnvironment(
     'AGENT_MOCK_ENABLED',
     defaultValue: true,

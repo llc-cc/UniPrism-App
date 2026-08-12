@@ -56,7 +56,9 @@ void main() {
 
     controller.selectQuestion(8);
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('practice-option-C')));
+    final optionC = find.byKey(const ValueKey('practice-option-C'));
+    await tester.ensureVisible(optionC);
+    await tester.tap(optionC);
     await tester.tap(find.byKey(const ValueKey('practice-option-A')));
 
     expect(controller.state.currentDraft.answer, 'AC');
@@ -103,6 +105,24 @@ void main() {
     expect(find.byType(SingleChildScrollView), findsWidgets);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('远程模式明确显示后端连接、会话与评分模式', (tester) async {
+    final source = MockGaokaoMathRepository();
+    final repository = _DelayedLoadRepository(
+      await source.loadPaper(),
+      mode: PracticeConnectionMode.remote,
+    );
+    final controller = PracticeSessionController(repository: repository);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    repository.release();
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('后端已连接'), findsOneWidget);
+    expect(find.textContaining('delayed-session'), findsOneWidget);
+    expect(find.textContaining('RULES'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 Widget _app(PracticeSessionController controller) {
@@ -110,10 +130,17 @@ Widget _app(PracticeSessionController controller) {
 }
 
 final class _DelayedLoadRepository implements PracticeRepository {
-  _DelayedLoadRepository(this.paper);
+  _DelayedLoadRepository(
+    this.paper, {
+    this.mode = PracticeConnectionMode.mock,
+  });
 
   final PracticePaper paper;
+  final PracticeConnectionMode mode;
   final Completer<void> _gate = Completer<void>();
+
+  @override
+  PracticeConnectionMode get connectionMode => mode;
 
   void release() => _gate.complete();
 
@@ -124,7 +151,37 @@ final class _DelayedLoadRepository implements PracticeRepository {
   }
 
   @override
+  Future<PracticeSessionSnapshot> loadOrCreateSession() async {
+    await _gate.future;
+    return PracticeSessionSnapshot(
+      sessionId: 'delayed-session',
+      status: PracticeRemoteSessionStatus.active,
+      revision: 0,
+      currentQuestionNumber: 1,
+      paper: paper,
+      drafts: const {},
+      results: const {},
+      assessorMode: 'RULES',
+    );
+  }
+
+  @override
+  Future<PracticeDraft> saveDraft({
+    required String sessionId,
+    required PracticeQuestion question,
+    required PracticeDraft draft,
+    required int currentQuestionNumber,
+  }) async => draft.copyWith(serverVersion: draft.serverVersion + 1);
+
+  @override
+  Future<void> recordEvents({
+    required String sessionId,
+    required List<PracticeEvent> events,
+  }) async {}
+
+  @override
   Future<AttemptAssessment> submitAttempt({
+    required String sessionId,
     required PracticeQuestion question,
     required PracticeDraft draft,
     required PracticeAttemptFacts facts,
@@ -135,4 +192,7 @@ final class _DelayedLoadRepository implements PracticeRepository {
       facts: facts,
     );
   }
+
+  @override
+  Future<void> completeSession(String sessionId) async {}
 }

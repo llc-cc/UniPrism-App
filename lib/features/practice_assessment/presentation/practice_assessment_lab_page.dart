@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../adapters/mock_gaokao_math_repository.dart';
+import '../adapters/practice_api_client.dart';
+import '../adapters/practice_participant_token_store.dart';
+import '../adapters/remote_practice_repository.dart';
 import '../application/practice_session_controller.dart';
 import '../core/practice_models.dart';
 
@@ -19,6 +22,25 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
       controller: PracticeSessionController(
         repository: MockGaokaoMathRepository(),
       ),
+      disposeController: true,
+    );
+  }
+
+  factory PracticeAssessmentLabPage.remote({
+    Key? key,
+    required String baseUrl,
+    Future<String?> Function()? bearerTokenProvider,
+  }) {
+    final repository = RemotePracticeRepository(
+      api: PracticeApiClient(
+        baseUrl: baseUrl,
+        participantTokenStore: NativePracticeParticipantTokenStore(),
+        bearerTokenProvider: bearerTokenProvider,
+      ),
+    );
+    return PracticeAssessmentLabPage(
+      key: key,
+      controller: PracticeSessionController(repository: repository),
       disposeController: true,
     );
   }
@@ -98,6 +120,8 @@ final class _PracticeAssessmentLabPageState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _ConnectionBanner(state: state),
+                  const SizedBox(height: 12),
                   _PaperHeader(paper: paper, completed: state.completedCount),
                   const SizedBox(height: 12),
                   _QuestionNavigator(
@@ -143,6 +167,34 @@ final class _PracticeAssessmentLabPageState
           ),
         );
       },
+    );
+  }
+}
+
+final class _ConnectionBanner extends StatelessWidget {
+  const _ConnectionBanner({required this.state});
+
+  final PracticeSessionState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final remote = state.connectionMode == PracticeConnectionMode.remote;
+    return Container(
+      key: const ValueKey('practice-connection-status'),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: remote ? const Color(0xFFE9F8EF) : const Color(0xFFFFF5DC),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Text(
+        remote
+            ? '后端已连接 · 会话 ${state.sessionId ?? '-'} · ${state.assessorMode ?? 'RULES'}'
+            : '演示 Mock · 结果不会写入后端',
+        style: TextStyle(
+          color: remote ? const Color(0xFF176B3A) : const Color(0xFF6D5317),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
