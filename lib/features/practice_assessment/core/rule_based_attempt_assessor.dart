@@ -81,7 +81,7 @@ final class RuleBasedAttemptAssessor implements AttemptAssessor {
         for (final entry in assessment.observations.entries)
           entry.key.name: <String, Object?>{
             'status': entry.value.status.name,
-            if (entry.value.band case final band?) 'band': band,
+            'band': entry.value.band,
             'evidenceStepIds': entry.value.evidenceStepIds,
             'factCodes': entry.value.factCodes,
             'errorTags': entry.value.errorTags,

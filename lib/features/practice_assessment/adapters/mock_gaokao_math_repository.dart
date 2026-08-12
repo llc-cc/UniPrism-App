@@ -4,9 +4,8 @@ import '../core/rule_based_attempt_assessor.dart';
 
 /// 提供新高考数学 19 题结构演示；题干为自造内容，不冒充官方真题。
 final class MockGaokaoMathRepository implements PracticeRepository {
-  MockGaokaoMathRepository({
-    AttemptAssessor assessor = const RuleBasedAttemptAssessor(),
-  }) : _assessor = assessor;
+  MockGaokaoMathRepository({AttemptAssessor? assessor})
+    : _assessor = assessor ?? const RuleBasedAttemptAssessor();
 
   final AttemptAssessor _assessor;
   final Map<String, AttemptAssessment> _assessments = {};
