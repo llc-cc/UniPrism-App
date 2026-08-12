@@ -11,6 +11,7 @@ import 'package:reactive_mind_map/reactive_mind_map.dart';
 
 import 'features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'features/dialogue_exploration/presentation/remote_exploration_page.dart';
+import 'features/practice_assessment/practice_assessment.dart';
 
 part 'app_config.dart';
 part 'agent_experience.dart';

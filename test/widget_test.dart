@@ -307,6 +307,22 @@ void main() {
     expect(find.text('1.2 AI 探索课堂'), findsOneWidget);
   });
 
+  testWidgets('developer tools opens the independent practice assessment lab', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 1000), const DeveloperToolsPage());
+
+    final entry = find.byKey(
+      const ValueKey('developer-tool-practice-assessment'),
+    );
+    expect(entry, findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('练习评分实验室'), findsOneWidget);
+  });
+
   testWidgets('popular major cards are display-only', (tester) async {
     await pumpAtSize(
       tester,

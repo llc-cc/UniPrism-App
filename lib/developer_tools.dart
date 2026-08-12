@@ -31,6 +31,13 @@ class DeveloperToolsPage extends StatelessWidget {
             ),
           ),
           _DeveloperToolEntry(
+            key: const ValueKey('developer-tool-practice-assessment'),
+            icon: Icons.fact_check_rounded,
+            title: '练习评分实验室',
+            description: '19 题作答、规则判题与能力证据',
+            onTap: () => _push(context, PracticeAssessmentLabPage.mock()),
+          ),
+          _DeveloperToolEntry(
             key: const ValueKey('developer-tool-dialogue-exploration'),
             icon: Icons.account_tree_rounded,
             title: '1.2 对话探索实验室',
