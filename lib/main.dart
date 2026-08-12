@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reactive_mind_map/reactive_mind_map.dart';
 
+import 'features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'features/dialogue_exploration/presentation/remote_exploration_page.dart';
 
 part 'app_config.dart';
@@ -146,6 +147,7 @@ class AuthService {
 
   bool get isLoggedIn => (_token ?? '').isNotEmpty;
   String? get token => _token;
+  String? get anonymousId => _anonymousId;
   String? get exploreSessionId => _exploreSessionId;
   String get agentChatStorageScope {
     final userId = _user?['id']?.toString().trim() ?? '';

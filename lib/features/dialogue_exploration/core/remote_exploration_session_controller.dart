@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import '../adapters/guided_teaching_flow_dto.dart';
 import '../adapters/remote_exploration_api.dart';
 import '../adapters/remote_exploration_dto.dart';
 
@@ -30,6 +31,8 @@ final class RemoteExplorationState {
     required this.errorMessage,
     required this.memoryCandidateNodeIds,
     required this.canRetry,
+    required this.history,
+    required this.chapterCatalog,
   });
 
   const RemoteExplorationState.idle()
@@ -42,7 +45,9 @@ final class RemoteExplorationState {
       composerMode = RemoteComposerMode.currentPath,
       errorMessage = null,
       memoryCandidateNodeIds = const {},
-      canRetry = false;
+      canRetry = false,
+      history = const [],
+      chapterCatalog = const [];
 
   final RemoteExplorationStatus status;
   final LearningChapterOverviewSnapshot? chapter;
@@ -54,6 +59,17 @@ final class RemoteExplorationState {
   final String? errorMessage;
   final Set<String> memoryCandidateNodeIds;
   final bool canRetry;
+  final List<RemoteLearningSessionSummary> history;
+  final List<LearningChapterCatalogItem> chapterCatalog;
+
+  /// 已结束或由服务端标记为不可继续的历史会话只能浏览，避免修改既有学习证据。
+  bool get isReadOnly {
+    final session = snapshot?.session;
+    if (session == null) return false;
+    if (session.status != 'ACTIVE') return true;
+    final expiresAt = DateTime.tryParse(session.expiresAt);
+    return expiresAt != null && !expiresAt.isAfter(DateTime.now().toUtc());
+  }
 
   RemoteExplorationState copyWith({
     RemoteExplorationStatus? status,
@@ -62,6 +78,7 @@ final class RemoteExplorationState {
     bool clearSelectedChapterNode = false,
     LearningEntrySnapshot? entry,
     RemoteLearningSessionSnapshot? snapshot,
+    bool clearSnapshot = false,
     String? inspectedNodeId,
     bool clearInspectedNode = false,
     RemoteComposerMode? composerMode,
@@ -69,6 +86,8 @@ final class RemoteExplorationState {
     bool clearError = false,
     Set<String>? memoryCandidateNodeIds,
     bool? canRetry,
+    List<RemoteLearningSessionSummary>? history,
+    List<LearningChapterCatalogItem>? chapterCatalog,
   }) {
     return RemoteExplorationState(
       status: status ?? this.status,
@@ -77,7 +96,7 @@ final class RemoteExplorationState {
           ? null
           : selectedChapterNodeId ?? this.selectedChapterNodeId,
       entry: entry ?? this.entry,
-      snapshot: snapshot ?? this.snapshot,
+      snapshot: clearSnapshot ? null : snapshot ?? this.snapshot,
       inspectedNodeId: clearInspectedNode
           ? null
           : inspectedNodeId ?? this.inspectedNodeId,
@@ -86,6 +105,8 @@ final class RemoteExplorationState {
       memoryCandidateNodeIds:
           memoryCandidateNodeIds ?? this.memoryCandidateNodeIds,
       canRetry: canRetry ?? this.canRetry,
+      history: history ?? this.history,
+      chapterCatalog: chapterCatalog ?? this.chapterCatalog,
     );
   }
 }
@@ -100,6 +121,35 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   var _isDisposed = false;
 
   RemoteExplorationState get state => _state;
+
+  /// 目录加载与详情加载分离，目录失败可重试且不清除用户已打开的会话快照。
+  Future<void> loadChapterCatalog() async {
+    _replace(
+      _state.copyWith(
+        status: RemoteExplorationStatus.loadingEntry,
+        clearError: true,
+      ),
+    );
+    try {
+      final catalog = await api.listChapterCatalog();
+      _retryOperation = null;
+      _replace(
+        _state.copyWith(
+          status: RemoteExplorationStatus.ready,
+          chapterCatalog: List<LearningChapterCatalogItem>.unmodifiable(
+            catalog,
+          ),
+          clearError: true,
+          canRetry: false,
+        ),
+      );
+    } catch (error) {
+      _fail(error, loadChapterCatalog);
+    }
+  }
+
+  /// 章节选择复用已有详情加载链路，不在目录选择阶段创建或修改学习会话。
+  Future<void> selectChapter(String chapterId) => loadChapter(chapterId);
 
   Future<void> loadChapter(String chapterId) async {
     _replace(
@@ -142,13 +192,85 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
             : await api.getEntry(node.atomId);
         final snapshot = await api.createSession(
           atomId: node.atomId,
-          scenarioId: _scenarioIdForPhase(node.phase),
+          // 章节的学习/练习/复习只是全章导航；1.2 创建的始终是预习探索会话。
+          scenarioId: _preStudyScenarioId,
           question: (question ?? '').trim().isEmpty
               ? node.hookQuestion
               : question!.trim(),
           idempotencyKey: key,
+          flowMode: RemoteFlowMode.guidedLesson,
         );
         _replace(_state.copyWith(entry: entry));
+        _acceptSnapshot(snapshot);
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
+  /// 前置条件未满足时只在本地阻断，避免为不可进入的知识点创建无效会话。
+  Future<void> startNextLearningOption(RemoteNextLearningOption option) async {
+    if (!option.prerequisitesSatisfied) return;
+    final key = _traceId('create-next-learning');
+    Future<void> operation() async {
+      _submitting();
+      try {
+        final entry = await api.getEntry(option.atomId);
+        final snapshot = await api.createSession(
+          atomId: option.atomId,
+          scenarioId: _preStudyScenarioId,
+          question: option.hookQuestion,
+          idempotencyKey: key,
+          flowMode: RemoteFlowMode.guidedLesson,
+        );
+        _replace(_state.copyWith(entry: entry));
+        _acceptSnapshot(snapshot);
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
+  /// 章节内的自由表达仍挂载当前知识节点，保证服务端可以沿引导状态机插入实验；
+  /// 只有未进入章节时才创建开放探索，交给服务端按问题识别知识范围。
+  Future<void> startFreeQuestion(String question) async {
+    final normalizedQuestion = question.trim();
+    if (normalizedQuestion.isEmpty) {
+      _replace(
+        _state.copyWith(
+          status: RemoteExplorationStatus.ready,
+          errorMessage: '先写下你想和 AI 老师讨论的问题',
+        ),
+      );
+      return;
+    }
+
+    final chapter = _state.chapter;
+    final contextualNodeId =
+        _state.selectedChapterNodeId ?? chapter?.recommendedNodeId;
+    if (contextualNodeId != null &&
+        chapter?.nodeById(contextualNodeId) != null) {
+      await startFromChapterNode(
+        contextualNodeId,
+        question: normalizedQuestion,
+      );
+      return;
+    }
+
+    final key = _traceId('create-free-question');
+    Future<void> operation() async {
+      _submitting();
+      try {
+        final snapshot = await api.createSession(
+          scenarioId: _preStudyScenarioId,
+          question: normalizedQuestion,
+          idempotencyKey: key,
+          flowMode: RemoteFlowMode.openExploration,
+        );
         _acceptSnapshot(snapshot);
       } catch (error) {
         _fail(error, operation);
@@ -184,10 +306,11 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
       try {
         final snapshot = await api.createSession(
           atomId: entry.atomId,
-          scenarioId: _scenarioId(entry.atomId),
+          scenarioId: _preStudyScenarioId,
           directionId: directionId,
           question: question,
           idempotencyKey: key,
+          flowMode: RemoteFlowMode.guidedLesson,
         );
         _acceptSnapshot(snapshot);
       } catch (error) {
@@ -207,6 +330,71 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     }
   }
 
+  /// 历史列表由服务端按当前账号/匿名身份过滤，客户端不跨身份合并缓存。
+  Future<void> loadHistory({bool restoreLatestActive = false}) async {
+    try {
+      final history = await api.listSessions();
+      _replace(
+        _state.copyWith(
+          // 上一次历史请求失败后，成功重试应先退出 failed，页面才能继续加载章节。
+          status: _state.snapshot == null
+              ? (_state.chapter == null
+                    ? RemoteExplorationStatus.idle
+                    : RemoteExplorationStatus.ready)
+              : _state.status,
+          history: List<RemoteLearningSessionSummary>.unmodifiable(history),
+          clearError: true,
+          canRetry: false,
+        ),
+      );
+      if (!restoreLatestActive) return;
+
+      // 服务端已经按最近活动时间排序；这里只恢复首个仍可继续的记录。
+      for (final summary in history) {
+        if (!summary.canContinue) continue;
+        _acceptSnapshot(await api.restoreSession(summary));
+        return;
+      }
+    } catch (error) {
+      _fail(error, () => loadHistory(restoreLatestActive: restoreLatestActive));
+    }
+  }
+
+  Future<void> openHistorySession(String sessionId) async {
+    final summary = _state.history
+        .where((item) => item.id == sessionId)
+        .firstOrNull;
+    if (summary == null) throw StateError('历史预习会话不存在');
+
+    Future<void> operation() async {
+      _submitting();
+      try {
+        _acceptSnapshot(await api.restoreSession(summary));
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
+  /// 返回预习总览时仅清除当前视图，不删除服务端会话或历史记录。
+  void leaveSession() {
+    _retryOperation = null;
+    _replace(
+      _state.copyWith(
+        status: _state.chapter == null
+            ? RemoteExplorationStatus.idle
+            : RemoteExplorationStatus.ready,
+        clearSnapshot: true,
+        clearInspectedNode: true,
+        composerMode: RemoteComposerMode.currentPath,
+        clearError: true,
+        canRetry: false,
+      ),
+    );
+  }
+
   /// 选中节点只改变本地检查视图，绝不触发支线、回溯或服务端写入。
   void inspectNode(String nodeId) {
     if (_state.snapshot?.nodeById(nodeId) == null) return;
@@ -220,6 +408,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }
 
   void prepareContinueFromInspected() {
+    _requireMutableSnapshot();
     _requireInspectedNode();
     _replace(
       _state.copyWith(composerMode: RemoteComposerMode.continueFromNode),
@@ -227,6 +416,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }
 
   void prepareBranchFromInspected() {
+    _requireMutableSnapshot();
     _requireInspectedNode();
     _replace(_state.copyWith(composerMode: RemoteComposerMode.branchFromNode));
   }
@@ -238,7 +428,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   Future<void> submitQuestion(String question) async {
     final normalized = question.trim();
     if (normalized.isEmpty) return;
-    final snapshot = _requireSnapshot();
+    final snapshot = _requireMutableSnapshot();
     final mode = _state.composerMode;
     final parentId = mode == RemoteComposerMode.currentPath
         ? null
@@ -271,8 +461,90 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     await operation();
   }
 
+  /// 素材事件的事件 ID 与发生时间在首次提交前生成，网络重试复用同一事件，
+  /// 防止服务端把一次学生操作累计成多份证据。
+  Future<void> submitMaterialEvent({
+    required String materialUsageId,
+    required String eventType,
+    Map<String, Object?> payload = const {},
+  }) async {
+    final snapshot = _requireMutableSnapshot();
+    final normalizedMaterialId = materialUsageId.trim();
+    final normalizedEventType = eventType.trim();
+    if (normalizedMaterialId.isEmpty || normalizedEventType.isEmpty) {
+      throw ArgumentError('素材 ID 与事件类型不能为空');
+    }
+    final eventId = _traceId('asset-event');
+    final key = _traceId('material-event');
+    final event = RemoteAssetEvent(
+      schemaVersion: 1,
+      eventId: eventId,
+      eventType: normalizedEventType,
+      occurredAt: DateTime.now().toUtc().toIso8601String(),
+      payload: Map<String, Object?>.unmodifiable(payload),
+    );
+
+    Future<void> operation() async {
+      _submitting();
+      try {
+        _acceptSnapshot(
+          await api.submitMaterialEvent(
+            sessionId: snapshot.session.id,
+            materialUsageId: normalizedMaterialId,
+            event: event,
+            idempotencyKey: key,
+          ),
+        );
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
+  /// 迁移情境由服务端当前教师动作指定，客户端只提交学生作答，
+  /// 不在本地推导题目或证据是否达标。
+  Future<void> submitGuidedPractice({
+    required String reasoning,
+    required String answer,
+  }) async {
+    final snapshot = _requireMutableSnapshot();
+    final flow = snapshot.teachingFlow;
+    // V2 的题目可能在补救后轮换；只能使用当前快照，避免旧 action 指向过期题目。
+    final practiceId = flow?.activePractice?.id.trim() ?? '';
+    if (flow?.stage != RemoteTeachingStage.focus || practiceId.isEmpty) {
+      throw StateError('当前教学步骤没有可提交的迁移情境');
+    }
+    final normalizedReasoning = reasoning.trim();
+    final normalizedAnswer = answer.trim();
+    if (normalizedReasoning.isEmpty || normalizedAnswer.isEmpty) {
+      throw ArgumentError('推理过程与答案不能为空');
+    }
+    final key = _traceId('guided-practice');
+
+    Future<void> operation() async {
+      _submitting();
+      try {
+        _acceptSnapshot(
+          await api.submitPracticeAttempt(
+            sessionId: snapshot.session.id,
+            practiceId: practiceId,
+            reasoning: normalizedReasoning,
+            answer: normalizedAnswer,
+            idempotencyKey: key,
+          ),
+        );
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
   Future<void> backtrackToInspected() async {
-    final snapshot = _requireSnapshot();
+    final snapshot = _requireMutableSnapshot();
     final target = _requireInspectedNode();
     final key = _traceId('backtrack');
     Future<void> operation() async {
@@ -294,7 +566,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }
 
   Future<void> convertInspectedToMemory() async {
-    final snapshot = _requireSnapshot();
+    final snapshot = _requireMutableSnapshot();
     final node = _requireInspectedNode();
     final key = _traceId('memory');
     Future<void> operation() async {
@@ -327,7 +599,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     if (normalized.isEmpty) {
       throw ArgumentError.value(reflection, 'reflection', '复述不能为空');
     }
-    final snapshot = _requireSnapshot();
+    final snapshot = _requireMutableSnapshot();
     final key = _traceId('complete');
     Future<void> operation() async {
       _submitting();
@@ -361,6 +633,14 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
 
   RemoteLearningSessionSnapshot _requireSnapshot() {
     return _state.snapshot ?? (throw StateError('学习会话尚未开始'));
+  }
+
+  RemoteLearningSessionSnapshot _requireMutableSnapshot() {
+    final snapshot = _requireSnapshot();
+    if (_state.isReadOnly) {
+      throw StateError('历史预习会话为只读状态');
+    }
+    return snapshot;
   }
 
   void _submitting() {
@@ -406,17 +686,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     if (!_isDisposed) notifyListeners();
   }
 
-  static String _scenarioId(String atomId) {
-    if (atomId == 'inequality-proof') return 'practice';
-    if (atomId == 'coffee-business-model') return 'public-demo';
-    return 'teaching';
-  }
-
-  static String _scenarioIdForPhase(String phase) {
-    if (phase == 'PRACTICE') return 'practice';
-    if (phase == 'REVIEW') return 'review';
-    return 'teaching';
-  }
+  static const _preStudyScenarioId = 'prestudy';
 
   static String _traceId(String prefix) {
     final entropy = math.Random().nextInt(0x7fffffff).toRadixString(16);

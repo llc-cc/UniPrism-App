@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../adapters/remote_exploration_dto.dart';
+import 'student_learning_narrative.dart';
 
 const _chapterBrand = Color(0xFF6B23FF);
 const _chapterInk = Color(0xFF27222D);
@@ -13,17 +14,25 @@ final class ChapterOverviewPanel extends StatelessWidget {
     required this.chapter,
     required this.selectedNodeId,
     required this.questionController,
+    required this.directTeacherQuestionController,
     required this.busy,
+    required this.errorMessage,
+    required this.onRetry,
     required this.onSelectNode,
     required this.onStartNode,
+    required this.onStartDirectQuestion,
   });
 
   final LearningChapterOverviewSnapshot chapter;
   final String? selectedNodeId;
   final TextEditingController questionController;
+  final TextEditingController directTeacherQuestionController;
   final bool busy;
+  final String? errorMessage;
+  final VoidCallback onRetry;
   final ValueChanged<String> onSelectNode;
-  final ValueChanged<String> onStartNode;
+  final void Function(String nodeId, String? question) onStartNode;
+  final ValueChanged<String> onStartDirectQuestion;
 
   @override
   Widget build(BuildContext context) {
@@ -35,107 +44,297 @@ final class ChapterOverviewPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ChapterHeader(chapter: chapter),
-          const SizedBox(height: 20),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final cardWidth = constraints.maxWidth >= 760
-                  ? (constraints.maxWidth - 24) / 3
-                  : constraints.maxWidth;
-              final phaseMinutes =
-                  (chapter.estimatedMinutes / chapter.phases.length).ceil();
-              return Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: chapter.phases
-                    .map(
-                      (phase) => SizedBox(
-                        width: cardWidth,
-                        child: _ChapterPhaseCard(
-                          phase: phase,
-                          estimatedMinutes: phaseMinutes,
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              );
-            },
+          _StudentMissionHero(
+            chapter: chapter,
+            node: selected,
+            controller: questionController,
+            busy: busy,
+            onStart: () => onStartNode(selected.id, questionController.text),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            '本章知识路线',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '点击任一节点查看核心问题，再从这里开始探索。',
-            style: TextStyle(color: _chapterMuted),
-          ),
+          if (errorMessage != null) ...[
+            const SizedBox(height: 14),
+            _ChapterEntryError(message: errorMessage!, onRetry: onRetry),
+          ],
+          const SizedBox(height: 14),
+          _ChapterLearningJourneyStrip(phases: chapter.phases),
           const SizedBox(height: 12),
-          ChapterKnowledgeTree(
+          _ChapterQuestionSwitcher(
             chapter: chapter,
             selectedNodeId: selected.id,
+            busy: busy,
             onNodeTap: onSelectNode,
+            onStart: (nodeId) => onStartNode(nodeId, null),
           ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFFF0E8FF), Color(0xFFFFF4E8)],
+          const SizedBox(height: 12),
+          _DirectAiTeacherEntry(
+            controller: directTeacherQuestionController,
+            busy: busy,
+            onStart: onStartDirectQuestion,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 首屏只呈现一个当前学习任务，避免章节信息和多个开始入口分散学生注意力。
+final class _StudentMissionHero extends StatelessWidget {
+  const _StudentMissionHero({
+    required this.chapter,
+    required this.node,
+    required this.controller,
+    required this.busy,
+    required this.onStart,
+  });
+
+  final LearningChapterOverviewSnapshot chapter;
+  final LearningChapterNodeSnapshot node;
+  final TextEditingController controller;
+  final bool busy;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('student-mission-hero'),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF4EEFF), Color(0xFFFFF8EF)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFD8C5FF)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              const Text(
+                '今天想弄懂什么？',
+                style: TextStyle(
+                  color: _chapterBrand,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-              borderRadius: BorderRadius.circular(20),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                child: Text(
+                  chapter.title,
+                  style: const TextStyle(fontSize: 12, color: _chapterMuted),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            node.hookQuestion,
+            style: const TextStyle(
+              fontSize: 30,
+              height: 1.22,
+              fontWeight: FontWeight.w900,
+              color: _chapterInk,
             ),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            node.description,
+            style: const TextStyle(
+              fontSize: 14,
+              height: 1.5,
+              color: _chapterMuted,
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text(
+            '先说说你的问题或想法',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 7),
+          TextField(
+            key: const ValueKey('chapter-free-question'),
+            controller: controller,
+            minLines: 1,
+            maxLines: 3,
+            textInputAction: TextInputAction.done,
+            onSubmitted: busy ? null : (_) => onStart(),
+            decoration: InputDecoration(
+              hintText: '例如：我想知道为什么配平只能调整系数……',
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.92),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: Color(0xFFD9D0E5)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const ValueKey('chapter-enter-selected-node'),
+              onPressed: busy ? null : onStart,
+              icon: busy
+                  ? const SizedBox.square(
+                      dimension: 17,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.chat_bubble_outline_rounded),
+              label: const Text('和 AI 老师聊一聊'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 会话创建失败后仍保留章节上下文，并在原入口旁给出可执行的重试，避免学生误以为节点不可进入。
+final class _ChapterEntryError extends StatelessWidget {
+  const _ChapterEntryError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('chapter-entry-error'),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFECE9),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline_rounded, color: Color(0xFFC23A2B)),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message)),
+          TextButton(onPressed: onRetry, child: const Text('重试')),
+        ],
+      ),
+    );
+  }
+}
+
+/// 学习旅程只提供方向感，不重复展示每阶段摘要、时长与进度条。
+final class _ChapterLearningJourneyStrip extends StatelessWidget {
+  const _ChapterLearningJourneyStrip({required this.phases});
+
+  final List<LearningChapterPhaseSnapshot> phases;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('chapter-learning-journey-strip'),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final horizontal = constraints.maxWidth >= 640;
+          final children = phases.indexed
+              .map((entry) => _ChapterJourneyStep(phase: entry.$2))
+              .toList(growable: false);
+          if (!horizontal) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: children
+                  .expand(
+                    (child) => [
+                      child,
+                      if (child != children.last) const SizedBox(height: 10),
+                    ],
+                  )
+                  .toList(growable: false),
+            );
+          }
+          return Row(
+            children: children.indexed
+                .expand(
+                  (entry) => [
+                    Expanded(child: entry.$2),
+                    if (entry.$1 < children.length - 1)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 10),
+                        child: Icon(
+                          Icons.arrow_forward_rounded,
+                          size: 18,
+                          color: Color(0xFFB8AFC3),
+                        ),
+                      ),
+                  ],
+                )
+                .toList(growable: false),
+          );
+        },
+      ),
+    );
+  }
+}
+
+final class _ChapterJourneyStep extends StatelessWidget {
+  const _ChapterJourneyStep({required this.phase});
+
+  final LearningChapterPhaseSnapshot phase;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = phase.kind.toLowerCase();
+    final icon = switch (phase.kind) {
+      'PRACTICE' => Icons.touch_app_outlined,
+      'REVIEW' => Icons.auto_stories_outlined,
+      _ => Icons.lightbulb_outline_rounded,
+    };
+    return Semantics(
+      label:
+          '${StudentLearningNarrative.chapterPhaseTitle(phase.kind)}，${StudentLearningNarrative.chapterPhaseStatus(phase.status)}',
+      child: Row(
+        key: ValueKey('chapter-phase-$kind'),
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: const BoxDecoration(
+              color: Color(0xFFF0E8FF),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 18, color: _chapterBrand),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  selected.title,
-                  style: const TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  StudentLearningNarrative.chapterPhaseTitle(phase.kind),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 7),
                 Text(
-                  selected.description,
-                  style: const TextStyle(color: _chapterMuted),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  selected.hookQuestion,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  key: const ValueKey('chapter-free-question'),
-                  controller: questionController,
-                  minLines: 1,
-                  maxLines: 3,
-                  decoration: const InputDecoration(
-                    hintText: '也可以把这个问题改成你真正想问的内容',
-                    filled: true,
-                    fillColor: Colors.white,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                FilledButton.icon(
-                  key: const ValueKey('start-selected-chapter-node'),
-                  onPressed: busy ? null : () => onStartNode(selected.id),
-                  icon: busy
-                      ? const SizedBox.square(
-                          dimension: 17,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.auto_awesome_rounded),
-                  label: const Text('进入这个知识点'),
+                  StudentLearningNarrative.chapterPhaseStatus(phase.status),
+                  style: const TextStyle(fontSize: 11, color: _chapterMuted),
                 ),
               ],
             ),
@@ -146,47 +345,59 @@ final class ChapterOverviewPanel extends StatelessWidget {
   }
 }
 
-final class _ChapterHeader extends StatelessWidget {
-  const _ChapterHeader({required this.chapter});
+/// 课程路线默认折叠；学生主动换题时才展开完整节点，避免目录先于问题出现。
+final class _ChapterQuestionSwitcher extends StatelessWidget {
+  const _ChapterQuestionSwitcher({
+    required this.chapter,
+    required this.selectedNodeId,
+    required this.busy,
+    required this.onNodeTap,
+    required this.onStart,
+  });
 
   final LearningChapterOverviewSnapshot chapter;
+  final String selectedNodeId;
+  final bool busy;
+  final ValueChanged<String> onNodeTap;
+  final ValueChanged<String> onStart;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: const Color(0xFFE5DFEA)),
+    final selected = chapter.nodeById(selectedNodeId)!;
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFE5DFEA)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        key: const ValueKey('chapter-question-switcher'),
+        leading: const Icon(Icons.swap_horiz_rounded, color: _chapterBrand),
+        title: const Text(
+          '想换一个问题？',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        subtitle: Text(
+          '当前：${selected.title}',
+          style: const TextStyle(fontSize: 12, color: _chapterMuted),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
         children: [
-          const Text(
-            '章节学习工作台',
-            style: TextStyle(color: _chapterBrand, fontWeight: FontWeight.w800),
+          ChapterKnowledgeTree(
+            chapter: chapter,
+            selectedNodeId: selectedNodeId,
+            onNodeTap: onNodeTap,
           ),
-          const SizedBox(height: 7),
-          Text(
-            chapter.title,
-            style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            chapter.description,
-            style: const TextStyle(color: _chapterMuted, height: 1.45),
-          ),
-          const SizedBox(height: 14),
-          LinearProgressIndicator(
-            value: chapter.progress.clamp(0, 1),
-            minHeight: 8,
-            borderRadius: BorderRadius.circular(99),
-          ),
-          const SizedBox(height: 7),
-          Text(
-            '本章进度 ${(chapter.progress * 100).round()}% · 预计 ${chapter.estimatedMinutes} 分钟',
-            style: const TextStyle(fontSize: 12, color: _chapterMuted),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const ValueKey('chapter-enter-switched-node'),
+              onPressed: busy ? null : () => onStart(selected.id),
+              icon: const Icon(Icons.science_outlined),
+              label: Text('从「${selected.title}」开始探索'),
+            ),
           ),
         ],
       ),
@@ -194,73 +405,63 @@ final class _ChapterHeader extends StatelessWidget {
   }
 }
 
-final class _ChapterPhaseCard extends StatelessWidget {
-  const _ChapterPhaseCard({
-    required this.phase,
-    required this.estimatedMinutes,
+/// 独立问题仍然可用，但默认收起，避免它与当前课程任务形成两个并列主入口。
+final class _DirectAiTeacherEntry extends StatelessWidget {
+  const _DirectAiTeacherEntry({
+    required this.controller,
+    required this.busy,
+    required this.onStart,
   });
 
-  final LearningChapterPhaseSnapshot phase;
-  final int estimatedMinutes;
+  final TextEditingController controller;
+  final bool busy;
+  final ValueChanged<String> onStart;
 
   @override
   Widget build(BuildContext context) {
-    final kind = phase.kind.toLowerCase();
-    final icon = switch (phase.kind) {
-      'PRACTICE' => Icons.edit_note_rounded,
-      'REVIEW' => Icons.history_edu_rounded,
-      _ => Icons.school_rounded,
-    };
-    final status = switch (phase.status) {
-      'LOCKED' => '待产生复习内容',
-      'IN_PROGRESS' => '进行中',
-      _ => '可进入',
-    };
-    return Container(
-      key: ValueKey('chapter-phase-$kind'),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(17),
-        border: Border.all(color: const Color(0xFFE5DFEA)),
+    return Material(
+      color: const Color(0xB3FFFFFF),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFE5DFEA)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      clipBehavior: Clip.antiAlias,
+      child: ExpansionTile(
+        key: const ValueKey('direct-ai-teacher-entry'),
+        leading: const Icon(Icons.chat_bubble_outline_rounded),
+        title: const Text(
+          '想问完全不同的问题？',
+          style: TextStyle(fontWeight: FontWeight.w800),
+        ),
+        subtitle: const Text(
+          '展开后可以直接问 AI 老师',
+          style: TextStyle(fontSize: 12, color: _chapterMuted),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
-          Row(
-            children: [
-              Icon(icon, color: _chapterBrand),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  phase.title,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
+          TextField(
+            key: const ValueKey('direct-ai-teacher-question'),
+            controller: controller,
+            minLines: 1,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: '例如：为什么天空是蓝色？',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
               ),
-              Text(
-                status,
-                style: const TextStyle(fontSize: 11, color: _chapterMuted),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(phase.summary, style: const TextStyle(color: _chapterMuted)),
-          const SizedBox(height: 6),
-          Text(
-            '预计 $estimatedMinutes 分钟',
-            style: const TextStyle(
-              fontSize: 11,
-              color: _chapterBrand,
-              fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 10),
-          LinearProgressIndicator(
-            value: phase.progress.clamp(0, 1),
-            minHeight: 5,
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton.icon(
+              key: const ValueKey('direct-ai-teacher-start'),
+              onPressed: busy ? null : () => onStart(controller.text),
+              icon: const Icon(Icons.arrow_forward_rounded),
+              label: const Text('带着这个问题出发'),
+            ),
           ),
         ],
       ),

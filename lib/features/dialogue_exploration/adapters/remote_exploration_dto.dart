@@ -1,3 +1,5 @@
+import 'guided_teaching_flow_dto.dart';
+
 /// Learning Entry 中单个可探索方向，内容由 1.1 Provider 提供而非页面硬编码。
 final class LearningDirectionSnapshot {
   const LearningDirectionSnapshot({
@@ -169,6 +171,90 @@ final class LearningChapterOverviewSnapshot {
   }
 }
 
+/// 章节目录仅用于入口编排；详情仍须通过章节概览接口读取，避免目录数据被误当作完整学习状态。
+final class LearningChapterCatalogItem {
+  const LearningChapterCatalogItem({
+    required this.chapterId,
+    required this.title,
+    required this.description,
+    required this.estimatedMinutes,
+    required this.availableNodeCount,
+  });
+
+  static LearningChapterCatalogItem? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.map((key, item) => MapEntry('$key', item));
+    final chapterId = _nullableString(json['chapterId']);
+    final title = _nullableString(json['title']);
+    final description = _nullableString(json['description']);
+    if (chapterId == null || title == null || description == null) return null;
+    return LearningChapterCatalogItem(
+      chapterId: chapterId,
+      title: title,
+      description: description,
+      estimatedMinutes: _int(json['estimatedMinutes']),
+      availableNodeCount: _int(json['availableNodeCount']),
+    );
+  }
+
+  final String chapterId;
+  final String title;
+  final String description;
+  final int estimatedMinutes;
+  final int availableNodeCount;
+}
+
+/// 服务端学习会话的元信息；节点数和 revision 用于显示实时进度与并发版本。
+final class RemoteLearningSessionSummary {
+  const RemoteLearningSessionSummary({
+    required this.id,
+    required this.exploreSessionId,
+    required this.topic,
+    required this.scenarioId,
+    required this.atomId,
+    required this.status,
+    required this.nodeCount,
+    required this.startedAt,
+    required this.expiresAt,
+    required this.completedAt,
+    required this.lastActiveAt,
+  });
+
+  factory RemoteLearningSessionSummary.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningSessionSummary(
+      id: _requiredString(json, 'id'),
+      exploreSessionId: _requiredString(json, 'exploreSessionId'),
+      topic: _requiredString(json, 'topic'),
+      scenarioId: _requiredString(json, 'scenarioId'),
+      atomId: _nullableString(json['atomId']),
+      status: _requiredString(json, 'status'),
+      nodeCount: _int(json['nodeCount']),
+      startedAt: _requiredString(json, 'startedAt'),
+      expiresAt: _requiredString(json, 'expiresAt'),
+      completedAt: _nullableString(json['completedAt']),
+      lastActiveAt: _requiredString(json, 'lastActiveAt'),
+    );
+  }
+
+  final String id;
+  final String exploreSessionId;
+  final String topic;
+  final String scenarioId;
+  final String? atomId;
+  final String status;
+  final int nodeCount;
+  final String startedAt;
+  final String expiresAt;
+  final String? completedAt;
+  final String lastActiveAt;
+
+  bool get canContinue {
+    final expiry = DateTime.tryParse(expiresAt);
+    return status == 'ACTIVE' &&
+        (expiry == null || expiry.isAfter(DateTime.now().toUtc()));
+  }
+}
+
 /// 服务端学习会话的元信息；节点数和 revision 用于显示实时进度与并发版本。
 final class RemoteLearningSessionInfo {
   const RemoteLearningSessionInfo({
@@ -213,7 +299,7 @@ final class RemoteLearningSessionInfo {
   final String expiresAt;
   final String? completedAt;
 
-  RemoteLearningSessionInfo copyWith({String? status}) {
+  RemoteLearningSessionInfo copyWith({String? status, String? expiresAt}) {
     return RemoteLearningSessionInfo(
       id: id,
       exploreSessionId: exploreSessionId,
@@ -224,7 +310,7 @@ final class RemoteLearningSessionInfo {
       revision: revision,
       nodeCount: nodeCount,
       startedAt: startedAt,
-      expiresAt: expiresAt,
+      expiresAt: expiresAt ?? this.expiresAt,
       completedAt: completedAt,
     );
   }
@@ -240,6 +326,8 @@ final class RemoteLearningNode {
     required this.answer,
     required this.followUpQuestion,
     this.mapLabel,
+    this.answerSource,
+    this.turnIntent,
     required this.strategy,
     required this.depth,
     required this.isSideBranch,
@@ -257,6 +345,8 @@ final class RemoteLearningNode {
       answer: _nullableString(json['answer']) ?? '',
       followUpQuestion: _nullableString(json['followUpQuestion']) ?? '',
       mapLabel: _nullableString(json['mapLabel']),
+      answerSource: _nullableString(json['answerSource']),
+      turnIntent: _nullableString(json['turnIntent']),
       strategy: _nullableString(json['strategy']),
       depth: _int(json['depth']),
       isSideBranch: json['isSideBranch'] == true,
@@ -273,12 +363,50 @@ final class RemoteLearningNode {
   final String answer;
   final String followUpQuestion;
   final String? mapLabel;
+  final String? answerSource;
+  final String? turnIntent;
   final String? strategy;
   final int depth;
   final bool isSideBranch;
   final String? backtrackTargetId;
   final double? confidence;
   final String createdAt;
+}
+
+/// 服务端从完整对话轮次提炼出的认知节点；evidenceNodeId 可定位回形成该理解的原始对话。
+final class RemoteLearningConceptNode {
+  const RemoteLearningConceptNode({
+    required this.id,
+    required this.parentId,
+    required this.label,
+    required this.kind,
+    required this.status,
+    required this.relation,
+    required this.evidenceNodeId,
+    required this.confidence,
+  });
+
+  factory RemoteLearningConceptNode.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningConceptNode(
+      id: _requiredString(json, 'id'),
+      parentId: _nullableString(json['parentId']),
+      label: _requiredString(json, 'label'),
+      kind: _requiredString(json, 'kind'),
+      status: _requiredString(json, 'status'),
+      relation: _requiredString(json, 'relation'),
+      evidenceNodeId: _requiredString(json, 'evidenceNodeId'),
+      confidence: _doubleOrNull(json['confidence']),
+    );
+  }
+
+  final String id;
+  final String? parentId;
+  final String label;
+  final String kind;
+  final String status;
+  final String relation;
+  final String evidenceNodeId;
+  final double? confidence;
 }
 
 /// 一轮对话实际调用的素材记录；payload 只在对应素材组件内解释。
@@ -348,6 +476,193 @@ final class RemoteLearningSummary {
   final List<String> recommendedReview;
 }
 
+/// 练习节点由练习服务生成；当前阶段保留 Mock 标识，避免把测试样本误当成学生已完成的练习。
+final class RemoteLearningPracticeNode {
+  const RemoteLearningPracticeNode({
+    required this.id,
+    required this.title,
+    required this.prompt,
+    required this.purpose,
+    required this.status,
+    required this.latestReasoning,
+    required this.latestAnswer,
+    required this.feedback,
+  });
+
+  factory RemoteLearningPracticeNode.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningPracticeNode(
+      id: _requiredString(json, 'id'),
+      title: _requiredString(json, 'title'),
+      prompt: _requiredString(json, 'prompt'),
+      purpose: _requiredString(json, 'purpose'),
+      status: _requiredString(json, 'status'),
+      latestReasoning: _nullableString(json['latestReasoning']),
+      latestAnswer: _nullableString(json['latestAnswer']),
+      feedback: _nullableString(json['feedback']),
+    );
+  }
+
+  final String id;
+  final String title;
+  final String prompt;
+  final String purpose;
+  final String status;
+  final String? latestReasoning;
+  final String? latestAnswer;
+  final String? feedback;
+}
+
+/// 一道练习的步骤证据；真实解题记录接入后会按学生提交实时替换。
+final class RemoteLearningSolutionPathNode {
+  const RemoteLearningSolutionPathNode({
+    required this.practiceId,
+    required this.steps,
+  });
+
+  factory RemoteLearningSolutionPathNode.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningSolutionPathNode(
+      practiceId: _requiredString(json, 'practiceId'),
+      steps: _strings(json['steps']),
+    );
+  }
+
+  final String practiceId;
+  final List<String> steps;
+}
+
+/// 掌握度只引用会话和练习证据，不在客户端自行推断学生表现。
+final class RemoteLearningMasteryNode {
+  const RemoteLearningMasteryNode({
+    required this.dimension,
+    required this.score,
+    required this.evidence,
+  });
+
+  factory RemoteLearningMasteryNode.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningMasteryNode(
+      dimension: _requiredString(json, 'dimension'),
+      score: _int(json['score']),
+      evidence: _strings(json['evidence']),
+    );
+  }
+
+  final String dimension;
+  final int score;
+  final List<String> evidence;
+}
+
+/// 服务端基于学生真实问题与练习过程生成的诊断；待验证不等于薄弱，
+/// 客户端只负责忠实展示证据，不能自行给学生贴“不会”的标签。
+final class RemoteLearningDiagnostic {
+  const RemoteLearningDiagnostic({
+    required this.id,
+    required this.dimension,
+    required this.status,
+    required this.title,
+    required this.observation,
+    required this.evidence,
+    required this.nextAction,
+  });
+
+  factory RemoteLearningDiagnostic.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningDiagnostic(
+      id: _requiredString(json, 'id'),
+      dimension: _requiredString(json, 'dimension'),
+      status: _requiredString(json, 'status'),
+      title: _requiredString(json, 'title'),
+      observation: _requiredString(json, 'observation'),
+      evidence: _strings(json['evidence']),
+      nextAction: _requiredString(json, 'nextAction'),
+    );
+  }
+
+  final String id;
+  final String dimension;
+  final String status;
+  final String title;
+  final String observation;
+  final List<String> evidence;
+  final String nextAction;
+}
+
+/// 后端统一派生的学习图；知识库和练习服务完成后保持该客户端读取契约不变。
+final class RemoteLearningGraph {
+  RemoteLearningGraph({
+    required this.conceptTitle,
+    required this.explorationQuestion,
+    required List<RemoteLearningPracticeNode> practice,
+    required List<RemoteLearningSolutionPathNode> solutionPaths,
+    required List<RemoteLearningMasteryNode> mastery,
+    List<RemoteLearningDiagnostic> diagnostics = const [],
+    required List<RemoteLearningNextChallenge> nextChallenges,
+  }) : practice = List.unmodifiable(practice),
+       solutionPaths = List.unmodifiable(solutionPaths),
+       mastery = List.unmodifiable(mastery),
+       diagnostics = List.unmodifiable(diagnostics),
+       nextChallenges = List.unmodifiable(nextChallenges);
+
+  factory RemoteLearningGraph.fromJson(Map<String, dynamic> json) {
+    final concept = _mapOrEmpty(json['concept']);
+    final exploration = _mapOrEmpty(json['exploration']);
+    return RemoteLearningGraph(
+      conceptTitle: _nullableString(concept['title']) ?? '当前概念',
+      explorationQuestion:
+          _nullableString(exploration['question']) ?? '正在形成探索问题',
+      practice: _list(json['practice'])
+          .map((item) => RemoteLearningPracticeNode.fromJson(_map(item)))
+          .toList(growable: false),
+      solutionPaths: _list(json['solutionPaths'])
+          .map((item) => RemoteLearningSolutionPathNode.fromJson(_map(item)))
+          .toList(growable: false),
+      mastery: _list(json['mastery'])
+          .map((item) => RemoteLearningMasteryNode.fromJson(_map(item)))
+          .toList(growable: false),
+      diagnostics: _list(json['diagnostics'])
+          .map((item) => RemoteLearningDiagnostic.fromJson(_map(item)))
+          .toList(growable: false),
+      nextChallenges: _list(json['nextChallenges'])
+          .map((item) => RemoteLearningNextChallenge.fromJson(_map(item)))
+          .toList(growable: false),
+    );
+  }
+
+  final String conceptTitle;
+  final String explorationQuestion;
+  final List<RemoteLearningPracticeNode> practice;
+  final List<RemoteLearningSolutionPathNode> solutionPaths;
+  final List<RemoteLearningMasteryNode> mastery;
+  final List<RemoteLearningDiagnostic> diagnostics;
+  final List<RemoteLearningNextChallenge> nextChallenges;
+
+  RemoteLearningSolutionPathNode? solutionPathFor(String practiceId) {
+    for (final path in solutionPaths) {
+      if (path.practiceId == practiceId) return path;
+    }
+    return null;
+  }
+}
+
+/// 章节掌握后由后端解锁的相邻挑战，不在客户端硬编码难度路线。
+final class RemoteLearningNextChallenge {
+  const RemoteLearningNextChallenge({
+    required this.id,
+    required this.title,
+    required this.question,
+  });
+
+  factory RemoteLearningNextChallenge.fromJson(Map<String, dynamic> json) {
+    return RemoteLearningNextChallenge(
+      id: _requiredString(json, 'id'),
+      title: _requiredString(json, 'title'),
+      question: _requiredString(json, 'question'),
+    );
+  }
+
+  final String id;
+  final String title;
+  final String question;
+}
+
 /// 客户端每次原子替换的完整服务端快照，避免本地猜测树合并结果。
 final class RemoteLearningSessionSnapshot {
   RemoteLearningSessionSnapshot({
@@ -355,13 +670,19 @@ final class RemoteLearningSessionSnapshot {
     required this.currentNodeId,
     required this.activeStrategy,
     required List<RemoteLearningNode> nodes,
+    List<RemoteLearningConceptNode> conceptNodes = const [],
     required List<RemoteLearningMaterial> materials,
     required this.summary,
+    this.learningGraph,
+    this.teachingFlow,
   }) : nodes = List.unmodifiable(nodes),
+       conceptNodes = List.unmodifiable(conceptNodes),
        materials = List.unmodifiable(materials);
 
   factory RemoteLearningSessionSnapshot.fromJson(Map<String, dynamic> json) {
     final summaryJson = json['summary'];
+    final learningGraphJson = json['learningGraph'];
+    final teachingFlowJson = json['teachingFlow'];
     return RemoteLearningSessionSnapshot(
       session: RemoteLearningSessionInfo.fromJson(_map(json['session'])),
       currentNodeId: _nullableString(json['currentNodeId']),
@@ -369,12 +690,21 @@ final class RemoteLearningSessionSnapshot {
       nodes: _list(json['nodes'])
           .map((item) => RemoteLearningNode.fromJson(_map(item)))
           .toList(growable: false),
+      conceptNodes: _list(json['conceptNodes'])
+          .map((item) => RemoteLearningConceptNode.fromJson(_map(item)))
+          .toList(growable: false),
       materials: _list(json['materials'])
           .map((item) => RemoteLearningMaterial.fromJson(_map(item)))
           .toList(growable: false),
       summary: summaryJson == null
           ? null
           : RemoteLearningSummary.fromJson(_map(summaryJson)),
+      learningGraph: learningGraphJson == null
+          ? null
+          : RemoteLearningGraph.fromJson(_map(learningGraphJson)),
+      teachingFlow: teachingFlowJson == null
+          ? null
+          : RemoteTeachingFlow.fromJson(_map(teachingFlowJson)),
     );
   }
 
@@ -382,8 +712,11 @@ final class RemoteLearningSessionSnapshot {
   final String? currentNodeId;
   final String? activeStrategy;
   final List<RemoteLearningNode> nodes;
+  final List<RemoteLearningConceptNode> conceptNodes;
   final List<RemoteLearningMaterial> materials;
   final RemoteLearningSummary? summary;
+  final RemoteLearningGraph? learningGraph;
+  final RemoteTeachingFlow? teachingFlow;
 
   RemoteLearningNode? nodeById(String? id) {
     if (id == null) return null;
@@ -400,6 +733,51 @@ final class RemoteLearningSessionSnapshot {
     while (current != null && visited.add(current.id)) {
       result.insert(0, current);
       current = nodeById(current.parentId);
+    }
+    return List.unmodifiable(result);
+  }
+
+  /// 兼容尚未重启的旧后端：缺少 conceptNodes 时只在客户端临时投影，不写回数据库。
+  List<RemoteLearningConceptNode> get displayConceptNodes {
+    if (conceptNodes.isNotEmpty) return conceptNodes;
+    final result = <RemoteLearningConceptNode>[];
+    final conceptIdByLabel = <String, String>{};
+    final conceptIdByTurn = <String, String>{};
+    for (final node in nodes) {
+      final label = (node.mapLabel?.trim().isNotEmpty ?? false)
+          ? node.mapLabel!.trim()
+          : node.question.trim();
+      if (label.isEmpty) continue;
+      final normalized = label.replaceAll(RegExp(r'\s+'), '').toLowerCase();
+      final existing = conceptIdByLabel[normalized];
+      if (existing != null) {
+        conceptIdByTurn[node.id] = existing;
+        continue;
+      }
+      final id = 'concept-${node.id}';
+      final parentId = node.parentId == null
+          ? null
+          : conceptIdByTurn[node.parentId!];
+      result.add(
+        RemoteLearningConceptNode(
+          id: id,
+          parentId: parentId,
+          label: label,
+          kind: node.status == 'CONTRADICTED' ? 'MISCONCEPTION' : 'CONCEPT',
+          status: node.status == 'CONTRADICTED' ? 'CONFLICTED' : 'VALIDATED',
+          relation: node.status == 'CONTRADICTED'
+              ? 'CONTRADICTS'
+              : node.isSideBranch
+              ? 'BRANCH'
+              : parentId == null
+              ? 'ROOT'
+              : 'DEEPENS',
+          evidenceNodeId: node.id,
+          confidence: node.confidence,
+        ),
+      );
+      conceptIdByLabel[normalized] = id;
+      conceptIdByTurn[node.id] = id;
     }
     return List.unmodifiable(result);
   }

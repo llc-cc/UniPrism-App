@@ -35,7 +35,29 @@ class DeveloperToolsPage extends StatelessWidget {
             icon: Icons.account_tree_rounded,
             title: '1.2 对话探索实验室',
             description: 'Learning Entry、真实 AI 会话与实时思维树',
-            onTap: () => _push(context, const RemoteExplorationLabPage()),
+            onTap: () => _push(
+              context,
+              RemoteExplorationLabPage(
+                gateway: RemoteExplorationApi(
+                  baseUrl: AppConfig.apiBaseUrl,
+                  identityProvider: remoteIdentityProviderForPlatform(
+                    isWeb: kIsWeb,
+                    nativeProvider: () async {
+                      final auth = AuthService.instance;
+                      // 原生端登录态先绑定账号，历史查询与后续写入才能由服务端按 userId 授权。
+                      final exploreSessionId = auth.isLoggedIn
+                          ? await auth.bindExploreSessionToCurrentUser()
+                          : await auth.ensureExploreSession();
+                      return RemoteExplorationIdentity(
+                        exploreSessionId: exploreSessionId,
+                        bearerToken: auth.token,
+                        anonymousId: auth.anonymousId,
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
           ),
           _DeveloperToolEntry(
             key: const ValueKey('developer-tool-content-ingestion'),

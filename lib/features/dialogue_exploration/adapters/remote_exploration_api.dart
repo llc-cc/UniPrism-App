@@ -4,23 +4,33 @@ import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
+import 'guided_teaching_flow_dto.dart';
 import 'remote_exploration_dto.dart';
 
 /// 远程 1.2 接口边界；Widget 与 Controller 均不直接处理 URL、鉴权头或 JSON。
 abstract interface class RemoteExplorationGateway {
+  Future<List<LearningChapterCatalogItem>> listChapterCatalog();
+
   Future<LearningChapterOverviewSnapshot> getChapterOverview(String chapterId);
 
   Future<LearningEntrySnapshot> getEntry(String atomId);
 
   Future<RemoteLearningSessionSnapshot> createSession({
-    required String atomId,
+    String? atomId,
     required String scenarioId,
     String? directionId,
     String? question,
     String? idempotencyKey,
+    RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
   });
 
   Future<RemoteLearningSessionSnapshot?> restoreLatest();
+
+  Future<List<RemoteLearningSessionSummary>> listSessions();
+
+  Future<RemoteLearningSessionSnapshot> restoreSession(
+    RemoteLearningSessionSummary summary,
+  );
 
   Future<RemoteLearningSessionSnapshot> submitTurn({
     required String sessionId,
@@ -54,8 +64,45 @@ abstract interface class RemoteExplorationGateway {
     String? idempotencyKey,
   });
 
+  Future<RemoteLearningSessionSnapshot> submitPracticeAttempt({
+    required String sessionId,
+    required String practiceId,
+    required String reasoning,
+    required String answer,
+    String? idempotencyKey,
+  });
+
+  Future<RemoteLearningSessionSnapshot> submitMaterialEvent({
+    required String sessionId,
+    required String materialUsageId,
+    required RemoteAssetEvent event,
+    String? idempotencyKey,
+  });
+
   Future<String> exportTree(String sessionId);
 }
+
+/// 由应用装配层提供的当前学习身份；Feature 不直接依赖 AuthService，避免账号逻辑反向进入 UI 模块。
+final class RemoteExplorationIdentity {
+  const RemoteExplorationIdentity({
+    required this.exploreSessionId,
+    this.bearerToken,
+    this.anonymousId,
+  });
+
+  final String exploreSessionId;
+  final String? bearerToken;
+  final String? anonymousId;
+}
+
+typedef RemoteExplorationIdentityProvider =
+    Future<RemoteExplorationIdentity> Function();
+
+/// Web 端由 BrowserClient 自行创建匿名会话，避免调用依赖 dart:io 的应用身份链路。
+RemoteExplorationIdentityProvider? remoteIdentityProviderForPlatform({
+  required bool isWeb,
+  required RemoteExplorationIdentityProvider nativeProvider,
+}) => isWeb ? null : nativeProvider;
 
 /// 用户可见的稳定远程错误；原始响应和堆栈不直接暴露给学生。
 final class RemoteExplorationException implements Exception {
@@ -78,15 +125,28 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
       defaultValue: 'http://localhost:3000',
     ),
     this.timeout = const Duration(seconds: 35),
+    this.identityProvider,
   }) : _client = client ?? http.Client(),
        _baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), '');
 
   final http.Client _client;
   final String _baseUrl;
   final Duration timeout;
+  final RemoteExplorationIdentityProvider? identityProvider;
   String? _anonymousId;
   String? _exploreSessionId;
-  String? _latestLearningSessionId;
+  String? _bearerToken;
+
+  @override
+  Future<List<LearningChapterCatalogItem>> listChapterCatalog() async {
+    final items = await _requestList('GET', '/api/learning-chapters');
+    // 目录的单条脏数据不应阻断用户恢复既有学习会话。
+    return List.unmodifiable(
+      items
+          .map(LearningChapterCatalogItem.tryFromJson)
+          .whereType<LearningChapterCatalogItem>(),
+    );
+  }
 
   @override
   Future<LearningChapterOverviewSnapshot> getChapterOverview(
@@ -110,11 +170,12 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
 
   @override
   Future<RemoteLearningSessionSnapshot> createSession({
-    required String atomId,
+    String? atomId,
     required String scenarioId,
     String? directionId,
     String? question,
     String? idempotencyKey,
+    RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
   }) async {
     final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
@@ -122,27 +183,57 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
       '/api/learning-sessions',
       body: {
         'exploreSessionId': exploreSessionId,
-        'atomId': atomId,
+        if ((atomId ?? '').isNotEmpty) 'atomId': atomId,
         'scenarioId': scenarioId,
+        'flowMode': flowMode.wireValue,
         if ((directionId ?? '').isNotEmpty) 'directionId': directionId,
         if ((question ?? '').trim().isNotEmpty) 'question': question!.trim(),
       },
       idempotencyKey: idempotencyKey,
     );
     final snapshot = RemoteLearningSessionSnapshot.fromJson(data);
-    _latestLearningSessionId = snapshot.session.id;
     return snapshot;
   }
 
   @override
   Future<RemoteLearningSessionSnapshot?> restoreLatest() async {
-    final learningSessionId = _latestLearningSessionId;
-    final exploreSessionId = _exploreSessionId;
-    if (learningSessionId == null || exploreSessionId == null) return null;
+    final history = await listSessions();
+    RemoteLearningSessionSummary? latest;
+    for (final summary in history) {
+      if (summary.canContinue) {
+        latest = summary;
+        break;
+      }
+    }
+    if (latest == null) return null;
+    return restoreSession(latest);
+  }
+
+  @override
+  Future<List<RemoteLearningSessionSummary>> listSessions() async {
+    final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
       'GET',
-      '/api/learning-sessions/${Uri.encodeComponent(learningSessionId)}'
-          '?exploreSessionId=${Uri.encodeQueryComponent(exploreSessionId)}',
+      '/api/learning-sessions'
+          '?exploreSessionId=${Uri.encodeQueryComponent(exploreSessionId)}'
+          '&scenarioId=prestudy&limit=20',
+    );
+    final rawItems = data['items'];
+    if (rawItems is! List) return const [];
+    return rawItems
+        .map((item) => RemoteLearningSessionSummary.fromJson(_asMap(item)))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<RemoteLearningSessionSnapshot> restoreSession(
+    RemoteLearningSessionSummary summary,
+  ) async {
+    await _ensureExploreSession();
+    final data = await _request(
+      'GET',
+      '/api/learning-sessions/${Uri.encodeComponent(summary.id)}'
+          '?exploreSessionId=${Uri.encodeQueryComponent(summary.exploreSessionId)}',
     );
     return RemoteLearningSessionSnapshot.fromJson(data);
   }
@@ -191,10 +282,11 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
     required String nodeId,
     String? idempotencyKey,
   }) async {
+    final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
       'POST',
       '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/memory-candidates',
-      body: {'exploreSessionId': _requiredExploreSessionId(), 'nodeId': nodeId},
+      body: {'exploreSessionId': exploreSessionId, 'nodeId': nodeId},
       idempotencyKey: idempotencyKey,
     );
     return data.map((key, value) => MapEntry(key, value as Object?));
@@ -212,11 +304,45 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
   }
 
   @override
+  Future<RemoteLearningSessionSnapshot> submitPracticeAttempt({
+    required String sessionId,
+    required String practiceId,
+    required String reasoning,
+    required String answer,
+    String? idempotencyKey,
+  }) {
+    return _mutateSnapshot(sessionId, 'practice-attempts', {
+      'practiceId': practiceId,
+      'reasoning': reasoning.trim(),
+      'answer': answer.trim(),
+    }, idempotencyKey);
+  }
+
+  @override
+  Future<RemoteLearningSessionSnapshot> submitMaterialEvent({
+    required String sessionId,
+    required String materialUsageId,
+    required RemoteAssetEvent event,
+    String? idempotencyKey,
+  }) async {
+    final exploreSessionId = await _ensureExploreSession();
+    final data = await _request(
+      'POST',
+      '/api/learning-sessions/${Uri.encodeComponent(sessionId)}'
+          '/materials/${Uri.encodeComponent(materialUsageId)}/events',
+      body: {'exploreSessionId': exploreSessionId, ...event.toJson()},
+      idempotencyKey: idempotencyKey,
+    );
+    return RemoteLearningSessionSnapshot.fromJson(data);
+  }
+
+  @override
   Future<String> exportTree(String sessionId) async {
+    final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
       'GET',
       '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/export'
-          '?exploreSessionId=${Uri.encodeQueryComponent(_requiredExploreSessionId())}',
+          '?exploreSessionId=${Uri.encodeQueryComponent(exploreSessionId)}',
     );
     return const JsonEncoder.withIndent('  ').convert(data);
   }
@@ -227,16 +353,25 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
     Map<String, Object?> body,
     String? idempotencyKey,
   ) async {
+    final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
       'POST',
       '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/$action',
-      body: {'exploreSessionId': _requiredExploreSessionId(), ...body},
+      body: {'exploreSessionId': exploreSessionId, ...body},
       idempotencyKey: idempotencyKey,
     );
     return RemoteLearningSessionSnapshot.fromJson(data);
   }
 
   Future<String> _ensureExploreSession() async {
+    final provider = identityProvider;
+    if (provider != null) {
+      final identity = await provider();
+      _exploreSessionId = identity.exploreSessionId;
+      _anonymousId = identity.anonymousId;
+      _bearerToken = identity.bearerToken;
+      return identity.exploreSessionId;
+    }
     final existing = _exploreSessionId;
     if (existing != null) return existing;
     final data = await _request(
@@ -256,12 +391,50 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
     return id;
   }
 
-  String _requiredExploreSessionId() {
-    return _exploreSessionId ??
-        (throw const RemoteExplorationException('学习身份已失效，请重新进入。'));
+  Future<Map<String, dynamic>> _request(
+    String method,
+    String path, {
+    Map<String, Object?>? body,
+    String? idempotencyKey,
+  }) async {
+    try {
+      return _asMap(
+        await _requestData(
+          method,
+          path,
+          body: body,
+          idempotencyKey: idempotencyKey,
+        ),
+      );
+    } on FormatException {
+      // 成功 envelope 的 data 形状也属于远程契约，不能向 UI 泄漏底层解析异常。
+      throw const RemoteExplorationException('服务端返回格式不正确。');
+    }
   }
 
-  Future<Map<String, dynamic>> _request(
+  Future<List<dynamic>> _requestList(
+    String method,
+    String path, {
+    Map<String, Object?>? body,
+    String? idempotencyKey,
+  }) async {
+    try {
+      return _asList(
+        await _requestData(
+          method,
+          path,
+          body: body,
+          idempotencyKey: idempotencyKey,
+        ),
+      );
+    } on FormatException {
+      // 仅转换已获得的响应，不重发请求，保持原有认证与超时边界。
+      throw const RemoteExplorationException('服务端返回格式不正确。');
+    }
+  }
+
+  /// 统一保留认证、超时和 envelope 错误语义；不同 endpoint 仅在此后选择 map 或 list 数据形状。
+  Future<Object?> _requestData(
     String method,
     String path, {
     Map<String, Object?>? body,
@@ -275,6 +448,10 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
         if (method != 'GET')
           'idempotency-key': idempotencyKey ?? _traceId('learning'),
       };
+      final bearerToken = _bearerToken;
+      if (bearerToken != null && bearerToken.isNotEmpty) {
+        headers['authorization'] = 'Bearer $bearerToken';
+      }
       final anonymousId = _anonymousId;
       if (anonymousId != null) {
         headers['x-anonymous-id'] = anonymousId;
@@ -302,7 +479,7 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
         );
       }
       final rawData = envelope['ok'] == true ? envelope['data'] : envelope;
-      return _asMap(rawData);
+      return rawData;
     } on RemoteExplorationException {
       rethrow;
     } on TimeoutException {
@@ -324,6 +501,11 @@ Map<String, dynamic> _asMap(Object? value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return value.map((key, value) => MapEntry('$key', value));
   throw const FormatException('响应不是 JSON 对象');
+}
+
+List<dynamic> _asList(Object? value) {
+  if (value is List) return List<dynamic>.from(value, growable: false);
+  throw const FormatException('响应不是 JSON 数组');
 }
 
 Map<String, dynamic> _asMapOrEmpty(Object? value) {

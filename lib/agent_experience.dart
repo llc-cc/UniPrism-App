@@ -961,6 +961,77 @@ class _AgentHomeEntry extends StatelessWidget {
   }
 }
 
+/// 首页知识森林入口，让长期沉淀能力与 Agent 探索入口保持同级可见。
+class _KnowledgeForestHomeEntry extends StatelessWidget {
+  const _KnowledgeForestHomeEntry({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: Color(0xFFDCCFFF)),
+      ),
+      child: InkWell(
+        key: const ValueKey('knowledge-forest-home-entry'),
+        onTap: onTap,
+        customBorder: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.all(18),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Color(0xFFECE4FF),
+                    borderRadius: BorderRadius.all(Radius.circular(15)),
+                  ),
+                  child: Icon(
+                    Icons.account_tree_outlined,
+                    color: Color(0xFF6B23FF),
+                  ),
+                ),
+              ),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '我的知识森林',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      '查看从 Agent 回答中确认沉淀的主题知识树',
+                      style: TextStyle(color: Color(0xFF6D6875), height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 16,
+                color: Color(0xFF6B23FF),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AgentMockBanner extends StatelessWidget {
   const _AgentMockBanner();
 
