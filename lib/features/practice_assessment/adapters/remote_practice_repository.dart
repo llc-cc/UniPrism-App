@@ -51,7 +51,10 @@ final class RemotePracticeRepository implements PracticeRepository {
         'currentQuestionNumber': currentQuestionNumber,
       },
     );
-    return draft.copyWith(serverVersion: int.tryParse('${data['draftVersion']}') ?? draft.serverVersion);
+    return draft.copyWith(
+      serverVersion:
+          int.tryParse('${data['draftVersion']}') ?? draft.serverVersion,
+    );
   }
 
   @override
@@ -64,13 +67,17 @@ final class RemotePracticeRepository implements PracticeRepository {
       'POST',
       '/api/practice/sessions/$sessionId/events',
       body: {
-        'events': events.map((event) => {
-          'clientEventId': event.clientEventId,
-          'questionId': event.questionId,
-          'eventType': _eventType(event.eventType),
-          'payload': event.payload,
-          'clientOccurredAt': event.clientOccurredAt.toIso8601String(),
-        }).toList(growable: false),
+        'events': events
+            .map(
+              (event) => {
+                'clientEventId': event.clientEventId,
+                'questionId': event.questionId,
+                'eventType': _eventType(event.eventType),
+                'payload': event.payload,
+                'clientOccurredAt': event.clientOccurredAt.toIso8601String(),
+              },
+            )
+            .toList(growable: false),
       },
     );
   }
@@ -86,10 +93,7 @@ final class RemotePracticeRepository implements PracticeRepository {
     final data = await api.request(
       'POST',
       '/api/practice/sessions/$sessionId/attempts',
-      body: {
-        'questionId': question.id,
-        'draftVersion': draft.serverVersion,
-      },
+      body: {'questionId': question.id, 'draftVersion': draft.serverVersion},
       idempotencyKey: key,
     );
     return mapStudentAttempt(data);
@@ -102,6 +106,24 @@ final class RemotePracticeRepository implements PracticeRepository {
       '/api/practice/sessions/$sessionId/complete',
       body: const {},
     );
+  }
+
+  @override
+  Future<void> bindCurrentSession(String sessionId) async {
+    await api.request(
+      'POST',
+      '/api/practice/sessions/$sessionId/bind',
+      body: const {},
+      includeParticipantTokenHeader: true,
+    );
+    // 服务端绑定成功后匿名令牌立即失效，原生端也必须同步删除。
+    await api.participantTokenStore.clear();
+  }
+
+  @override
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() async {
+    final data = await api.request('GET', '/api/practice/ability-profile');
+    return mapStudentAbilityProfiles(data['profiles']);
   }
 }
 

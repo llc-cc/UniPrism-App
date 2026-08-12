@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../adapters/mock_gaokao_math_repository.dart';
@@ -54,10 +56,12 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
 }
 
 final class _PracticeAssessmentLabPageState
-    extends State<PracticeAssessmentLabPage> {
+    extends State<PracticeAssessmentLabPage>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_refresh);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted &&
@@ -77,9 +81,21 @@ final class _PracticeAssessmentLabPageState
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_refresh);
     if (widget.disposeController) widget.controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      // 生命周期回调不能阻塞平台线程，控制器内部会串行刷新草稿与事件。
+      unawaited(widget.controller.flushPending().catchError((Object _) {}));
+    }
   }
 
   void _refresh() {

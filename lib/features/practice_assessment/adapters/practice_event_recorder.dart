@@ -2,9 +2,8 @@ import 'dart:async';
 
 import '../core/practice_models.dart';
 
-typedef PracticeEventBatchSender = Future<void> Function(
-  List<PracticeEvent> events,
-);
+typedef PracticeEventBatchSender =
+    Future<void> Function(List<PracticeEvent> events);
 
 /// 高频修改事件只记录长度档，不持有每次按键文本；失败批次原样留在队首供重试。
 final class PracticeEventRecorder {

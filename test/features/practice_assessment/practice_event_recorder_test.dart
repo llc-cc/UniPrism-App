@@ -25,14 +25,19 @@ void main() {
         payload: {'lengthBand': '1-20'},
       );
     }
-    final originalIds = recorder.pending.map((event) => event.clientEventId).toList();
+    final originalIds = recorder.pending
+        .map((event) => event.clientEventId)
+        .toList();
 
     await expectLater(recorder.flush(), throwsStateError);
     expect(recorder.pending, hasLength(55));
     await recorder.flush();
 
     expect(batches.map((batch) => batch.length), [50, 50, 5]);
-    expect(batches[1].map((event) => event.clientEventId), originalIds.take(50));
+    expect(
+      batches[1].map((event) => event.clientEventId),
+      originalIds.take(50),
+    );
     expect(recorder.pending, isEmpty);
   });
 

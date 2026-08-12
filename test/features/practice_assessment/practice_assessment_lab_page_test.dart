@@ -123,6 +123,28 @@ void main() {
     expect(find.textContaining('RULES'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('应用退到后台时立即刷新远程草稿', (tester) async {
+    final source = MockGaokaoMathRepository();
+    final repository = _DelayedLoadRepository(
+      await source.loadPaper(),
+      mode: PracticeConnectionMode.remote,
+    );
+    final controller = PracticeSessionController(
+      repository: repository,
+      draftSaveDebounce: const Duration(hours: 1),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    repository.release();
+    await tester.pumpAndSettle();
+    controller.updateAnswer('B');
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    expect(repository.saveDraftCount, 1);
+  });
 }
 
 Widget _app(PracticeSessionController controller) {
@@ -130,14 +152,12 @@ Widget _app(PracticeSessionController controller) {
 }
 
 final class _DelayedLoadRepository implements PracticeRepository {
-  _DelayedLoadRepository(
-    this.paper, {
-    this.mode = PracticeConnectionMode.mock,
-  });
+  _DelayedLoadRepository(this.paper, {this.mode = PracticeConnectionMode.mock});
 
   final PracticePaper paper;
   final PracticeConnectionMode mode;
   final Completer<void> _gate = Completer<void>();
+  int saveDraftCount = 0;
 
   @override
   PracticeConnectionMode get connectionMode => mode;
@@ -171,7 +191,10 @@ final class _DelayedLoadRepository implements PracticeRepository {
     required PracticeQuestion question,
     required PracticeDraft draft,
     required int currentQuestionNumber,
-  }) async => draft.copyWith(serverVersion: draft.serverVersion + 1);
+  }) async {
+    saveDraftCount += 1;
+    return draft.copyWith(serverVersion: draft.serverVersion + 1);
+  }
 
   @override
   Future<void> recordEvents({
@@ -195,4 +218,11 @@ final class _DelayedLoadRepository implements PracticeRepository {
 
   @override
   Future<void> completeSession(String sessionId) async {}
+
+  @override
+  Future<void> bindCurrentSession(String sessionId) async {}
+
+  @override
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() async =>
+      const [];
 }

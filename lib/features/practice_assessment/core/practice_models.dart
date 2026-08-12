@@ -134,6 +134,7 @@ final class PracticeQuestion {
   final Map<String, String> options;
   final List<String> knowledgePoints;
   final QuestionDifficultyProfile difficulty;
+
   /// 远程学生端不会收到服务端答案与 rubric；仅 Mock 规则评分持有此字段。
   final QuestionRubric? rubric;
 }
@@ -327,6 +328,21 @@ final class AttemptAssessment {
         factCodes: const [],
         errorTags: const [],
       );
+}
+
+/// 后端长期画像的学生可见摘要；不包含内部置信度或训练标签。
+final class PracticeAbilityProfileSummary {
+  const PracticeAbilityProfileSummary({
+    required this.dimension,
+    required this.displayBand,
+    required this.maturity,
+    required this.evidenceCount,
+  });
+
+  final AbilityDimension dimension;
+  final int? displayBand;
+  final String maturity;
+  final int evidenceCount;
 }
 
 /// 去标识化的小模型训练样本；只保留题目、过程事实和监督标签。

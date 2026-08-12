@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 abstract interface class PracticeParticipantTokenStore {
   Future<String?> read();
   Future<void> write(String? token);
+
+  Future<void> clear();
 }
 
 final class NativePracticeParticipantTokenStore
@@ -25,6 +27,9 @@ final class NativePracticeParticipantTokenStore
     if (kIsWeb) return;
     await _channel.invokeMethod<void>('write', <String, String?>{_key: token});
   }
+
+  @override
+  Future<void> clear() => write(null);
 }
 
 final class MemoryPracticeParticipantTokenStore
@@ -37,4 +42,7 @@ final class MemoryPracticeParticipantTokenStore
 
   @override
   Future<void> write(String? token) async => _token = token;
+
+  @override
+  Future<void> clear() async => _token = null;
 }

@@ -12,9 +12,6 @@ String _string(Object? value, [String fallback = '']) =>
 int _int(Object? value, [int fallback = 0]) =>
     value is num ? value.toInt() : int.tryParse('$value') ?? fallback;
 
-double _double(Object? value, [double fallback = 0]) =>
-    value is num ? value.toDouble() : double.tryParse('$value') ?? fallback;
-
 PracticeQuestionType _questionType(Object? value) => switch ('$value') {
   'SINGLE_CHOICE' => PracticeQuestionType.singleChoice,
   'MULTIPLE_CHOICE' => PracticeQuestionType.multipleChoice,
@@ -44,30 +41,32 @@ PracticePaper mapStudentPaper(Object? value) {
         ? PracticeContentSource.authorized
         : PracticeContentSource.demonstration,
     contentVersion: _string(json['contentVersion']),
-    questions: _list(json['questions']).map((raw) {
-      final question = _map(raw);
-      final difficulty = _map(question['difficulty']);
-      return PracticeQuestion(
-        id: _string(question['id']),
-        number: _int(question['number']),
-        type: _questionType(question['type']),
-        prompt: _string(question['prompt']),
-        options: _map(question['options']).map(
-          (key, item) => MapEntry(key, _string(item)),
-        ),
-        knowledgePoints: _list(question['knowledgePoints'])
-            .map(_string)
-            .toList(growable: false),
-        difficulty: QuestionDifficultyProfile(
-          knowledgeLoad: _int(difficulty['knowledgeLoad']),
-          readingLoad: _int(difficulty['readingLoad']),
-          reasoningLoad: _int(difficulty['reasoningLoad']),
-          calculationLoad: _int(difficulty['calculationLoad']),
-          techniqueDependency: _int(difficulty['techniqueDependency']),
-          stepDepth: _int(difficulty['stepDepth']),
-        ),
-      );
-    }).toList(growable: false),
+    questions: _list(json['questions'])
+        .map((raw) {
+          final question = _map(raw);
+          final difficulty = _map(question['difficulty']);
+          return PracticeQuestion(
+            id: _string(question['id']),
+            number: _int(question['number']),
+            type: _questionType(question['type']),
+            prompt: _string(question['prompt']),
+            options: _map(
+              question['options'],
+            ).map((key, item) => MapEntry(key, _string(item))),
+            knowledgePoints: _list(
+              question['knowledgePoints'],
+            ).map(_string).toList(growable: false),
+            difficulty: QuestionDifficultyProfile(
+              knowledgeLoad: _int(difficulty['knowledgeLoad']),
+              readingLoad: _int(difficulty['readingLoad']),
+              reasoningLoad: _int(difficulty['reasoningLoad']),
+              calculationLoad: _int(difficulty['calculationLoad']),
+              techniqueDependency: _int(difficulty['techniqueDependency']),
+              stepDepth: _int(difficulty['stepDepth']),
+            ),
+          );
+        })
+        .toList(growable: false),
   );
 }
 
@@ -88,10 +87,11 @@ AttemptAssessment mapStudentAttempt(Object? value) {
       band: status == AbilityEvidenceStatus.observed
           ? _int(observation['band'])
           : null,
-      confidence: _double(observation['confidence'], 1),
-      evidenceStepIds: _list(observation['evidenceStepIds']).map(_string).toList(),
-      factCodes: _list(observation['factCodes']).map(_string).toList(),
-      errorTags: _list(observation['errorTags']).map(_string).toList(),
+      // 远程学生 DTO 只信任状态与档位；内部置信度和证据标签即使误传也忽略。
+      confidence: status == AbilityEvidenceStatus.observed ? 1 : 0,
+      evidenceStepIds: const [],
+      factCodes: const [],
+      errorTags: const [],
     );
   }
   final outcome = switch (_string(json['outcome'])) {
@@ -115,6 +115,24 @@ AttemptAssessment mapStudentAttempt(Object? value) {
     assessorVersion: _string(json['assessorVersion']),
     rubricVersion: _string(json['rubricVersion']),
   );
+}
+
+List<PracticeAbilityProfileSummary> mapStudentAbilityProfiles(Object? value) {
+  return _list(value)
+      .map((raw) {
+        final profile = _map(raw);
+        final displayBand = profile['displayBand'];
+        return PracticeAbilityProfileSummary(
+          dimension: _dimension(profile['dimension']),
+          // null 表示证据不足，必须与真实的 0 档能力严格区分。
+          displayBand: displayBand == null
+              ? null
+              : _int(displayBand).clamp(0, 4),
+          maturity: _string(profile['maturity'], 'INSUFFICIENT'),
+          evidenceCount: _int(profile['evidenceCount']).clamp(0, 1 << 31),
+        );
+      })
+      .toList(growable: false);
 }
 
 PracticeSessionSnapshot mapSessionSnapshot(Object? value) {

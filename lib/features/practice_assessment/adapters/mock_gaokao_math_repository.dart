@@ -70,6 +70,13 @@ final class MockGaokaoMathRepository implements PracticeRepository {
 
   @override
   Future<void> completeSession(String sessionId) async {}
+
+  @override
+  Future<void> bindCurrentSession(String sessionId) async {}
+
+  @override
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() async =>
+      const [];
 }
 
 final PracticePaper _paper = PracticePaper(

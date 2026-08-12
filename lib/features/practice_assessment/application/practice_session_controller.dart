@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../adapters/practice_event_recorder.dart';
@@ -79,15 +81,19 @@ final class PracticeSessionController extends ChangeNotifier {
   PracticeSessionController({
     required this.repository,
     DateTime Function()? now,
+    this.draftSaveDebounce = const Duration(milliseconds: 600),
   }) : _now = now ?? DateTime.now;
 
   final PracticeRepository repository;
   final DateTime Function() _now;
+  final Duration draftSaveDebounce;
 
   PracticeSessionState _state = PracticeSessionState.idle();
   final Map<String, int> _submissionCounts = {};
   final Map<String, bool> _editedAfterResult = {};
   final Set<String> _dirtyQuestionIds = {};
+  Timer? _draftSaveTimer;
+  Future<void> _draftSaveChain = Future<void>.value();
   DateTime? _openedAt;
   PracticeEventRecorder? _eventRecorder;
   bool _isDisposed = false;
@@ -126,10 +132,9 @@ final class PracticeSessionController extends ChangeNotifier {
         scheduleFlush:
             repository.connectionMode == PracticeConnectionMode.remote,
       );
-      final index = (snapshot.currentQuestionNumber - 1).clamp(
-        0,
-        snapshot.paper.questions.length - 1,
-      ).toInt();
+      final index = (snapshot.currentQuestionNumber - 1)
+          .clamp(0, snapshot.paper.questions.length - 1)
+          .toInt();
       _emit(
         PracticeSessionState(
           status: snapshot.status == PracticeRemoteSessionStatus.completed
@@ -199,8 +204,15 @@ final class PracticeSessionController extends ChangeNotifier {
         _state.status == PracticeSessionStatus.submitting) {
       return;
     }
+    final previousQuestionId = _state.currentQuestion?.id;
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
     _emit(_copy(currentIndex: index, errorMessage: null));
     _recordCurrent(PracticeEventType.questionViewed);
+    if (previousQuestionId != null &&
+        _dirtyQuestionIds.contains(previousQuestionId)) {
+      _startBackgroundDraftSave(<String>{previousQuestionId});
+    }
   }
 
   void previousQuestion() => selectQuestion(_state.currentIndex - 1);
@@ -226,20 +238,12 @@ final class PracticeSessionController extends ChangeNotifier {
     _submissionCounts[question.id] = nextSubmissionCount;
     _emit(_copy(status: PracticeSessionStatus.submitting, errorMessage: null));
     try {
-      // 提交必须基于服务端确认的最新草稿；过程事件先刷新，避免评分读取到落后的证据。
-      final savedDraft = _dirtyQuestionIds.contains(question.id)
-          ? await repository.saveDraft(
-              sessionId: sessionId,
-              question: question,
-              draft: draft,
-              currentQuestionNumber: question.number,
-            )
-          : draft;
+      // 提交必须等待自动保存链，确保幂等键引用的是服务端确认的最新草稿版本。
+      _draftSaveTimer?.cancel();
+      _draftSaveTimer = null;
+      await _queueDraftSave(<String>{question.id});
       if (_isDisposed || generation != _operationGeneration) return;
-      _dirtyQuestionIds.remove(question.id);
-      final drafts = Map<String, PracticeDraft>.of(_state.drafts)
-        ..[question.id] = savedDraft;
-      _emit(_copy(drafts: drafts));
+      final savedDraft = _state.drafts[question.id] ?? draft;
       _recordCurrent(PracticeEventType.attemptSubmitted);
       await _eventRecorder?.flush();
       final assessment = await repository.submitAttempt(
@@ -277,6 +281,24 @@ final class PracticeSessionController extends ChangeNotifier {
 
   Future<void> retrySubmission() => submitCurrent();
 
+  /// 页面退到后台或准备销毁时，调用方可等待草稿与粗粒度事件完成刷新。
+  Future<void> flushPending() async {
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
+    await _queueDraftSave(Set<String>.of(_dirtyQuestionIds));
+    await _eventRecorder?.flush();
+  }
+
+  Future<void> bindToSignedInAccount() async {
+    final sessionId = _state.sessionId;
+    if (sessionId == null) throw StateError('练习会话尚未加载');
+    await flushPending();
+    await repository.bindCurrentSession(sessionId);
+  }
+
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() =>
+      repository.loadAbilityProfile();
+
   Future<void> complete() async {
     final paper = _state.paper;
     if (paper == null || _state.results.length != paper.questions.length) {
@@ -284,7 +306,7 @@ final class PracticeSessionController extends ChangeNotifier {
     }
     final sessionId = _state.sessionId;
     if (sessionId != null) {
-      await _eventRecorder?.flush();
+      await flushPending();
       await repository.completeSession(sessionId);
     }
     _emit(_copy(status: PracticeSessionStatus.completed, errorMessage: null));
@@ -311,6 +333,78 @@ final class PracticeSessionController extends ChangeNotifier {
       ..[question.id] = next;
     _dirtyQuestionIds.add(question.id);
     _emit(_copy(drafts: drafts, errorMessage: null));
+    _scheduleDraftSave();
+  }
+
+  void _scheduleDraftSave() {
+    if (repository.connectionMode != PracticeConnectionMode.remote) return;
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = Timer(draftSaveDebounce, () {
+      _draftSaveTimer = null;
+      _startBackgroundDraftSave(Set<String>.of(_dirtyQuestionIds));
+    });
+  }
+
+  void _startBackgroundDraftSave(Set<String> questionIds) {
+    unawaited(
+      _queueDraftSave(questionIds).catchError((Object error) {
+        if (!_isDisposed) {
+          _emit(
+            _copy(
+              status: PracticeSessionStatus.failure,
+              errorMessage: '草稿保存失败：$error',
+            ),
+          );
+        }
+      }),
+    );
+  }
+
+  Future<void> _queueDraftSave(Set<String> questionIds) {
+    if (questionIds.isEmpty ||
+        repository.connectionMode != PracticeConnectionMode.remote) {
+      return _draftSaveChain;
+    }
+    final prior = _draftSaveChain.catchError((Object _) {});
+    final operation = prior.then((_) async {
+      for (final questionId in questionIds) {
+        await _persistLatestDraft(questionId);
+      }
+    });
+    _draftSaveChain = operation;
+    return operation;
+  }
+
+  Future<void> _persistLatestDraft(String questionId) async {
+    while (_dirtyQuestionIds.contains(questionId)) {
+      final sessionId = _state.sessionId;
+      final paper = _state.paper;
+      final draft = _state.drafts[questionId];
+      if (sessionId == null || paper == null || draft == null) return;
+      final question = paper.questions.firstWhere(
+        (item) => item.id == questionId,
+      );
+      final saved = await repository.saveDraft(
+        sessionId: sessionId,
+        question: question,
+        draft: draft,
+        currentQuestionNumber:
+            _state.currentQuestion?.number ?? question.number,
+      );
+      final latest = _state.drafts[questionId];
+      if (latest == null) return;
+      final drafts = Map<String, PracticeDraft>.of(_state.drafts);
+      if (identical(latest, draft)) {
+        drafts[questionId] = saved;
+        _dirtyQuestionIds.remove(questionId);
+      } else {
+        // 保存期间若继续输入，只吸收服务端版本并再次循环，不能覆盖较新的本地文本。
+        drafts[questionId] = latest.copyWith(
+          serverVersion: saved.serverVersion,
+        );
+      }
+      _emit(_copy(drafts: drafts));
+    }
   }
 
   PracticeSessionState _copy({
@@ -366,6 +460,10 @@ final class PracticeSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = null;
+    // ChangeNotifier.dispose 无法等待异步；此处发起尽力刷新，页面生命周期会优先 await 同一入口。
+    unawaited(flushPending().catchError((Object _) {}));
     _isDisposed = true;
     _operationGeneration += 1;
     _eventRecorder?.dispose();

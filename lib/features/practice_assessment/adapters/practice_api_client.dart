@@ -21,7 +21,8 @@ final class PracticeApiException implements Exception {
   final String? requestId;
 
   @override
-  String toString() => requestId == null ? message : '$message（请求编号：$requestId）';
+  String toString() =>
+      requestId == null ? message : '$message（请求编号：$requestId）';
 }
 
 /// 统一处理练习 API 的超时、身份头和标准响应信封。
@@ -46,14 +47,22 @@ final class PracticeApiClient {
     String path, {
     Map<String, Object?>? body,
     String? idempotencyKey,
+    bool includeParticipantTokenHeader = false,
   }) async {
     final bearer = await bearerTokenProvider?.call();
-    final participant = bearer == null ? await participantTokenStore.read() : null;
+    final participant = bearer == null || includeParticipantTokenHeader
+        ? await participantTokenStore.read()
+        : null;
     final headers = <String, String>{
       'accept': 'application/json',
       if (body != null) 'content-type': 'application/json',
-      if (bearer != null && bearer.isNotEmpty) 'authorization': 'Bearer $bearer',
-      if (participant != null) 'authorization': 'PracticeParticipant $participant',
+      if (bearer != null && bearer.isNotEmpty)
+        'authorization': 'Bearer $bearer',
+      if (participant != null && bearer == null)
+        'authorization': 'PracticeParticipant $participant',
+      // 绑定接口需要同时证明登录身份和待合并的匿名身份，不能复用 Authorization。
+      if (participant != null && bearer != null)
+        'x-practice-participant-token': participant,
     };
     if (idempotencyKey != null) {
       headers['idempotency-key'] = idempotencyKey;
@@ -65,13 +74,17 @@ final class PracticeApiClient {
       final streamed = await _client.send(request).timeout(timeout);
       final response = await http.Response.fromStream(streamed);
       final decoded = _decode(response.body);
-      if (response.statusCode < 200 || response.statusCode >= 300 || decoded['ok'] != true) {
+      if (response.statusCode < 200 ||
+          response.statusCode >= 300 ||
+          decoded['ok'] != true) {
         final error = _map(decoded['error']);
         throw PracticeApiException(
           message: error?['message']?.toString() ?? '练习服务请求失败',
           code: error?['code']?.toString(),
           statusCode: response.statusCode,
-          requestId: error?['requestId']?.toString() ?? response.headers['x-request-id'],
+          requestId:
+              error?['requestId']?.toString() ??
+              response.headers['x-request-id'],
         );
       }
       final data = _map(decoded['data']);

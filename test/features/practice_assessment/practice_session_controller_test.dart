@@ -141,7 +141,11 @@ void main() {
 
     await remoteController.submitCurrent();
 
-    expect(remote.calls.take(3), ['saveDraft', 'recordEvents', 'submitAttempt']);
+    expect(remote.calls.take(3), [
+      'saveDraft',
+      'recordEvents',
+      'submitAttempt',
+    ]);
   });
 
   test('提交响应丢失后重试沿用已保存草稿和同一服务端版本', () async {
@@ -163,6 +167,45 @@ void main() {
     expect(remote.savedDraftVersions, [1, 1]);
     expect(remote.calls.where((call) => call == 'saveDraft'), hasLength(1));
   });
+
+  test('切题前刷新未保存草稿并把服务端当前位置更新为目标题', () async {
+    final paper = await repository.loadPaper();
+    final remote = _RecordingRepository(paper: paper);
+    final remoteController = PracticeSessionController(
+      repository: remote,
+      draftSaveDebounce: const Duration(hours: 1),
+    );
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+    remoteController.updateAnswer('B');
+
+    remoteController.selectQuestion(1);
+    await remoteController.flushPending();
+
+    expect(remote.savedQuestionIds, [paper.questions.first.id]);
+    expect(remote.savedCurrentQuestionNumbers, [2]);
+    expect(
+      remoteController.state.drafts[paper.questions.first.id]!.serverVersion,
+      1,
+    );
+  });
+
+  test('远程输入停止后自动防抖保存草稿', () async {
+    final remote = _RecordingRepository(paper: await repository.loadPaper());
+    final remoteController = PracticeSessionController(
+      repository: remote,
+      draftSaveDebounce: Duration.zero,
+    );
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+
+    remoteController.updateReasoning('先列出条件，再代入计算');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await remoteController.flushPending();
+
+    expect(remote.calls.where((call) => call == 'saveDraft'), hasLength(1));
+    expect(remoteController.state.currentDraft.serverVersion, 1);
+  });
 }
 
 final class _RecordingRepository implements PracticeRepository {
@@ -179,6 +222,8 @@ final class _RecordingRepository implements PracticeRepository {
   bool failNextAttempt;
   final List<String> calls = [];
   final List<int> savedDraftVersions = [];
+  final List<String> savedQuestionIds = [];
+  final List<int> savedCurrentQuestionNumbers = [];
 
   @override
   PracticeConnectionMode get connectionMode => PracticeConnectionMode.remote;
@@ -207,6 +252,8 @@ final class _RecordingRepository implements PracticeRepository {
     required int currentQuestionNumber,
   }) async {
     calls.add('saveDraft');
+    savedQuestionIds.add(question.id);
+    savedCurrentQuestionNumbers.add(currentQuestionNumber);
     return draft.copyWith(serverVersion: draft.serverVersion + 1);
   }
 
@@ -238,6 +285,13 @@ final class _RecordingRepository implements PracticeRepository {
 
   @override
   Future<void> completeSession(String sessionId) async => calls.add('complete');
+
+  @override
+  Future<void> bindCurrentSession(String sessionId) async => calls.add('bind');
+
+  @override
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() async =>
+      const [];
 }
 
 final class _BlockingRepository implements PracticeRepository {
@@ -300,4 +354,11 @@ final class _BlockingRepository implements PracticeRepository {
 
   @override
   Future<void> completeSession(String sessionId) async {}
+
+  @override
+  Future<void> bindCurrentSession(String sessionId) async {}
+
+  @override
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile() async =>
+      const [];
 }

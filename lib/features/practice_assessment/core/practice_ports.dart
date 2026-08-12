@@ -28,6 +28,10 @@ abstract interface class PracticeRepository {
   });
 
   Future<void> completeSession(String sessionId);
+
+  Future<void> bindCurrentSession(String sessionId);
+
+  Future<List<PracticeAbilityProfileSummary>> loadAbilityProfile();
 }
 
 /// 单次作答评分端口，后续可替换为远程大模型或本地小模型。
