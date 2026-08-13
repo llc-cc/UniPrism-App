@@ -145,6 +145,60 @@ void main() {
 
     expect(repository.saveDraftCount, 1);
   });
+
+  testWidgets('只有填空题使用数学公式输入框', (tester) async {
+    final controller = PracticeSessionController(
+      repository: MockGaokaoMathRepository(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    controller.selectQuestion(11);
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('practice-math-answer-field')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-answer-input')),
+      findsNothing,
+    );
+
+    controller.selectQuestion(18);
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('practice-math-answer-field')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-answer-input')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('填空公式草稿切题后仍按题目隔离恢复', (tester) async {
+    final controller = PracticeSessionController(
+      repository: MockGaokaoMathRepository(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    controller.selectQuestion(11);
+    controller.updateAnswer(r'\frac{3}{2}');
+    controller.selectQuestion(12);
+    controller.selectQuestion(11);
+    await tester.pump();
+
+    expect(controller.state.currentDraft.answer, r'\frac{3}{2}');
+    expect(
+      find.byKey(const ValueKey('practice-math-answer-field')),
+      findsOneWidget,
+    );
+  });
 }
 
 Widget _app(PracticeSessionController controller) {

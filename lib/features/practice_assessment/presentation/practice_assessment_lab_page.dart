@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:math_keyboard/math_keyboard.dart';
 
 import '../adapters/mock_gaokao_math_repository.dart';
 import '../adapters/practice_api_client.dart';
@@ -8,6 +9,7 @@ import '../adapters/practice_participant_token_store.dart';
 import '../adapters/remote_practice_repository.dart';
 import '../application/practice_session_controller.dart';
 import '../core/practice_models.dart';
+import 'math_answer_field.dart';
 
 /// 独立练习评分实验室；只展示单次作答事实和证据，不推导长期掌握度。
 final class PracticeAssessmentLabPage extends StatefulWidget {
@@ -105,21 +107,23 @@ final class _PracticeAssessmentLabPageState
   @override
   Widget build(BuildContext context) {
     final state = widget.controller.state;
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F6FA),
-      appBar: AppBar(
-        title: const Text('练习评分实验室'),
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-      ),
-      body: switch ((state.paper, state.status)) {
-        (null, PracticeSessionStatus.failure) => _LoadFailure(
-          message: state.errorMessage ?? '试卷加载失败',
-          onRetry: widget.controller.load,
+    return MathKeyboardViewInsets(
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF7F6FA),
+        appBar: AppBar(
+          title: const Text('练习评分实验室'),
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
         ),
-        (null, _) => const Center(child: CircularProgressIndicator()),
-        (final paper?, _) => _paperBody(paper, state),
-      },
+        body: switch ((state.paper, state.status)) {
+          (null, PracticeSessionStatus.failure) => _LoadFailure(
+            message: state.errorMessage ?? '试卷加载失败',
+            onRetry: widget.controller.load,
+          ),
+          (null, _) => const Center(child: CircularProgressIndicator()),
+          (final paper?, _) => _paperBody(paper, state),
+        },
+      ),
     );
   }
 
@@ -363,6 +367,14 @@ final class _QuestionCard extends StatelessWidget {
                     onChanged: isSubmitting ? null : (_) => onOption(entry.key),
                   ),
                 )
+            else if (question.type == PracticeQuestionType.fillBlank)
+              MathAnswerField(
+                key: ValueKey('practice-math-answer-${question.id}'),
+                questionId: question.id,
+                value: draft.answer,
+                enabled: !isSubmitting,
+                onChanged: onAnswer,
+              )
             else
               KeyedSubtree(
                 key: const ValueKey('practice-answer-input'),
