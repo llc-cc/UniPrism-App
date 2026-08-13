@@ -20,7 +20,7 @@
 
 ## 已知限制
 
-- Flutter 测试环境当前受既有长期 Dart 进程或启动锁阻塞；恢复可用环境后，应优先重跑上述两个单文件测试，再以移除 `updateAnswer` 的 `answerChanged` 记录为受控变异，确认事件链测试会失败，然后恢复实现并复跑。
+- 初次沙箱验证受 Flutter SDK lock 写权限阻塞；提升权限后的 fresh run 已取得绿灯。后续若再次出现无输出，应先检查 `D:\dev\flutter\bin\cache\flutter.bat.lock` 的写权限和已知 `flutter run` 状态，不能将启动重试误报为测试失败。
 - 本任务未修改生产行为：现有 Developer Tools 的编译时 Remote 选择、Remote repository 和事件 recorder 已满足要求；新增测试用于锁定该行为。
 
 ## Fix round 1：验证证据更正
@@ -30,4 +30,14 @@
 - 本轮命令与输出：`flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart` 无输出，60 秒后停止；`flutter test test/features/practice_assessment/practice_session_controller_test.dart` 无输出，120 秒超时（exit code 124）；`git diff --check` 通过。
 - 恢复步骤：正常停止已知的本项目 Flutter Web `flutter run`，重跑目标测试；仅在绿灯后重新以 `flutter run -d chrome --web-port=5173 ...` 启动 Web。
 - Commit：`docs(practice): clarify verification evidence`。
-- Concern：本轮仍未获得新增 Flutter 测试绿灯；不可将此前基线结果作为本轮验证结论。
+- Concern（已解除）：当时尚未获得新增 Flutter 测试绿灯；后续提升权限后的 fresh run 已补齐证据。
+
+## Verification follow-up：fresh green
+
+- 根因：沙箱对 `D:\dev\flutter\bin\cache\flutter.bat.lock` 无写权限，Flutter batch 无限重试；此前 60 秒/120 秒超时是环境诊断历史，不是测试失败。
+- `flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart --reporter expanded`：44 项通过，exit 0，23.2 秒。
+- `flutter test test/features/practice_assessment --reporter expanded`：39 项通过，exit 0，15.6 秒。
+- `flutter analyze lib/features/practice_assessment test/features/practice_assessment test/widget_test.dart`：`No issues found`，exit 0，32.4 秒。
+- 执行顺序：停止已知的本项目 Web `flutter run`，完成上述测试和分析后，才重新启动 `flutter run -d chrome --web-port=5173 ...`。
+- Commit：`docs(practice): record flutter verification evidence`。
+- Concern：测试与分析已绿；本次只更新验证证据，没有修改测试或生产代码。

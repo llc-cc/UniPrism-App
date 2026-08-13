@@ -99,23 +99,28 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 
 ### 本轮 2026-08-13 验证状态
 
-本轮运行时，正在运行的本项目 `flutter run` 持有 Flutter 工具启动锁。新增测试尚未取得绿灯：
+首次在沙箱内运行时，沙箱对 `D:\dev\flutter\bin\cache\flutter.bat.lock` 没有写权限；Flutter batch 持续重试，因此留下以下环境诊断记录，并非测试失败：
 
 - `flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart` 无输出，60 秒后停止；
 - `flutter test test/features/practice_assessment/practice_session_controller_test.dart` 无输出，120 秒超时（exit code 124）。
 
-因此，本轮不能声称 Flutter 测试通过。
+获批提升权限后，重新执行得到本轮 fresh green：
+
+- `flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart --reporter expanded`：44 项通过，exit 0，23.2 秒；
+- `flutter test test/features/practice_assessment --reporter expanded`：39 项通过，exit 0，15.6 秒；
+- `flutter analyze lib/features/practice_assessment test/features/practice_assessment test/widget_test.dart`：`No issues found`，exit 0，32.4 秒。
 
 ### 恢复与重跑顺序
 
 先正常停止已知的本项目 Flutter Web `flutter run` 实例，再运行目标测试：
 
 ```powershell
-dart analyze lib/features/practice_assessment test/features/practice_assessment
-flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart
+flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart --reporter expanded
+flutter test test/features/practice_assessment --reporter expanded
+flutter analyze lib/features/practice_assessment test/features/practice_assessment test/widget_test.dart
 ```
 
-目标测试取得绿灯后，才重新用本文件“启动 Flutter 远程模式”章节的 `flutter run -d chrome --web-port=5173 ...` 命令启动 Web 页面。
+本轮也遵循该顺序：目标测试完成并取得绿灯后，才重新用本文件“启动 Flutter 远程模式”章节的 `flutter run -d chrome --web-port=5173 ...` 命令启动 Web 页面。
 
 ## 小模型怎么训练
 
