@@ -73,6 +73,18 @@ void main() {
     expect(controller.state.currentIndex, 18);
   });
 
+  test('提交后保留当前题，学生点击推荐才跳转到后端指定题目', () async {
+    await controller.load();
+    controller.updateAnswer('B');
+
+    await controller.submitCurrent();
+
+    expect(controller.state.currentIndex, 0);
+    expect(controller.state.resultForCurrent?.nextRecommendation, isNotNull);
+    controller.openCurrentRecommendation();
+    expect(controller.state.currentIndex, 1);
+  });
+
   test('提交过程中忽略重复提交', () async {
     final blockingRepository = _BlockingRepository(
       paper: await repository.loadPaper(),
@@ -159,26 +171,19 @@ void main() {
     await remoteController.submitCurrent();
 
     final events = remote.recordedEventBatches.single;
-    expect(
-      events.map((event) => event.eventType),
-      [
-        PracticeEventType.questionViewed,
-        PracticeEventType.answerChanged,
-        PracticeEventType.reasoningChanged,
-        PracticeEventType.attemptSubmitted,
-      ],
-    );
-    expect(
-      events.map((event) => event.questionId).toSet(),
-      {remote.paper.questions.first.id},
-    );
+    expect(events.map((event) => event.eventType), [
+      PracticeEventType.questionViewed,
+      PracticeEventType.answerChanged,
+      PracticeEventType.reasoningChanged,
+      PracticeEventType.attemptSubmitted,
+    ]);
+    expect(events.map((event) => event.questionId).toSet(), {
+      remote.paper.questions.first.id,
+    });
     expect(events[1].payload, {'lengthBand': '1-20'});
     expect(events[2].payload, {'lengthBand': '1-20'});
     expect(events[1].payload.values, isNot(contains('B')));
-    expect(
-      events[2].payload.values,
-      isNot(contains('先列出已知条件，再代入计算。')),
-    );
+    expect(events[2].payload.values, isNot(contains('先列出已知条件，再代入计算。')));
   });
 
   test('提交响应丢失后重试沿用已保存草稿和同一服务端版本', () async {

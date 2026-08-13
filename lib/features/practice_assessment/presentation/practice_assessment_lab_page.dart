@@ -170,6 +170,24 @@ final class _PracticeAssessmentLabPageState
                   if (state.resultForCurrent case final result?) ...[
                     const SizedBox(height: 12),
                     _AssessmentCard(assessment: result),
+                    if (result.nextRecommendation
+                        case final recommendation?) ...[
+                      const SizedBox(height: 12),
+                      _NextRecommendationCard(
+                        recommendation: recommendation,
+                        onOpen: () {
+                          final opened = widget.controller
+                              .openCurrentRecommendation();
+                          if (!opened && mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('推荐题不在当前试卷中，请刷新后重试。'),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
                   ],
                   const SizedBox(height: 16),
                   _ActionBar(
@@ -477,6 +495,83 @@ final class _AssessmentCard extends StatelessWidget {
               const SizedBox(height: 4),
               const Text('这些维度暂不评分，不会被当作能力较低。'),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _NextRecommendationCard extends StatelessWidget {
+  const _NextRecommendationCard({
+    required this.recommendation,
+    required this.onOpen,
+  });
+
+  final PracticeNextRecommendation recommendation;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      key: const ValueKey('practice-next-recommendation'),
+      elevation: 0,
+      color: const Color(0xFFEAF8F5),
+      shape: RoundedRectangleBorder(
+        side: const BorderSide(color: Color(0xFF9ED8CC)),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.auto_awesome_rounded, color: Color(0xFF007A66)),
+                SizedBox(width: 8),
+                Text(
+                  '推荐下一题',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '第 ${recommendation.questionNumber} 题 · ${recommendation.prompt}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              recommendation.publicReason,
+              style: const TextStyle(color: Color(0xFF3C625A)),
+            ),
+            if (recommendation.knowledgePoints.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final point in recommendation.knowledgePoints)
+                    Chip(
+                      visualDensity: VisualDensity.compact,
+                      label: Text(point),
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                key: const ValueKey('practice-open-recommendation'),
+                onPressed: onOpen,
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('进入推荐题'),
+              ),
+            ),
           ],
         ),
       ),

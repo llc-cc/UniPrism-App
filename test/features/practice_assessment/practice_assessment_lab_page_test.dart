@@ -46,6 +46,34 @@ void main() {
     expect(find.text('过程证据不足'), findsOneWidget);
   });
 
+  testWidgets('提交后显示推荐下一题卡片，点击后才进入推荐题', (tester) async {
+    final controller = PracticeSessionController(
+      repository: MockGaokaoMathRepository(),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('practice-option-B')));
+    final submit = find.byKey(const ValueKey('practice-submit'));
+    await tester.ensureVisible(submit);
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+
+    expect(controller.state.currentIndex, 0);
+    final recommendation = find.byKey(
+      const ValueKey('practice-next-recommendation'),
+    );
+    expect(recommendation, findsOneWidget);
+    final open = find.byKey(const ValueKey('practice-open-recommendation'));
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+
+    expect(controller.state.currentIndex, 1);
+    expect(controller.state.currentQuestion?.number, 2);
+  });
+
   testWidgets('多选题使用独立选项控件并保存多个选择', (tester) async {
     final controller = PracticeSessionController(
       repository: MockGaokaoMathRepository(),
@@ -161,10 +189,7 @@ void main() {
       find.byKey(const ValueKey('practice-math-answer-field')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const ValueKey('practice-answer-input')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('practice-answer-input')), findsNothing);
 
     controller.selectQuestion(18);
     await tester.pump();
@@ -173,10 +198,7 @@ void main() {
       find.byKey(const ValueKey('practice-math-answer-field')),
       findsNothing,
     );
-    expect(
-      find.byKey(const ValueKey('practice-answer-input')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('practice-answer-input')), findsOneWidget);
   });
 
   testWidgets('填空公式草稿切题后仍按题目隔离恢复', (tester) async {

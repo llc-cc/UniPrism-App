@@ -59,10 +59,37 @@ final class MockGaokaoMathRepository implements PracticeRepository {
       failNextSubmission = false;
       throw StateError('模拟网络失败');
     }
-    final assessment = _assessor.assess(
+    final assessed = _assessor.assess(
       question: question,
       draft: draft,
       facts: facts,
+    );
+    final questionIndex = _paper.questions.indexWhere(
+      (candidate) => candidate.id == question.id,
+    );
+    final nextQuestion =
+        questionIndex >= 0 && questionIndex + 1 < _paper.questions.length
+        ? _paper.questions[questionIndex + 1]
+        : null;
+    // Mock 仅用于无后端预览：按题号提供确定性推荐，便于验证真实 App 交互。
+    final assessment = AttemptAssessment(
+      questionId: assessed.questionId,
+      outcome: assessed.outcome,
+      feedback: assessed.feedback,
+      matchedStepIds: assessed.matchedStepIds,
+      observations: assessed.observations,
+      assessorVersion: assessed.assessorVersion,
+      rubricVersion: assessed.rubricVersion,
+      nextRecommendation: nextQuestion == null
+          ? null
+          : PracticeNextRecommendation(
+              questionId: nextQuestion.id,
+              questionNumber: nextQuestion.number,
+              prompt: nextQuestion.prompt,
+              knowledgePoints: nextQuestion.knowledgePoints,
+              publicReason: '预览模式按当前题序推荐；远程模式由后端能力画像和真实记录决定。',
+              ruleVersion: 'mock-sequential-v1',
+            ),
     );
     _assessments[question.id] = assessment;
     return assessment;

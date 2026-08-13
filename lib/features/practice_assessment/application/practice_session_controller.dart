@@ -219,6 +219,19 @@ final class PracticeSessionController extends ChangeNotifier {
 
   void nextQuestion() => selectQuestion(_state.currentIndex + 1);
 
+  /// 推荐仅携带题目 ID；客户端只能在当前后端试卷快照内解析，不能自行改写推荐结果。
+  bool openCurrentRecommendation() {
+    final recommendation = _state.resultForCurrent?.nextRecommendation;
+    final paper = _state.paper;
+    if (recommendation == null || paper == null) return false;
+    final index = paper.questions.indexWhere(
+      (question) => question.id == recommendation.questionId,
+    );
+    if (index < 0) return false;
+    selectQuestion(index);
+    return true;
+  }
+
   /// 提交失败只改变错误状态，草稿继续保留给同一次显式重试。
   Future<void> submitCurrent() async {
     if (_state.status == PracticeSessionStatus.submitting) return;

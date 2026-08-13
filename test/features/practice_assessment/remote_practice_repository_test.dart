@@ -158,6 +158,17 @@ void main() {
           'errorTags': ['INTERNAL_ERROR'],
         },
       ],
+      'nextRecommendation': {
+        'questionId': 'q2',
+        'questionNumber': 2,
+        'prompt': '下一道练习题',
+        'knowledgePoints': ['函数'],
+        'publicReason': '根据近期学习表现，为你选择了一道针对性练习。',
+        'ruleVersion': 'adaptive-rule-v1',
+        // 学生端模型不得接收管理端评分和能力快照。
+        'totalScore': 99,
+        'abilities': {'CALC': 1},
+      },
     });
 
     final observation = assessment.observationFor(AbilityDimension.reading);
@@ -165,6 +176,10 @@ void main() {
     expect(observation.evidenceStepIds, isEmpty);
     expect(observation.factCodes, isEmpty);
     expect(observation.errorTags, isEmpty);
+    expect(assessment.nextRecommendation?.questionId, 'q2');
+    expect(assessment.nextRecommendation?.questionNumber, 2);
+    expect(assessment.nextRecommendation?.knowledgePoints, ['函数']);
+    expect(assessment.nextRecommendation?.ruleVersion, 'adaptive-rule-v1');
   });
 }
 

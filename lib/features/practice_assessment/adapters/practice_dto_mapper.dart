@@ -70,6 +70,22 @@ PracticePaper mapStudentPaper(Object? value) {
   );
 }
 
+PracticeNextRecommendation? _mapNextRecommendation(Object? value) {
+  if (value == null) return null;
+  final json = _map(value);
+  final questionId = _string(json['questionId']);
+  final questionNumber = _int(json['questionNumber']);
+  if (questionId.isEmpty || questionNumber <= 0) return null;
+  return PracticeNextRecommendation(
+    questionId: questionId,
+    questionNumber: questionNumber,
+    prompt: _string(json['prompt']),
+    knowledgePoints: _list(json['knowledgePoints']).map(_string).toList(),
+    publicReason: _string(json['publicReason']),
+    ruleVersion: _string(json['ruleVersion']),
+  );
+}
+
 AttemptAssessment mapStudentAttempt(Object? value) {
   final json = _map(value);
   final observations = <AbilityDimension, AbilityObservation>{};
@@ -114,6 +130,7 @@ AttemptAssessment mapStudentAttempt(Object? value) {
     observations: observations,
     assessorVersion: _string(json['assessorVersion']),
     rubricVersion: _string(json['rubricVersion']),
+    nextRecommendation: _mapNextRecommendation(json['nextRecommendation']),
   );
 }
 

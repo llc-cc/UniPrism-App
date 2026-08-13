@@ -297,6 +297,25 @@ final class AbilityObservation {
   final List<String> errorTags;
 }
 
+/// 学生端只保存可导航字段和公开说明，不接收后端内部能力、分数或风险。
+final class PracticeNextRecommendation {
+  PracticeNextRecommendation({
+    required this.questionId,
+    required this.questionNumber,
+    required this.prompt,
+    required List<String> knowledgePoints,
+    required this.publicReason,
+    required this.ruleVersion,
+  }) : knowledgePoints = List.unmodifiable(knowledgePoints);
+
+  final String questionId;
+  final int questionNumber;
+  final String prompt;
+  final List<String> knowledgePoints;
+  final String publicReason;
+  final String ruleVersion;
+}
+
 /// 一次作答的确定性结果与七维能力证据。
 final class AttemptAssessment {
   AttemptAssessment({
@@ -307,6 +326,7 @@ final class AttemptAssessment {
     required Map<AbilityDimension, AbilityObservation> observations,
     required this.assessorVersion,
     required this.rubricVersion,
+    this.nextRecommendation,
   }) : matchedStepIds = List.unmodifiable(matchedStepIds),
        observations = Map.unmodifiable(observations);
 
@@ -317,6 +337,7 @@ final class AttemptAssessment {
   final Map<AbilityDimension, AbilityObservation> observations;
   final String assessorVersion;
   final String rubricVersion;
+  final PracticeNextRecommendation? nextRecommendation;
 
   AbilityObservation observationFor(AbilityDimension dimension) =>
       observations[dimension] ??
