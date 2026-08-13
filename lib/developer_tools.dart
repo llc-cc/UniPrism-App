@@ -1,5 +1,38 @@
 part of 'main.dart';
 
+/// 统一构造练习实验室，确保开发工具点击入口与 Web 直达路由使用同一连接模式。
+Widget _buildPracticeAssessmentLabPage() {
+  return AppConfig.practiceAssessmentRemote
+      ? PracticeAssessmentLabPage.remote(
+          baseUrl: AppConfig.apiBaseUrl,
+          bearerTokenProvider: () async => AuthService.instance.token,
+        )
+      : PracticeAssessmentLabPage.mock();
+}
+
+/// 统一构造对话探索实验室，避免直达路由与开发工具入口的身份契约发生漂移。
+Widget _buildDialogueExplorationLabPage() {
+  return RemoteExplorationLabPage(
+    gateway: RemoteExplorationApi(
+      baseUrl: AppConfig.apiBaseUrl,
+      identityProvider: remoteIdentityProviderForPlatform(
+        isWeb: kIsWeb,
+        nativeProvider: () async {
+          final auth = AuthService.instance;
+          final exploreSessionId = auth.isLoggedIn
+              ? await auth.bindExploreSessionToCurrentUser()
+              : await auth.ensureExploreSession();
+          return RemoteExplorationIdentity(
+            exploreSessionId: exploreSessionId,
+            bearerToken: auth.token,
+            anonymousId: auth.anonymousId,
+          );
+        },
+      ),
+    ),
+  );
+}
+
 /// 汇总开发期诊断入口；生产环境不会注册或展示此页面。
 class DeveloperToolsPage extends StatelessWidget {
   const DeveloperToolsPage({
@@ -37,44 +70,14 @@ class DeveloperToolsPage extends StatelessWidget {
             description: AppConfig.practiceAssessmentRemote
                 ? '后端会话、规则判题与能力证据'
                 : '演示 Mock：19 题本地规则判题',
-            onTap: () => _push(
-              context,
-              AppConfig.practiceAssessmentRemote
-                  ? PracticeAssessmentLabPage.remote(
-                      baseUrl: AppConfig.apiBaseUrl,
-                      bearerTokenProvider: () async => AuthService.instance.token,
-                    )
-                  : PracticeAssessmentLabPage.mock(),
-            ),
+            onTap: () => _push(context, _buildPracticeAssessmentLabPage()),
           ),
           _DeveloperToolEntry(
             key: const ValueKey('developer-tool-dialogue-exploration'),
             icon: Icons.account_tree_rounded,
             title: '1.2 对话探索实验室',
             description: 'Learning Entry、真实 AI 会话与实时思维树',
-            onTap: () => _push(
-              context,
-              RemoteExplorationLabPage(
-                gateway: RemoteExplorationApi(
-                  baseUrl: AppConfig.apiBaseUrl,
-                  identityProvider: remoteIdentityProviderForPlatform(
-                    isWeb: kIsWeb,
-                    nativeProvider: () async {
-                      final auth = AuthService.instance;
-                      // 原生端登录态先绑定账号，历史查询与后续写入才能由服务端按 userId 授权。
-                      final exploreSessionId = auth.isLoggedIn
-                          ? await auth.bindExploreSessionToCurrentUser()
-                          : await auth.ensureExploreSession();
-                      return RemoteExplorationIdentity(
-                        exploreSessionId: exploreSessionId,
-                        bearerToken: auth.token,
-                        anonymousId: auth.anonymousId,
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
+            onTap: () => _push(context, _buildDialogueExplorationLabPage()),
           ),
           _DeveloperToolEntry(
             key: const ValueKey('developer-tool-content-ingestion'),

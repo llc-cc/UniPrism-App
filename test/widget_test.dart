@@ -345,6 +345,35 @@ void main() {
     expect(find.textContaining('演示 Mock'), findsWidgets);
   });
 
+  testWidgets('developer URL opens the practice assessment lab directly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const UniPrismApp());
+    await tester.pump();
+
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .pushNamed<void>('/practice-assessment-lab');
+    await tester.pumpAndSettle();
+
+    expect(find.text('练习评分实验室'), findsOneWidget);
+    expect(find.textContaining('演示 Mock'), findsWidgets);
+  });
+
+  testWidgets('developer URL opens the dialogue exploration lab directly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const UniPrismApp());
+    await tester.pump();
+
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .pushNamed<void>('/dialogue-exploration-lab');
+    await tester.pumpAndSettle();
+
+    expect(find.text('1.2 AI 探索课堂'), findsOneWidget);
+  });
+
   testWidgets('popular major cards are display-only', (tester) async {
     await pumpAtSize(
       tester,
