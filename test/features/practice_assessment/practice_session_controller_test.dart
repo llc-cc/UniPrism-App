@@ -148,6 +148,39 @@ void main() {
     ]);
   });
 
+  test('远程作答将答案、过程和提交事实批量写入同一事件记录链', () async {
+    final remote = _RecordingRepository(paper: await repository.loadPaper());
+    final remoteController = PracticeSessionController(repository: remote);
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+
+    remoteController.updateAnswer('B');
+    remoteController.updateReasoning('先列出已知条件，再代入计算。');
+    await remoteController.submitCurrent();
+
+    final events = remote.recordedEventBatches.single;
+    expect(
+      events.map((event) => event.eventType),
+      [
+        PracticeEventType.questionViewed,
+        PracticeEventType.answerChanged,
+        PracticeEventType.reasoningChanged,
+        PracticeEventType.attemptSubmitted,
+      ],
+    );
+    expect(
+      events.map((event) => event.questionId).toSet(),
+      {remote.paper.questions.first.id},
+    );
+    expect(events[1].payload, {'lengthBand': '1-20'});
+    expect(events[2].payload, {'lengthBand': '1-20'});
+    expect(events[1].payload.values, isNot(contains('B')));
+    expect(
+      events[2].payload.values,
+      isNot(contains('先列出已知条件，再代入计算。')),
+    );
+  });
+
   test('提交响应丢失后重试沿用已保存草稿和同一服务端版本', () async {
     final remote = _RecordingRepository(
       paper: await repository.loadPaper(),
@@ -221,6 +254,7 @@ final class _RecordingRepository implements PracticeRepository {
   final Map<String, PracticeDraft> drafts;
   bool failNextAttempt;
   final List<String> calls = [];
+  final List<List<PracticeEvent>> recordedEventBatches = [];
   final List<int> savedDraftVersions = [];
   final List<String> savedQuestionIds = [];
   final List<int> savedCurrentQuestionNumbers = [];
@@ -261,7 +295,10 @@ final class _RecordingRepository implements PracticeRepository {
   Future<void> recordEvents({
     required String sessionId,
     required List<PracticeEvent> events,
-  }) async => calls.add('recordEvents');
+  }) async {
+    calls.add('recordEvents');
+    recordedEventBatches.add(List<PracticeEvent>.of(events));
+  }
 
   @override
   Future<AttemptAssessment> submitAttempt({

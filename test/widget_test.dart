@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:uniprism_app/features/practice_assessment/practice_assessment.dart';
 import 'package:uniprism_app/main.dart';
 
 Future<void> pumpAtSize(WidgetTester tester, Size size, Widget child) async {
@@ -21,6 +22,26 @@ void expectOnlyNetworkImageExceptions(WidgetTester tester) {
 }
 
 void main() {
+  test('练习实验室的远程工厂连接 HTTP repository，Mock 工厂保持内存实现', () {
+    final remote = PracticeAssessmentLabPage.remote(
+      baseUrl: 'http://localhost:3000',
+    );
+    final mock = PracticeAssessmentLabPage.mock();
+    addTearDown(remote.controller.dispose);
+    addTearDown(mock.controller.dispose);
+
+    expect(remote.controller.repository, isA<RemotePracticeRepository>());
+    expect(
+      remote.controller.repository.connectionMode,
+      PracticeConnectionMode.remote,
+    );
+    expect(mock.controller.repository, isA<MockGaokaoMathRepository>());
+    expect(
+      mock.controller.repository.connectionMode,
+      PracticeConnectionMode.mock,
+    );
+  });
+
   test('persona card snapshot parses the backend response', () {
     final snapshot = PersonaCardSnapshot.fromJson({
       'state': 'completed',

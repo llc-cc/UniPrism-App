@@ -19,7 +19,19 @@
 
 当前试卷代码为 `cn-gaokao-2026-new-i-math-v1`，内容版本为 `demo-v1`。全部题目是项目自造内容，不是 2026 官方试题。
 
-后端管理端现已增加独立的“能力判断测试台”：`http://localhost:3000/admin/practice-benchmark`。它包含 19 条题目难度 Gold、190 条行为基准案例、12 条长期轨迹、七维 `cognition-v2` 证据与自定义内存场景调试。该工具不依赖 Flutter 页面，不写学生数据库，也没有切换线上 V1 画像。
+后端管理端现已增加独立的“能力判断测试台”：`http://localhost:3000/admin/practice-benchmark`。它只使用模拟 Gold（19 条题目难度 Gold、190 条行为基准案例、12 条长期轨迹和自定义内存场景），不依赖 Flutter 页面、不写学生数据库，也不切换线上 V1 画像。
+
+## App 与后端职责边界
+
+Flutter App 只负责题目、答案、解题过程、改答/切题和提交等可观察行为；Remote 模式将这些行为写入后端 V1 API。后端在 V1 正常处理之外，可将同一批行为送入 V2 Shadow 作独立比对；Shadow 的内部标签、评分、置信度和差异不下发给 App，App 不读取也不展示 Shadow 数据。管理端测试台仅以模拟 Gold 调试和评估 Shadow，不是学生真实作答入口。
+
+```text
+Flutter App（题目 / 答案 / 过程 / 提交）
+  -> 后端 V1 API（真实会话、草稿、事件、提交）
+  -> V2 Shadow（后台比对；不回传 App）
+
+管理端 benchmark -> 模拟 Gold（仅管理端调试）
+```
 
 ## 启动前置条件
 
@@ -34,7 +46,7 @@
 ```powershell
 cd D:\ywkeji\Uniprism\UniPrism_New-main
 $env:PRACTICE_ASSESSOR_MODE='rules'
-$env:PRACTICE_WEB_ORIGINS='http://localhost:3001'
+$env:PRACTICE_WEB_ORIGINS='http://localhost:5173'
 npm run dev
 ```
 
@@ -44,7 +56,7 @@ npm run dev
 
 ```powershell
 cd D:\dev\Uniprism\uniprism_app
-flutter run -d chrome --web-hostname localhost --web-port 3001 `
+flutter run -d chrome --web-port=5173 `
   --dart-define=APP_ENV=development `
   --dart-define=ENABLE_DEVELOPER_TOOLS=true `
   --dart-define=API_BASE_URL=http://localhost:3000 `
@@ -53,14 +65,14 @@ flutter run -d chrome --web-hostname localhost --web-port 3001 `
 
 进入：`首页 → 开发者工具 → 练习评分实验室`。
 
-页面顶部应显示“后端已连接”、会话 ID 和 `RULES`。若显示“演示 Mock”，说明没有传入 `PRACTICE_ASSESSMENT_REMOTE=true`。
+页面顶部横幅是运行模式的唯一现场识别：显示“后端已连接 · 会话 … · RULES”表示 Remote 已连接后端；显示“演示 Mock · 结果不会写入后端”表示本地 Mock，绝不能据此验收真实会话或数据写入。Remote 不展示、也不读取 V2 Shadow 的内部结果。
 
 ## Mock 模式
 
 不准备数据库时可先验证 UI 与本地规则：
 
 ```powershell
-flutter run -d chrome --web-port 3001 `
+flutter run -d chrome --web-port=5173 `
   --dart-define=ENABLE_DEVELOPER_TOOLS=true `
   --dart-define=PRACTICE_ASSESSMENT_REMOTE=false
 ```
