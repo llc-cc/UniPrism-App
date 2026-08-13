@@ -92,6 +92,8 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 8. 输入后等待约 600ms 或直接切题，再重开页面，草稿与最近题号应从服务端恢复。
 9. 原生匿名会话登录绑定后，旧令牌应失效，并能从账号身份读取合并后的会话与画像。
 10. 19 题均至少提交一次后完成整卷，检查后端会话状态和能力画像。
+11. 任意题提交成功后，应仍停留在当前题并出现“推荐下一题”卡片；点击“进入推荐题”后才跳转，原题号导航仍可自由使用。
+12. 打开管理端真实作答审查，选择刚提交的 attempt，确认能看到当时推荐的能力缺口、知识点掌握、七项候选得分、推荐原因和风险；旧 attempt 应明确显示没有推荐快照。
 
 ## 自动验证
 
@@ -118,6 +120,13 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 - `flutter analyze lib/features/practice_assessment test/features/practice_assessment`：`No issues found`，exit 0；
 - 后端公式解析、证据提取与提交前拒绝测试：3 个文件、24 项通过；
 - 后端练习模块完整回归：28 个文件、138 项通过，TypeScript typecheck 与目标 ESLint 均为 exit 0。
+
+规则推荐与 App 推荐卡片完成后再次 fresh 验证：
+
+- 后端练习模块完整回归：30 个文件、209 项通过；
+- 后端 TypeScript typecheck：exit 0；目标 ESLint：0 errors（既有 route test 有 2 条未使用参数 warning）；
+- `flutter test test/features/practice_assessment --reporter expanded`：48 项通过，exit 0；
+- `flutter analyze lib/features/practice_assessment test/features/practice_assessment`：`No issues found`，exit 0。
 
 ### 恢复与重跑顺序
 
@@ -148,6 +157,9 @@ flutter analyze lib/features/practice_assessment test/features/practice_assessme
 - 规则评分无法证明任意数学表达式等价，关键词命中不等于完整证明正确。
 - 公式答案只做安全解析与保守规范化（例如 `\\frac{3}{2}` 与 `3/2`）；复杂代数恒等仍需要后续符号计算引擎。
 - alphatest 数据库迁移历史尚未对齐，完成此项前远程页面无法进行真实数据库联调。
+- 第一版推荐候选池仅为当前 19 道演示题；候选提供器已经独立，后续接知识库时不需要改 App 或选题评分规则。
+- 第一版知识掌握度由最近真实作答保守汇总，尚未接独立知识追踪模型；无证据继续保持未知，不按低能力处理。
+- 当前推荐采用可解释规则和固定 60/20/20 起始配比，尚未训练小模型，也未用真实学生实验校准最优配比。
 - 实证难度校准需要积累足够有效作答后才可发布。
 - 登录绑定和跨设备画像已有后端契约，但当前实验室尚未提供独立的“立即绑定”按钮。
 - Benchmark 的难度误差 ±1 命中率、观察档位命中率和画像方向一致率在第一版仍低于目标，管理端会显示红色基线；这正是下一轮调整 Engine 而不是调整 Gold 的输入。
@@ -164,7 +176,7 @@ http://localhost:3000/admin/practice-benchmark
 
 1. `题目难度`：19题六维 Gold / Actual / 偏差。
 2. `自定义场景`：模拟答案、过程、提示与修改，查看判题、facts、七维证据和画像变化。
-3. `真实作答审查`：审查 App Remote 提交产生的脱敏 attempt，不返回答案或过程原文。
+3. `真实作答审查`：审查 App Remote 提交产生的脱敏 attempt，并解释该次提交落库的真实推荐决策；不返回答案或过程原文。
 4. `规则选题`：手工设置学生七维能力与最近题号，查看60/20/20队列的候选排序和七项得分解释。
 
 如果 App 横幅显示 Mock，管理端的真实作答列表不会新增记录；此时仍可使用自定义场景和规则选题完成底层逻辑测试。真实作答审查依赖练习数据库迁移和 Remote 模式。
