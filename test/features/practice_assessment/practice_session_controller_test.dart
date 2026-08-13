@@ -85,6 +85,40 @@ void main() {
     expect(controller.state.currentIndex, 1);
   });
 
+  test('推荐题 ID 不在当前试卷时留在原题并返回失败', () async {
+    final remote = _RecordingRepository(
+      paper: await repository.loadPaper(),
+      nextRecommendation: PracticeNextRecommendation(
+        questionId: 'missing-question',
+        questionNumber: 999,
+        prompt: '不存在的题目',
+        knowledgePoints: const ['测试'],
+        publicReason: '测试失效引用',
+        ruleVersion: 'adaptive-rule-v1',
+      ),
+    );
+    final remoteController = PracticeSessionController(repository: remote);
+    addTearDown(remoteController.dispose);
+    await remoteController.load();
+    remoteController.updateAnswer('B');
+    await remoteController.submitCurrent();
+
+    expect(remoteController.openCurrentRecommendation(), isFalse);
+    expect(remoteController.state.currentIndex, 0);
+  });
+
+  test('Mock 最后一题推荐回绕到第一题', () async {
+    await controller.load();
+    controller.selectQuestion(18);
+    controller.updateAnswer('证明完成');
+    await controller.submitCurrent();
+
+    expect(
+      controller.state.resultForCurrent?.nextRecommendation?.questionNumber,
+      1,
+    );
+  });
+
   test('提交过程中忽略重复提交', () async {
     final blockingRepository = _BlockingRepository(
       paper: await repository.loadPaper(),
@@ -252,12 +286,14 @@ final class _RecordingRepository implements PracticeRepository {
     this.currentQuestionNumber = 1,
     this.drafts = const {},
     this.failNextAttempt = false,
+    this.nextRecommendation,
   });
 
   final PracticePaper paper;
   final int currentQuestionNumber;
   final Map<String, PracticeDraft> drafts;
   bool failNextAttempt;
+  final PracticeNextRecommendation? nextRecommendation;
   final List<String> calls = [];
   final List<List<PracticeEvent>> recordedEventBatches = [];
   final List<int> savedDraftVersions = [];
@@ -318,10 +354,21 @@ final class _RecordingRepository implements PracticeRepository {
       failNextAttempt = false;
       throw StateError('response lost');
     }
-    return const RuleBasedAttemptAssessor().assess(
+    final assessed = const RuleBasedAttemptAssessor().assess(
       question: question,
       draft: draft,
       facts: facts,
+    );
+    if (nextRecommendation == null) return assessed;
+    return AttemptAssessment(
+      questionId: assessed.questionId,
+      outcome: assessed.outcome,
+      feedback: assessed.feedback,
+      matchedStepIds: assessed.matchedStepIds,
+      observations: assessed.observations,
+      assessorVersion: assessed.assessorVersion,
+      rubricVersion: assessed.rubricVersion,
+      nextRecommendation: nextRecommendation,
     );
   }
 

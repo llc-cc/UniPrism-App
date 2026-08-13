@@ -67,10 +67,9 @@ final class MockGaokaoMathRepository implements PracticeRepository {
     final questionIndex = _paper.questions.indexWhere(
       (candidate) => candidate.id == question.id,
     );
-    final nextQuestion =
-        questionIndex >= 0 && questionIndex + 1 < _paper.questions.length
-        ? _paper.questions[questionIndex + 1]
-        : null;
+    final nextQuestion = questionIndex < 0 || _paper.questions.length < 2
+        ? null
+        : _paper.questions[(questionIndex + 1) % _paper.questions.length];
     // Mock 仅用于无后端预览：按题号提供确定性推荐，便于验证真实 App 交互。
     final assessment = AttemptAssessment(
       questionId: assessed.questionId,
