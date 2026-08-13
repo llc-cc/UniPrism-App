@@ -22,3 +22,12 @@
 
 - Flutter 测试环境当前受既有长期 Dart 进程或启动锁阻塞；恢复可用环境后，应优先重跑上述两个单文件测试，再以移除 `updateAnswer` 的 `answerChanged` 记录为受控变异，确认事件链测试会失败，然后恢复实现并复跑。
 - 本任务未修改生产行为：现有 Developer Tools 的编译时 Remote 选择、Remote repository 和事件 recorder 已满足要求；新增测试用于锁定该行为。
+
+## Fix round 1：验证证据更正
+
+- Finding：交接文档将此前 38 项练习测试和 218 项全仓测试的基线记录表述为“本次已验证”，与本轮新增 Flutter 测试的超时记录相矛盾。
+- 修正：自动验证章节已分离“此前基线验证记录”和“本轮 2026-08-13 验证状态”，明确本轮两条 Flutter 测试命令均未取得绿灯，且不再声称通过。
+- 本轮命令与输出：`flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart` 无输出，60 秒后停止；`flutter test test/features/practice_assessment/practice_session_controller_test.dart` 无输出，120 秒超时（exit code 124）；`git diff --check` 通过。
+- 恢复步骤：正常停止已知的本项目 Flutter Web `flutter run`，重跑目标测试；仅在绿灯后重新以 `flutter run -d chrome --web-port=5173 ...` 启动 Web。
+- Commit：`docs(practice): clarify verification evidence`。
+- Concern：本轮仍未获得新增 Flutter 测试绿灯；不可将此前基线结果作为本轮验证结论。

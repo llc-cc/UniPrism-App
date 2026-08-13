@@ -93,14 +93,29 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 
 ## 自动验证
 
-因当前有两个 Flutter Chrome 开发实例运行，`flutter.bat` 可能等待启动锁。可以正常停止实例后运行标准命令：
+### 此前基线验证记录
+
+以下结果是本轮新增 Flutter 测试之前留下的基线记录，不是 2026-08-13 本轮的绿灯证据：练习模块静态分析无问题；练习模块 38 项测试通过；Flutter 全仓 218 项测试通过。
+
+### 本轮 2026-08-13 验证状态
+
+本轮运行时，正在运行的本项目 `flutter run` 持有 Flutter 工具启动锁。新增测试尚未取得绿灯：
+
+- `flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart` 无输出，60 秒后停止；
+- `flutter test test/features/practice_assessment/practice_session_controller_test.dart` 无输出，120 秒超时（exit code 124）。
+
+因此，本轮不能声称 Flutter 测试通过。
+
+### 恢复与重跑顺序
+
+先正常停止已知的本项目 Flutter Web `flutter run` 实例，再运行目标测试：
 
 ```powershell
 dart analyze lib/features/practice_assessment test/features/practice_assessment
-flutter test test/features/practice_assessment test/widget_test.dart test/developer_tools_web_test.dart
+flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart
 ```
 
-本次已验证：练习模块静态分析无问题；练习模块 38 项测试通过；Flutter 全仓 218 项测试通过。
+目标测试取得绿灯后，才重新用本文件“启动 Flutter 远程模式”章节的 `flutter run -d chrome --web-port=5173 ...` 命令启动 Web 页面。
 
 ## 小模型怎么训练
 
