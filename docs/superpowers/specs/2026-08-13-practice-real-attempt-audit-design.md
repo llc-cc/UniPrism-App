@@ -1,86 +1,79 @@
-# 真实练习作答 V2 审计设计
+# 真实练习作答 V2 Shadow 判断设计
 
 ## 目标与边界
 
-第一版遵守一条明确边界：Flutter App 负责产生并提交真实学生行为，管理端负责解释系统为什么这样判断。
+第一版遵守以下边界：Flutter App 负责产生并提交真实学生行为，后端负责内部判断，管理端通过模拟案例与独立 Gold 调试同一套规则。
 
-- App 展示题目、采集答案、解题过程、修改、切题、提示和提交事件，并继续调用正式练习会话 API。
-- 后端继续用 V1 完成现有学生反馈与正式画像写入，避免未达质量门槛的 V2 直接改变学生档案。
-- 管理端从数据库中的真实作答与事件只读重放 `cognition-rule-v2`，展示七维证据和截至该次作答的 V2 画像变化。
-- Gold、内部置信度、事实代码和错误标签只在管理员接口返回，不进入 Flutter 学生 DTO。
+- App 采集题目答案、解题过程、修改、切题、提示和提交事件，继续调用正式练习会话 API。
+- 后端继续用 V1 完成学生反馈与正式画像，同时对同一真实作答运行 `cognition-rule-v2` Shadow 判断。
+- V2 Shadow 随 attempt 内部 facts JSON 同事务保存，但不替换 V1 正式画像。
+- 学生 DTO 不返回 Shadow、内部事实代码、错误标签或置信度。
+- 管理端不新增真实学生作答接口，只用 19/190/12 Benchmark 和自定义模拟场景展示 Gold、Actual、Evidence 与偏差。
 
-## 方案选择
+## 方案
 
-采用“查询时重放”，不在第一版新增 V2 数据表。
+采用“提交时 Shadow 快照”，不新增数据表。
 
-1. 立即替换 V1：能让 App 与 V2 完全同路，但当前三项 Benchmark 指标仍为红色，且新旧维度语义不同，风险不可接受。
-2. 新增 V2 审计表：可以冻结历史判断，但需要数据库迁移、并发画像事务与回填策略，超出本轮测试闭环的必要范围。
-3. 查询时重放（采用）：App 已持久化原始答案、过程、事件和题目版本；管理员查询时按参与者历史顺序运行同一个 V2 Engine，无迁移且不影响学生提交。
+1. 直接切换 V2：当前三项 Benchmark 指标仍为红色，不能影响正式学生档案。
+2. 新增 V2 表：需要迁移、并发事务与历史回填，本轮没有必要。
+3. Shadow 快照（采用）：提交时使用与 V1 相同的题目、答案、过程、尝试次数、前次结果和事件摘要运行 V2，把版本化单次证据嵌入 attempt facts。
 
-查询时重放的限制是：历史结果会随 V2 Engine 版本更新而变化。因此页面必须显示 Engine 版本，并明确标记“当前版本重放”，不能伪装成提交当时冻结的审计结论。
+Shadow 是提交时冻结的内部实验结果，便于后续训练投影和规则回归；它不是正式学生画像。
 
 ## 数据流
 
-1. Flutter Web 使用远程模式创建或恢复练习会话。
-2. 学生编辑答案和解题过程，App 防抖保存草稿，并批量记录受限行为事件。
-3. 学生提交后，V1 正式评分和画像按现有事务执行。
-4. 管理员打开“真实作答审查”，API 读取最近真实提交；列表只返回必要摘要。
-5. 选择一次提交时，API 读取该参与者截至目标提交的作答历史、对应题目版本和事件。
-6. 服务按时间顺序构造 V2 输入，运行 `assessAttemptCognitionV2`，再逐维调用 `updateCognitionProfileV2`。
-7. 管理端展示目标提交的题面、答案、过程、事件摘要、七维观察、证据步骤、内部事实与画像前后变化。
+1. Flutter Web 远程模式创建或恢复练习会话。
+2. 学生编辑答案与过程，App 防抖保存草稿并批量记录受限行为事件。
+3. 提交前 App 刷新草稿与事件；后端以同题上一次提交时间为左边界切分当次事件，再形成 V1/V2 共用输入。
+4. 后端运行 V1 正式评分，再运行 `assessAttemptCognitionV2`。
+5. V1 facts 与 `cognitionV2Shadow` 在同一 attempt 事务内保存；V1 正式画像照常更新。
+6. 学生只收到现有白名单反馈；管理端通过模拟 Benchmark 审查相同 V2 Engine。
 
-## 时序与重放规则
+## Shadow 契约
 
-- 历史按 `submittedAt`、`attemptNumber`、`id` 稳定排序。
-- `previousOutcome` 只取同一会话、同一题目的前次实际结果。
-- 事件按题目和 `receivedAt <= submittedAt` 截取，并以同题前次提交时间作为左边界，避免后续事件污染早期作答。
-- 如果事件时间线倒序或关键字段损坏，使用 `DEGRADED`，降低证据置信度而不是丢弃作答。
-- 长期画像按参与者的全部题目顺序演算；同题重复衰减与独立纠错仍由 V2 Profile Updater 决定。
+`cognitionV2Shadow` 至少保存：
 
-## 接口与权限
+- `assessorVersion = cognition-rule-v2`
+- `outcome`
+- 七个维度的 `status`、`band`、`confidence`、`evidenceQuality`、`evidenceStepIds`、`factCodes`、`errorTags`
 
-新增管理员只读接口：
+非 `OBSERVED` 维度保持 `band = null`。Shadow 不保存额外一份答案或过程，避免重复敏感数据。
 
-- `GET /api/admin/practice-benchmark/real-attempts?limit=50`：最近真实提交摘要。
-- `GET /api/admin/practice-benchmark/real-attempts?attemptId=<id>`：目标提交的完整 V2 重放解释。
+## 时序与幂等
 
-接口沿用管理员鉴权和标准响应信封。`limit` 限制为 `1..100`，`attemptId` 限长；未登录返回 401，非管理员返回 403。Flutter 不调用该管理员接口。
+- `previousOutcome` 只取同一会话、同一题目的前次结果。
+- 首次提交使用同题全部已接收事件；后续提交仅使用 `receivedAt > previousSubmittedAt` 的事件，边界时刻事件归属前一次作答。
+- V1 与 V2 共用该当次事件摘要；损坏或倒序时间线按 `DEGRADED` 保守处理。
+- 幂等重复请求返回既有 attempt，不再次生成或累加 Shadow。
+- 第一版只保存单次七维 Shadow，不写入 V1 `PracticeAbilityProfile`；长期 V2 状态继续由 Benchmark 轨迹验证。
 
-## 管理端页面
+## 管理端
 
-Benchmark Debug 增加“真实作答审查”页签：
-
-- 左侧/顶部为最近提交列表，可按题号、结果和提交时间选择。
-- 详情显示学生匿名参与者短标识，不显示登录邮箱、手机号或原始身份令牌。
-- 展示题面、答案与解题过程，明确这些是敏感教育数据，仅管理员可见。
-- 七维逐项展示状态、档位、命中步骤、事实代码、错误标签与画像前后变化。
-- 空列表、加载、鉴权失败和单次重放失败都有独立状态，不影响静态 Benchmark 其他页签。
+Benchmark Debug 保持五个区域：总览、题目难度、行为案例、自定义场景、长期轨迹。模拟案例展示 Gold/Actual/Evidence/偏差；不得把 Engine 输出反过来当 Gold，也不读取真实学生答案或 Shadow。
 
 ## App 测试入口
 
-Flutter 开发版继续从“开发者工具 → 练习评分实验室”进入。必须以远程模式启动：
-
 ```powershell
-flutter run -d chrome `
+flutter run -d chrome --web-port=5173 `
   --dart-define=APP_ENV=development `
   --dart-define=ENABLE_DEVELOPER_TOOLS=true `
   --dart-define=PRACTICE_ASSESSMENT_REMOTE=true `
   --dart-define=API_BASE_URL=http://localhost:3000
 ```
 
-页面连接横幅必须显示后端会话，而不是 Mock。App 的现有学生反馈可以保留，但 V2 内部解释只在管理端出现。
+从“开发者工具 → 练习评分实验室”进入。连接横幅必须显示后端会话而不是 Mock。
 
 ## 验收
 
-- 在 App 完成一次远程作答后，管理端真实作答列表出现该提交。
-- 管理端重放结果使用 `cognition-rule-v2`，且七维非观察项保持 `band=null`。
-- 同一作答重复查询产生完全一致的稳定结果。
-- 后续修改或另一题提交不会污染早期作答的事件窗口。
-- 管理员接口不会被 Flutter 学生身份调用，也不会向学生接口增加内部字段。
-- 静态 19/190/12 Benchmark 继续工作，V2 质量红线保持如实展示。
+- App 远程提交后，attempt 内部 facts 含版本化 V2 Shadow。
+- 七维非观察项保持 `band=null`。
+- 学生响应不包含 Shadow 或内部证据字段。
+- 幂等重试不产生第二份 attempt 或重复证据。
+- 同题旧提示、旧修改不会污染后续提交的当次证据。
+- 静态 19/190/12 Benchmark 继续展示真实红绿基线。
 
-## 已知限制
+## 限制
 
-- 第一版是当前 V2 版本的查询时重放，不是提交时冻结快照。
-- 旧数据如果没有完整事件，只能以 `DEGRADED` 时间线给出保守判断。
-- V2 长期画像只在管理端演算，不写入正式学生画像；达到 Benchmark 门槛后另行设计迁移与版本冻结。
+- 仅对新提交生成 Shadow，不回填旧 attempt。
+- Shadow 暂不进入正式长期画像；达到 Benchmark 门槛后另行设计 V2 画像迁移。
+- 管理端第一版不查看真实学生个案，只调试模拟 Gold。
