@@ -14,6 +14,7 @@
 - 学生响应只接收能力状态与档位，不接收内部置信度、事实码、错误标签或证据步骤 ID；
 - 长期画像的 `displayBand: null` 保持为“证据不足”，不会映射成 0 档能力；
 - 远程失败保留草稿并显示 request ID，不会静默切回 Mock；
+- 填空题使用可视化数学公式输入框与浅色分类键盘，支持分式、根式、幂、函数、关系和集合符号，草稿仍以 LaTeX 保存；
 - 标准答案与完整 rubric 只存在于服务端，不下发 Flutter；
 - `rules` 是当前生产装配；双评校验器与训练投影已准备，但未连接具体外部模型。
 
@@ -83,13 +84,14 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 
 1. 打开远程练习，确认返回 19 题且页面有非官方内容声明。
 2. 在第 1 题只选最终答案、不写过程并提交；理解与推理应显示“过程证据不足”，不能显示 0 档。
-3. 在解答题填写包含 rubric 关键步骤的过程，提交后检查七维证据。
-4. 切换题目、关闭页面再打开，确认当前题号、答案、过程与已提交结果恢复。
-5. 断开网络后提交，确认草稿仍保留、页面显示错误与重试入口；恢复网络后重试。
-6. 相同草稿重复提交应返回同一幂等结果；一道题第 4 次正式提交应被拒绝。
-7. 输入后等待约 600ms 或直接切题，再重开页面，草稿与最近题号应从服务端恢复。
-8. 原生匿名会话登录绑定后，旧令牌应失效，并能从账号身份读取合并后的会话与画像。
-7. 19 题均至少提交一次后完成整卷，检查后端会话状态和能力画像。
+3. 打开填空题并点击答案框，确认出现“123 / 函数 / 符号”三页浅色键盘；输入分式、根式和关系符号，切题后再返回应恢复排版公式。
+4. 在解答题填写包含 rubric 关键步骤的过程，提交后检查七维证据。
+5. 切换题目、关闭页面再打开，确认当前题号、答案、过程与已提交结果恢复。
+6. 断开网络后提交，确认草稿仍保留、页面显示错误与重试入口；恢复网络后重试。
+7. 相同草稿重复提交应返回同一幂等结果；一道题第 4 次正式提交应被拒绝。
+8. 输入后等待约 600ms 或直接切题，再重开页面，草稿与最近题号应从服务端恢复。
+9. 原生匿名会话登录绑定后，旧令牌应失效，并能从账号身份读取合并后的会话与画像。
+10. 19 题均至少提交一次后完成整卷，检查后端会话状态和能力画像。
 
 ## 自动验证
 
@@ -109,6 +111,13 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 - `flutter test test/widget_test.dart test/features/practice_assessment/practice_session_controller_test.dart --reporter expanded`：44 项通过，exit 0，23.2 秒；
 - `flutter test test/features/practice_assessment --reporter expanded`：39 项通过，exit 0，15.6 秒；
 - `flutter analyze lib/features/practice_assessment test/features/practice_assessment test/widget_test.dart`：`No issues found`，exit 0，32.4 秒。
+
+填空题公式键盘完成后再次 fresh 验证：
+
+- `flutter test test/features/practice_assessment --reporter expanded`：46 项通过，exit 0；
+- `flutter analyze lib/features/practice_assessment test/features/practice_assessment`：`No issues found`，exit 0；
+- 后端公式解析、证据提取与提交前拒绝测试：3 个文件、24 项通过；
+- 后端练习模块完整回归：28 个文件、138 项通过，TypeScript typecheck 与目标 ESLint 均为 exit 0。
 
 ### 恢复与重跑顺序
 
@@ -137,6 +146,7 @@ flutter analyze lib/features/practice_assessment test/features/practice_assessme
 
 - 演示题不是官方真题，正式题库仍需授权内容与逐问 rubric。
 - 规则评分无法证明任意数学表达式等价，关键词命中不等于完整证明正确。
+- 公式答案只做安全解析与保守规范化（例如 `\\frac{3}{2}` 与 `3/2`）；复杂代数恒等仍需要后续符号计算引擎。
 - alphatest 数据库迁移历史尚未对齐，完成此项前远程页面无法进行真实数据库联调。
 - 实证难度校准需要积累足够有效作答后才可发布。
 - 登录绑定和跨设备画像已有后端契约，但当前实验室尚未提供独立的“立即绑定”按钮。
