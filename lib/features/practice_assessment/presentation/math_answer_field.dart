@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:math_keyboard/math_keyboard.dart';
 
 import 'practice_formula_config.dart';
+import 'practice_formula_keyboard.dart';
 
 /// 填空题的可排版数学输入框；对外只暴露 LaTeX 字符串，不泄漏编辑器内部树。
 final class MathAnswerField extends StatefulWidget {
@@ -33,6 +34,7 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
   bool _isSynchronizingExternalValue = false;
   String _lastAcceptedValue = '';
   String? _formatError;
+  bool _isKeyboardVisible = false;
 
   @override
   void initState() {
@@ -40,6 +42,7 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
     _ownsController = widget.controller == null;
     _controller = widget.controller ?? MathFieldEditingController();
     _focusNode = FocusNode(debugLabel: 'practice_math_${widget.questionId}');
+    _focusNode.addListener(_handleFocusChanged);
     _synchronizeExternalValue(widget.value);
   }
 
@@ -62,9 +65,20 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
 
   @override
   void dispose() {
+    _focusNode.removeListener(_handleFocusChanged);
     _focusNode.dispose();
     if (_ownsController) _controller.dispose();
     super.dispose();
+  }
+
+  void _handleFocusChanged() {
+    if (!_focusNode.hasFocus || !widget.enabled || _isKeyboardVisible) return;
+    setState(() => _isKeyboardVisible = true);
+  }
+
+  void _finishEditing() {
+    _focusNode.unfocus();
+    setState(() => _isKeyboardVisible = false);
   }
 
   void _synchronizeExternalValue(String value) {
@@ -120,7 +134,8 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
               focusNode: _focusNode,
               keyboardType: MathKeyboardType.expression,
               variables: practiceFormulaVariables,
-              opensKeyboard: widget.enabled,
+              // 默认键盘颜色与键位均为包内硬编码；App 使用下方受控浅色键盘。
+              opensKeyboard: false,
               decoration: InputDecoration(
                 labelText: '填写数学答案',
                 hintText: '点击此处输入分数、根式或公式',
@@ -135,7 +150,7 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
                 ),
               ),
               onChanged: _handleChanged,
-              onSubmitted: (_) => _focusNode.unfocus(),
+              onSubmitted: (_) => _finishEditing(),
             ),
           ),
           if (_formatError case final message?) ...[
@@ -149,6 +164,11 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
               ),
             ),
           ],
+          if (_isKeyboardVisible && widget.enabled)
+            PracticeFormulaKeyboard(
+              controller: _controller,
+              onDone: _finishEditing,
+            ),
         ],
       ),
     );

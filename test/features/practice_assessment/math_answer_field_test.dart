@@ -79,6 +79,80 @@ void main() {
 
     expect(changes, ['2']);
   });
+
+  testWidgets('点击公式框打开 UniPrism 浅色键盘并可输入分式', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q12',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('practice-formula-keyboard')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-key-fraction')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-fraction')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-3')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-2')));
+    await tester.pump();
+
+    expect(changes.last, r'\frac{3}{2}');
+  });
+
+  testWidgets('关系符号页覆盖高中数学填空题常用符号且窄屏不溢出', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q12',
+          value: '',
+          enabled: true,
+          onChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-tab-relations')),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('practice-formula-key-less-equal')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-key-infinity')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Widget _app(Widget child) {
