@@ -123,9 +123,9 @@ Mock 模式会明确显示“结果不会写入后端”，不能用于验证重
 
 规则推荐与 App 推荐卡片完成后再次 fresh 验证：
 
-- 后端练习模块完整回归：30 个文件、209 项通过；
+- 后端练习模块完整回归：30 个文件、216 项通过；
 - 后端 TypeScript typecheck：exit 0；目标 ESLint：0 errors（既有 route test 有 2 条未使用参数 warning）；
-- `flutter test test/features/practice_assessment --reporter expanded`：48 项通过，exit 0；
+- `flutter test test/features/practice_assessment --reporter expanded`：50 项通过，exit 0；
 - `flutter analyze lib/features/practice_assessment test/features/practice_assessment`：`No issues found`，exit 0。
 
 ### 恢复与重跑顺序
