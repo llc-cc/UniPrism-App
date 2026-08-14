@@ -442,15 +442,6 @@ void main() {
     expect(_latex(controller), 'aZ');
   });
 
-  test('中文文本以受控 text 节点插入并转义 TeX 特殊字符', () {
-    final controller = MathFieldEditingController();
-    addTearDown(controller.dispose);
-
-    insertPracticeFormulaText(controller, '最大值{a}_%');
-
-    expect(_latex(controller), r'\text{最大值\{a\}\_\%}');
-  });
-
   test('正式目录普通符号和单位键写入受控 LaTeX', () {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);

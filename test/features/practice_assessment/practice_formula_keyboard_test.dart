@@ -233,27 +233,17 @@ void main() {
     expect(_latex(controller), 'AZ');
   });
 
-  testWidgets('中文入口使用系统文本框并安全插入公式', (tester) async {
+  testWidgets('字母页不再提供中文自由文本入口', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
-    await tester.tap(find.byKey(_key('chinese-input')));
-    await tester.pumpAndSettle();
-    final field = tester.widget<TextField>(
+    expect(find.byKey(_key('chinese-input')), findsNothing);
+    expect(
       find.byKey(const ValueKey('practice-formula-chinese-field')),
+      findsNothing,
     );
-    expect(field.autofocus, isTrue);
-    expect(field.keyboardType, TextInputType.text);
-    await tester.enterText(
-      find.byKey(const ValueKey('practice-formula-chinese-field')),
-      '最大值',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-chinese-insert')),
-    );
-    await tester.pumpAndSettle();
-    expect(_latex(controller), r'\text{最大值}');
+    expect(find.byType(AlertDialog), findsNothing);
   });
 
   testWidgets('公式模板使用数学排版并可继续填写槽位', (tester) async {

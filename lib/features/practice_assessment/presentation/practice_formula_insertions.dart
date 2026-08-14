@@ -153,31 +153,6 @@ final class UnitFormulaInsertion implements PracticeFormulaInsertion {
 String _withTeXCommandSeparator(String value) =>
     RegExp(r'\\[A-Za-z]+$').hasMatch(value) ? '$value ' : value;
 
-/// 将系统输入法产生的普通文本安全写入当前公式光标。
-void insertPracticeFormulaText(
-  MathFieldEditingController controller,
-  String value,
-) {
-  if (value.isEmpty) return;
-  const escapedCharacters = <String, String>{
-    r'\': r'\backslash{}',
-    '{': r'\{',
-    '}': r'\}',
-    '%': r'\%',
-    '_': r'\_',
-    '#': r'\#',
-    r'$': r'\$',
-    '&': r'\&',
-    '^': r'\^{}',
-    '~': r'\~{}',
-  };
-  final escaped = value
-      .split('')
-      .map((character) => escapedCharacters[character] ?? character)
-      .join();
-  controller.addLeaf('\\text{$escaped}');
-}
-
 /// 前进到下一个可编辑槽位；相邻上下标需要额外跨过两个函数节点之间的边界。
 void goToNextPracticeFormulaSlot(MathFieldEditingController controller) {
   controller.goNext();

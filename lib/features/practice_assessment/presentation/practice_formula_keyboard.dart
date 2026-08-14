@@ -286,13 +286,6 @@ final class _PracticeFormulaKeyboardState
                 onPressed: _toggleUppercaseLetters,
                 selected: _uppercaseLetters,
               ),
-            if (_isAlphabet)
-              _textActionButton(
-                id: 'chinese-input',
-                label: '中文',
-                semanticLabel: '打开系统中文输入',
-                onPressed: _showChineseInput,
-              ),
             for (final key in keys) _formulaKeyButton(key),
           ],
         ),
@@ -419,16 +412,6 @@ final class _PracticeFormulaKeyboardState
     setState(() => _uppercaseLetters = !_uppercaseLetters);
   }
 
-  Future<void> _showChineseInput() async {
-    final value = await showDialog<String>(
-      context: context,
-      builder: (_) => const _ChineseFormulaTextDialog(),
-    );
-    if (!mounted || value == null || value.isEmpty) return;
-    // 中文先转义为 TeX 文本节点，避免系统输入破坏当前公式树。
-    insertPracticeFormulaText(widget.controller, value);
-  }
-
   Widget _formulaKeyButton(PracticeFormulaKeySpec key) {
     return Semantics(
       button: true,
@@ -530,62 +513,6 @@ final class _PracticeFormulaKeyboardState
         side: const BorderSide(color: Color(0xFFC8CFDA)),
         borderRadius: BorderRadius.circular(8),
       ),
-    );
-  }
-}
-
-/// 独立持有系统文本控制器，确保弹窗退场动画结束后才释放。
-final class _ChineseFormulaTextDialog extends StatefulWidget {
-  const _ChineseFormulaTextDialog();
-
-  @override
-  State<_ChineseFormulaTextDialog> createState() =>
-      _ChineseFormulaTextDialogState();
-}
-
-final class _ChineseFormulaTextDialogState
-    extends State<_ChineseFormulaTextDialog> {
-  final TextEditingController _controller = TextEditingController();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('输入中文'),
-      content: TextField(
-        key: const ValueKey('practice-formula-chinese-field'),
-        controller: _controller,
-        autofocus: true,
-        minLines: 1,
-        maxLines: 3,
-        keyboardType: TextInputType.text,
-        textCapitalization: TextCapitalization.none,
-        enableSuggestions: true,
-        autocorrect: true,
-        textInputAction: TextInputAction.done,
-        decoration: const InputDecoration(
-          hintText: '例如：最大值、充分条件',
-          border: OutlineInputBorder(),
-        ),
-        onSubmitted: (text) => Navigator.of(context).pop(text.trim()),
-      ),
-      actions: [
-        TextButton(
-          key: const ValueKey('practice-formula-chinese-cancel'),
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          key: const ValueKey('practice-formula-chinese-insert'),
-          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
-          child: const Text('插入'),
-        ),
-      ],
     );
   }
 }
