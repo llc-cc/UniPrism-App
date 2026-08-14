@@ -12,6 +12,7 @@ enum PracticeFormulaKeyboardCategory {
   greek,
   physics,
   units,
+  letters,
   more,
 }
 
@@ -44,6 +45,7 @@ practiceFormulaCategoryLabels = <PracticeFormulaKeyboardCategory, String>{
   PracticeFormulaKeyboardCategory.greek: '希腊',
   PracticeFormulaKeyboardCategory.physics: '物理',
   PracticeFormulaKeyboardCategory.units: '单位',
+  PracticeFormulaKeyboardCategory.letters: '字母',
   PracticeFormulaKeyboardCategory.more: '更多',
 };
 
@@ -113,6 +115,45 @@ PracticeFormulaKeyAction _unit(String latex) => (controller) {
   if (RegExp(r'(?:\d|\})$').hasMatch(current)) controller.addLeaf(r'\,');
   controller.addLeaf(latex);
 };
+
+/// 按当前大小写状态生成完整的 26 个受控字母键。
+List<PracticeFormulaKeySpec> practiceFormulaAlphabetKeys({
+  required bool uppercase,
+}) => List<PracticeFormulaKeySpec>.generate(26, (index) {
+  final lowercase = String.fromCharCode('a'.codeUnitAt(0) + index);
+  final value = uppercase ? lowercase.toUpperCase() : lowercase;
+  return PracticeFormulaKeySpec(
+    'letter-$lowercase',
+    value,
+    '字母 $value',
+    _leaf(value),
+  );
+}, growable: false);
+
+/// 将系统输入法产生的普通文本安全插入当前公式光标。
+void insertPracticeFormulaText(
+  MathFieldEditingController controller,
+  String value,
+) {
+  if (value.isEmpty) return;
+  const escapedCharacters = <String, String>{
+    r'\': r'\backslash{}',
+    '{': r'\{',
+    '}': r'\}',
+    '%': r'\%',
+    '_': r'\_',
+    '#': r'\#',
+    r'$': r'\$',
+    '&': r'\&',
+    '^': r'\^{}',
+    '~': r'\~{}',
+  };
+  final escaped = value
+      .split('')
+      .map((character) => escapedCharacters[character] ?? character)
+      .join();
+  controller.addLeaf('\\text{$escaped}');
+}
 
 final PracticeFormulaKeySpec _fraction = PracticeFormulaKeySpec(
   'fraction',
@@ -482,6 +523,7 @@ practiceFormulaCategoryKeys =
           _unit(r'^{\circ}\mathrm{C}'),
         ),
       ],
+      PracticeFormulaKeyboardCategory.letters: <PracticeFormulaKeySpec>[],
       PracticeFormulaKeyboardCategory.more: <PracticeFormulaKeySpec>[
         PracticeFormulaKeySpec('z', 'z', '变量 z', _leaf('z')),
         PracticeFormulaKeySpec('a', 'a', '变量 a', _leaf('a')),

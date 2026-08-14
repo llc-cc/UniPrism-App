@@ -31,9 +31,14 @@ final class _PracticeFormulaKeyboardState
   static const double _wideLayoutBreakpoint = 720;
   PracticeFormulaKeyboardCategory _category =
       PracticeFormulaKeyboardCategory.common;
+  bool _uppercaseLetters = false;
 
-  List<PracticeFormulaKeySpec> get _categoryKeys =>
-      practiceFormulaCategoryKeys[_category]!;
+  List<PracticeFormulaKeySpec> get _categoryKeys {
+    if (_category == PracticeFormulaKeyboardCategory.letters) {
+      return practiceFormulaAlphabetKeys(uppercase: _uppercaseLetters);
+    }
+    return practiceFormulaCategoryKeys[_category]!;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -163,16 +168,28 @@ final class _PracticeFormulaKeyboardState
   }
 
   Widget _auxiliaryPad({required bool isWide}) {
+    final isAlphabet = _category == PracticeFormulaKeyboardCategory.letters;
     return GridView.count(
       key: ValueKey('practice-formula-auxiliary-pad-${_category.name}'),
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: 4,
+      crossAxisCount: isAlphabet ? 7 : 4,
       mainAxisSpacing: 6,
       crossAxisSpacing: 6,
       // 窄屏需同时容纳公式区和五行数字区，稍压缩键高避免挡住题干。
-      childAspectRatio: isWide ? 1.55 : 1.58,
-      children: [for (final key in _categoryKeys) _formulaKeyButton(key)],
+      childAspectRatio: isAlphabet
+          ? (isWide ? 1.35 : 1.12)
+          : (isWide ? 1.55 : 1.58),
+      children: [
+        if (isAlphabet)
+          _textActionButton(
+            id: 'chinese-input',
+            label: '中文',
+            semanticLabel: '打开系统中文输入',
+            onPressed: _showChineseInput,
+          ),
+        for (final key in _categoryKeys) _formulaKeyButton(key),
+      ],
     );
   }
 
@@ -189,11 +206,12 @@ final class _PracticeFormulaKeyboardState
       children: [
         _textActionButton(
           id: 'more-shortcut',
-          label: 'abc',
-          semanticLabel: '打开更多字母与逻辑符号',
-          onPressed: () =>
-              _selectCategory(PracticeFormulaKeyboardCategory.more),
-          selected: _category == PracticeFormulaKeyboardCategory.more,
+          label: _uppercaseLetters ? 'ABC' : 'abc',
+          semanticLabel: _category == PracticeFormulaKeyboardCategory.letters
+              ? '切换字母大小写'
+              : '打开完整字母键盘',
+          onPressed: _handleAlphabetShortcut,
+          selected: _category == PracticeFormulaKeyboardCategory.letters,
         ),
         _iconActionButton(
           id: 'previous',
@@ -226,6 +244,26 @@ final class _PracticeFormulaKeyboardState
         ),
       ],
     );
+  }
+
+  void _handleAlphabetShortcut() {
+    setState(() {
+      if (_category == PracticeFormulaKeyboardCategory.letters) {
+        _uppercaseLetters = !_uppercaseLetters;
+      } else {
+        _category = PracticeFormulaKeyboardCategory.letters;
+      }
+    });
+  }
+
+  Future<void> _showChineseInput() async {
+    final value = await showDialog<String>(
+      context: context,
+      builder: (_) => const _ChineseFormulaTextDialog(),
+    );
+    if (!mounted || value == null || value.isEmpty) return;
+    // 中文先经目录层转义为 TeX 文本节点，避免破坏当前公式树。
+    insertPracticeFormulaText(widget.controller, value);
   }
 
   Widget _formulaKeyButton(PracticeFormulaKeySpec key) {
@@ -347,5 +385,57 @@ final class _PracticeFormulaKeyboardState
         next.expression == '^') {
       widget.controller.goNext();
     }
+  }
+}
+
+/// 独立持有系统文本控制器，确保弹窗退场动画结束后才释放。
+final class _ChineseFormulaTextDialog extends StatefulWidget {
+  const _ChineseFormulaTextDialog();
+
+  @override
+  State<_ChineseFormulaTextDialog> createState() =>
+      _ChineseFormulaTextDialogState();
+}
+
+final class _ChineseFormulaTextDialogState
+    extends State<_ChineseFormulaTextDialog> {
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('输入中文'),
+      content: TextField(
+        key: const ValueKey('practice-formula-chinese-field'),
+        controller: _controller,
+        autofocus: true,
+        minLines: 1,
+        maxLines: 3,
+        textInputAction: TextInputAction.done,
+        decoration: const InputDecoration(
+          hintText: '例如：最大值、充分条件',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (text) => Navigator.of(context).pop(text.trim()),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('practice-formula-chinese-cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const ValueKey('practice-formula-chinese-insert'),
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('插入'),
+        ),
+      ],
+    );
   }
 }

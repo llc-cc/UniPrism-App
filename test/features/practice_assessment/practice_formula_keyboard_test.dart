@@ -106,7 +106,57 @@ void main() {
     _expectSameRow(tester, const ['0', 'decimal', 'plus', 'done']);
   });
 
-  testWidgets('abc 切换更多分类且确认只调用一次完成回调', (tester) async {
+  testWidgets('abc 打开完整字母页并可往返切换大小写', (tester) async {
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('practice-formula-auxiliary-pad-letters')),
+      findsOneWidget,
+    );
+    for (final letter in 'abcdefghijklmnopqrstuvwxyz'.split('')) {
+      expect(find.byKey(_key('letter-$letter')), findsOneWidget);
+    }
+
+    await tester.tap(find.byKey(_key('letter-a')));
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
+    expect(find.text('ABC'), findsOneWidget);
+    await tester.tap(find.byKey(_key('letter-z')));
+
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
+    expect(find.text('abc'), findsOneWidget);
+    await tester.tap(find.byKey(_key('letter-b')));
+    expect(_latex(controller), 'aZb');
+  });
+
+  testWidgets('中文入口使用系统文本框并把确认内容插入公式', (tester) async {
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
+    await tester.tap(find.byKey(_key('chinese-input')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('输入中文'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('practice-formula-chinese-field')),
+      '最大值',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-chinese-insert')),
+    );
+    await tester.pumpAndSettle();
+    expect(_latex(controller), r'\text{最大值}');
+  });
+
+  testWidgets('中文输入取消不改变公式且确认回调仍只调用一次', (tester) async {
     final controller = MathFieldEditingController();
     var doneCount = 0;
     addTearDown(controller.dispose);
@@ -114,10 +164,17 @@ void main() {
 
     await tester.tap(find.byKey(_key('more-shortcut')));
     await tester.pump();
-    expect(
-      find.byKey(const ValueKey('practice-formula-auxiliary-pad-more')),
-      findsOneWidget,
+    await tester.tap(find.byKey(_key('chinese-input')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('practice-formula-chinese-field')),
+      '不应插入',
     );
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-chinese-cancel')),
+    );
+    await tester.pumpAndSettle();
+    expect(_latex(controller), isEmpty);
 
     await tester.tap(find.byKey(_key('done')));
     expect(doneCount, 1);
