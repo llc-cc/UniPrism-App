@@ -39,49 +39,6 @@ void main() {
     );
   });
 
-  test('目录按九类组织并把高频关系符号放在符号页最前', () {
-    expect(
-      PracticeFormulaKeyboardCategory.values.map((item) => item.name),
-      <String>[
-        'common',
-        'structures',
-        'symbols',
-        'functions',
-        'greek',
-        'physics',
-        'units',
-        'letters',
-        'more',
-      ],
-    );
-
-    expect(
-      practiceFormulaCategoryKeys[PracticeFormulaKeyboardCategory.symbols]!
-          .take(6)
-          .map((item) => item.id),
-      <String>[
-        'less-equal',
-        'greater-equal',
-        'not-equal',
-        'in',
-        'union',
-        'intersection',
-      ],
-    );
-
-    final allKeys = <PracticeFormulaKeySpec>[
-      ...practiceFormulaCategoryKeys.values.expand((items) => items),
-      ...practiceFormulaNumericKeys,
-    ];
-    expect(allKeys.where((item) => item.id == 'equals'), hasLength(1));
-    expect(
-      practiceFormulaCategoryKeys[PracticeFormulaKeyboardCategory.greek]!.map(
-        (item) => item.id,
-      ),
-      containsAll(<String>['alpha', 'beta', 'gamma', 'theta', 'pi']),
-    );
-  });
-
   test('常用目录覆盖唯一主位置', () {
     expect(
       practiceFormulaCommonSectionKeys[PracticeFormulaSection.commonSymbols]!
@@ -171,6 +128,41 @@ void main() {
       ).take(26).map((item) => item.label).join(),
       'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
     );
+  });
+
+  test('正式目录键位 ID 唯一且展示位置合法', () {
+    expect(validatePracticeFormulaCatalog, returnsNormally);
+    expect(
+      <PracticeFormulaSection, int>{
+        for (final entry in practiceFormulaSectionKeys.entries)
+          entry.key: entry.value.length,
+      },
+      <PracticeFormulaSection, int>{
+        PracticeFormulaSection.lettersAndNumbers: 30,
+        PracticeFormulaSection.commonSymbols: 16,
+        PracticeFormulaSection.commonTemplates: 15,
+        PracticeFormulaSection.mathSymbols: 33,
+        PracticeFormulaSection.mathTemplates: 15,
+        PracticeFormulaSection.physicsSymbols: 11,
+        PracticeFormulaSection.physicsUnits: 51,
+        PracticeFormulaSection.physicsConstants: 10,
+      },
+    );
+
+    final official = practiceFormulaSectionKeys.values
+        .expand((items) => items)
+        .toList(growable: false);
+    expect(official, hasLength(181));
+    expect(official.map((item) => item.id).toSet(), hasLength(official.length));
+    expect(
+      official.where(
+        (item) => item.placement == PracticeFormulaKeyPlacement.fixedPad,
+      ),
+      isEmpty,
+    );
+    for (final entry in practiceFormulaSectionKeys.entries) {
+      expect(entry.value.every((item) => item.section == entry.key), isTrue);
+    }
   });
 
   test('数学符号目录精确覆盖三十三个教材符号', () {
@@ -459,35 +451,23 @@ void main() {
     expect(_latex(controller), r'\text{最大值\{a\}\_\%}');
   });
 
-  test('希腊字母物理矢量和单位键写入受控 LaTeX', () {
+  test('正式目录普通符号和单位键写入受控 LaTeX', () {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
 
-    _key(PracticeFormulaKeyboardCategory.greek, 'alpha').action(controller);
+    practiceFormulaKeysForSection(
+      PracticeFormulaSection.lettersAndNumbers,
+    ).singleWhere((item) => item.id == 'alpha').insert(controller);
     expect(_latex(controller), r'\alpha');
 
     controller.clear();
-    _key(
-      PracticeFormulaKeyboardCategory.physics,
-      'vector-force',
-    ).action(controller);
-    expect(_latex(controller), r'\vec{F}');
-
-    controller.clear();
     controller.addLeaf('5');
-    _key(
-      PracticeFormulaKeyboardCategory.units,
-      'unit-metre',
-    ).action(controller);
+    practiceFormulaKeysForSection(
+      PracticeFormulaSection.physicsUnits,
+    ).singleWhere((item) => item.id == 'unit-m').insert(controller);
     expect(_latex(controller), r'5\,\mathrm{m}');
   });
 }
-
-PracticeFormulaKeySpec _key(
-  PracticeFormulaKeyboardCategory category,
-  String id,
-) =>
-    practiceFormulaCategoryKeys[category]!.singleWhere((item) => item.id == id);
 
 String _latex(MathFieldEditingController controller) => controller
     .currentEditingValue(placeholderWhenEmpty: false)

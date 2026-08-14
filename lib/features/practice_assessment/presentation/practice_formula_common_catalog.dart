@@ -672,3 +672,10 @@ List<PracticeFormulaKeySpec> practiceFormulaLetterAndNumberKeys({
     ),
   ]);
 }
+
+/// 迁移期兼容入口；正式字母标签另含 π、α、β、θ 四个常用字符。
+List<PracticeFormulaKeySpec> practiceFormulaAlphabetKeys({
+  required bool uppercase,
+}) => practiceFormulaLetterAndNumberKeys(
+  uppercase: uppercase,
+).take(26).toList(growable: false);
