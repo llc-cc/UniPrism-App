@@ -185,7 +185,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-tab-relations')),
+      find.byKey(const ValueKey('practice-formula-category-symbols')),
     );
     await tester.pump();
 
