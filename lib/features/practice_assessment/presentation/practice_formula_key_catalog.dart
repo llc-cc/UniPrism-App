@@ -3,6 +3,10 @@ import 'package:math_keyboard/math_keyboard.dart';
 // ignore: implementation_imports
 import 'package:math_keyboard/src/foundation/node.dart';
 
+import 'practice_formula_key_models.dart';
+
+export 'practice_formula_key_models.dart';
+
 /// 公式键盘的一级分类；顺序同时决定桌面左栏和窄屏分类栏顺序。
 enum PracticeFormulaKeyboardCategory {
   common,
@@ -14,26 +18,6 @@ enum PracticeFormulaKeyboardCategory {
   units,
   letters,
   more,
-}
-
-typedef PracticeFormulaKeyAction =
-    void Function(MathFieldEditingController controller);
-
-/// 单个受控公式键；显示内容与写入动作分离，禁止由文案动态拼接 LaTeX。
-final class PracticeFormulaKeySpec {
-  const PracticeFormulaKeySpec(
-    this.id,
-    this.label,
-    this.semanticLabel,
-    this.action, {
-    this.isTexLabel = false,
-  });
-
-  final String id;
-  final String label;
-  final String semanticLabel;
-  final PracticeFormulaKeyAction action;
-  final bool isTexLabel;
 }
 
 const Map<PracticeFormulaKeyboardCategory, String>

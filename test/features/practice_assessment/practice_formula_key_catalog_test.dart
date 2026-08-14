@@ -3,6 +3,42 @@ import 'package:math_keyboard/math_keyboard.dart';
 import 'package:uniprism_app/features/practice_assessment/presentation/practice_formula_key_catalog.dart';
 
 void main() {
+  test('目录固定为三个一级分类和八个二级标签', () {
+    expect(
+      PracticeFormulaPrimaryCategory.values.map((item) => item.name),
+      <String>['common', 'mathematics', 'physics'],
+    );
+    expect(PracticeFormulaSection.values.map((item) => item.name), <String>[
+      'lettersAndNumbers',
+      'commonSymbols',
+      'commonTemplates',
+      'mathSymbols',
+      'mathTemplates',
+      'physicsSymbols',
+      'physicsUnits',
+      'physicsConstants',
+    ]);
+    expect(
+      practiceFormulaSectionsByPrimary,
+      <PracticeFormulaPrimaryCategory, List<PracticeFormulaSection>>{
+        PracticeFormulaPrimaryCategory.common: <PracticeFormulaSection>[
+          PracticeFormulaSection.lettersAndNumbers,
+          PracticeFormulaSection.commonSymbols,
+          PracticeFormulaSection.commonTemplates,
+        ],
+        PracticeFormulaPrimaryCategory.mathematics: <PracticeFormulaSection>[
+          PracticeFormulaSection.mathSymbols,
+          PracticeFormulaSection.mathTemplates,
+        ],
+        PracticeFormulaPrimaryCategory.physics: <PracticeFormulaSection>[
+          PracticeFormulaSection.physicsSymbols,
+          PracticeFormulaSection.physicsUnits,
+          PracticeFormulaSection.physicsConstants,
+        ],
+      },
+    );
+  });
+
   test('目录按九类组织并把高频关系符号放在符号页最前', () {
     expect(
       PracticeFormulaKeyboardCategory.values.map((item) => item.name),
