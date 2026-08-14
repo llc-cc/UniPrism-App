@@ -39,6 +39,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
+    );
+    await tester.pump();
+    await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-fraction')),
     );
     await tester.tap(find.byKey(const ValueKey('practice-formula-key-3')));
@@ -150,6 +154,10 @@ void main() {
       find.byKey(const ValueKey('practice-formula-keyboard')),
       findsOneWidget,
     );
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
+    );
+    await tester.pump();
     expect(
       find.byKey(const ValueKey('practice-formula-key-fraction')),
       findsOneWidget,
@@ -186,6 +194,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
+    );
+    await tester.pump();
+    await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-scientific-notation')),
     );
     await tester.tap(find.byKey(const ValueKey('practice-formula-key-3')));
@@ -216,7 +228,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-category-functions')),
+      find.byKey(const ValueKey('practice-formula-primary-mathematics')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-mathTemplates')),
     );
     await tester.pump();
     await tester.tap(
@@ -262,7 +278,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-category-physics')),
+      find.byKey(const ValueKey('practice-formula-primary-physics')),
     );
     await tester.pump();
     await tester.tap(
@@ -310,7 +326,19 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('practice-formula-key-5')));
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-category-units')),
+      find.byKey(const ValueKey('practice-formula-primary-physics')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-physicsUnits')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-page-next')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-page-next')),
     );
     await tester.pump();
     await tester.tap(
@@ -340,7 +368,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-category-symbols')),
+      find.byKey(const ValueKey('practice-formula-section-commonSymbols')),
     );
     await tester.pump();
 
@@ -348,6 +376,10 @@ void main() {
       find.byKey(const ValueKey('practice-formula-key-less-equal')),
       findsOneWidget,
     );
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-primary-mathematics')),
+    );
+    await tester.pump();
     expect(
       find.byKey(const ValueKey('practice-formula-key-infinity')),
       findsOneWidget,

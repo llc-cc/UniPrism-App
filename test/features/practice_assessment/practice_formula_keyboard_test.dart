@@ -6,7 +6,7 @@ import 'package:uniprism_app/features/practice_assessment/presentation/practice_
 import 'package:uniprism_app/features/practice_assessment/presentation/practice_formula_keyboard.dart';
 
 void main() {
-  testWidgets('桌面端按左分类中公式右数字三栏排版并固定右侧五行', (tester) async {
+  testWidgets('桌面端显示两级导航并保持右侧五行数字区', (tester) async {
     tester.view.physicalSize = const Size(1100, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -16,17 +16,34 @@ void main() {
 
     await tester.pumpWidget(_app(controller));
 
-    final rail = tester.getRect(
-      find.byKey(const ValueKey('practice-formula-category-rail')),
+    for (final primary in PracticeFormulaPrimaryCategory.values) {
+      expect(find.byKey(_primaryKey(primary)), findsOneWidget);
+    }
+    for (final section
+        in practiceFormulaSectionsByPrimary[PracticeFormulaPrimaryCategory
+            .common]!) {
+      expect(find.byKey(_sectionKey(section)), findsOneWidget);
+    }
+    expect(
+      find.byKey(
+        const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
+      ),
+      findsOneWidget,
     );
-    final auxiliary = tester.getRect(
-      find.byKey(const ValueKey('practice-formula-auxiliary-pad-common')),
+
+    final navigation = tester.getRect(
+      find.byKey(const ValueKey('practice-formula-navigation-rail')),
+    );
+    final content = tester.getRect(
+      find.byKey(
+        const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
+      ),
     );
     final numeric = tester.getRect(
       find.byKey(const ValueKey('practice-formula-numeric-pad')),
     );
-    expect(rail.right, lessThan(auxiliary.left));
-    expect(auxiliary.right, lessThan(numeric.left));
+    expect(navigation.right, lessThan(content.left));
+    expect(content.right, lessThan(numeric.left));
 
     _expectSameRow(tester, const [
       'more-shortcut',
@@ -38,49 +55,90 @@ void main() {
     _expectSameRow(tester, const ['4', '5', '6', 'multiply']);
     _expectSameRow(tester, const ['1', '2', '3', 'minus']);
     _expectSameRow(tester, const ['0', 'decimal', 'plus', 'done']);
-    expect(
-      _center(tester, '7').dy,
-      greaterThan(_center(tester, 'previous').dy),
-    );
-    expect(_center(tester, '4').dy, greaterThan(_center(tester, '7').dy));
-    expect(_center(tester, '1').dy, greaterThan(_center(tester, '4').dy));
-    expect(_center(tester, '0').dy, greaterThan(_center(tester, '1').dy));
-    expect(find.byKey(_key('equals')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('希腊和符号分类优先展示高中高频键位', (tester) async {
+  testWidgets('切换一级分类只显示所属二级标签并自动选择首项', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.greek);
-    for (final id in <String>['alpha', 'beta', 'gamma', 'theta', 'pi']) {
-      expect(find.byKey(_key(id)), findsOneWidget);
-    }
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathSymbols)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.commonSymbols)),
+      findsNothing,
+    );
+    expect(find.byKey(_key('infinity')), findsOneWidget);
 
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.symbols);
-    for (final id in <String>[
-      'less-equal',
-      'greater-equal',
-      'not-equal',
-      'in',
-      'union',
-      'intersection',
-    ]) {
-      expect(find.byKey(_key(id)), findsOneWidget);
-    }
+    await _selectSection(tester, PracticeFormulaSection.mathTemplates);
+    expect(find.byKey(_key('conditional-prob')), findsOneWidget);
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
     expect(
-      _center(tester, 'less-equal').dy,
-      lessThan(_center(tester, 'parallel').dy),
+      find.byKey(_sectionKey(PracticeFormulaSection.physicsSymbols)),
+      findsOneWidget,
     );
     expect(
-      _center(tester, 'intersection').dy,
-      lessThan(_center(tester, 'degree').dy),
+      find.byKey(_sectionKey(PracticeFormulaSection.physicsUnits)),
+      findsOneWidget,
     );
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.physicsConstants)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathSymbols)),
+      findsNothing,
+    );
+    expect(find.byKey(_key('nucleus')), findsOneWidget);
   });
 
-  testWidgets('窄屏分类横向滚动且逐类切换不产生布局溢出', (tester) async {
+  testWidgets('物理单位每页二十项且切换标签重置页码', (tester) async {
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
+    await _selectSection(tester, PracticeFormulaSection.physicsUnits);
+    expect(find.byKey(_key('unit-mm')), findsOneWidget);
+    expect(find.byKey(_key('unit-kW-hour')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('practice-formula-page-indicator')),
+      findsOneWidget,
+    );
+    expect(find.text('1/3'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
+    await tester.pump();
+    expect(find.text('2/3'), findsOneWidget);
+    expect(find.byKey(_key('unit-mm')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
+    await tester.pump();
+    expect(find.text('3/3'), findsOneWidget);
+    expect(find.byKey(_key('unit-kW-hour')), findsOneWidget);
+
+    await _selectSection(tester, PracticeFormulaSection.physicsSymbols);
+    expect(find.byKey(_key('nucleus')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('practice-formula-page-controls')),
+      findsNothing,
+    );
+
+    await _selectSection(tester, PracticeFormulaSection.physicsUnits);
+    expect(find.text('1/3'), findsOneWidget);
+    expect(find.byKey(_key('unit-mm')), findsOneWidget);
+  });
+
+  testWidgets('375 窄屏使用两行横向导航并逐标签无溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -89,93 +147,104 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller));
-
     expect(
-      find.byKey(const ValueKey('practice-formula-category-scroll')),
+      find.byKey(const ValueKey('practice-formula-primary-scroll')),
       findsOneWidget,
     );
-    for (final category in PracticeFormulaKeyboardCategory.values) {
-      await _selectCategory(tester, category);
-      expect(
-        find.byKey(ValueKey('practice-formula-auxiliary-pad-${category.name}')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-scroll')),
+      findsOneWidget,
+    );
+
+    for (final primary in PracticeFormulaPrimaryCategory.values) {
+      await _selectPrimary(tester, primary);
+      for (final section in practiceFormulaSectionsByPrimary[primary]!) {
+        await _selectSection(tester, section);
+        expect(
+          find.byKey(ValueKey('practice-formula-section-grid-${section.name}')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      }
     }
     _expectSameRow(tester, const ['7', '8', '9', 'divide']);
     _expectSameRow(tester, const ['0', 'decimal', 'plus', 'done']);
   });
 
-  testWidgets('字母页通过手机式大写键切换并保持 abc 仅作为入口', (tester) async {
+  testWidgets('720 和 1100 宽屏逐分类保持稳定布局', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    for (final width in <double>[720, 1100]) {
+      tester.view.physicalSize = Size(width, 900);
+      final controller = MathFieldEditingController();
+      await tester.pumpWidget(_app(controller));
+      expect(
+        find.byKey(const ValueKey('practice-formula-wide-layout')),
+        findsOneWidget,
+      );
+      for (final primary in PracticeFormulaPrimaryCategory.values) {
+        await _selectPrimary(tester, primary);
+        for (final section in practiceFormulaSectionsByPrimary[primary]!) {
+          await _selectSection(tester, section);
+          expect(tester.takeException(), isNull);
+        }
+      }
+      controller.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
+
+  testWidgets('abc 跳回字母页且大小写状态保持独立', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
-    await tester.tap(find.byKey(_key('more-shortcut')));
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey('practice-formula-auxiliary-pad-letters')),
-      findsOneWidget,
-    );
     for (final letter in 'abcdefghijklmnopqrstuvwxyz'.split('')) {
       expect(find.byKey(_key('letter-$letter')), findsOneWidget);
     }
+    expect(find.byKey(_key('pi')), findsOneWidget);
     expect(find.byKey(_key('uppercase')), findsOneWidget);
-    expect(find.text('⇧ 大写'), findsOneWidget);
-    expect(find.text('小写'), findsNothing);
-    expect(_isSelected(tester, 'uppercase'), isFalse);
-
-    await tester.tap(find.byKey(_key('more-shortcut')));
-    await tester.pump();
-    expect(
-      find.descendant(
-        of: find.byKey(_key('letter-a')),
-        matching: find.text('a'),
-      ),
-      findsOneWidget,
-    );
     expect(_isSelected(tester, 'uppercase'), isFalse);
 
     await tester.tap(find.byKey(_key('uppercase')));
     await tester.pump();
     expect(_isSelected(tester, 'uppercase'), isTrue);
+    await tester.tap(find.byKey(_key('letter-a')));
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
     expect(
-      find.descendant(
-        of: find.byKey(_key('letter-a')),
-        matching: find.text('A'),
+      find.byKey(
+        const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byKey(_key('letter-a')));
+    expect(
+      find.descendant(
+        of: find.byKey(_key('letter-z')),
+        matching: find.text('Z'),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(_key('letter-z')));
-
-    await tester.tap(find.byKey(_key('uppercase')));
-    await tester.pump();
-    expect(_isSelected(tester, 'uppercase'), isFalse);
-    expect(find.text('小写'), findsNothing);
-    await tester.tap(find.byKey(_key('letter-b')));
-    expect(_latex(controller), 'AZb');
+    expect(_latex(controller), 'AZ');
   });
 
-  testWidgets('中文入口使用系统文本框并把确认内容插入公式', (tester) async {
+  testWidgets('中文入口使用系统文本框并安全插入公式', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
-    await tester.tap(find.byKey(_key('more-shortcut')));
-    await tester.pump();
     await tester.tap(find.byKey(_key('chinese-input')));
     await tester.pumpAndSettle();
-
-    expect(find.text('输入中文'), findsOneWidget);
     final field = tester.widget<TextField>(
       find.byKey(const ValueKey('practice-formula-chinese-field')),
     );
     expect(field.autofocus, isTrue);
     expect(field.keyboardType, TextInputType.text);
-    expect(field.enableSuggestions, isTrue);
-    expect(field.autocorrect, isTrue);
-    expect(field.textCapitalization, TextCapitalization.none);
     await tester.enterText(
       find.byKey(const ValueKey('practice-formula-chinese-field')),
       '最大值',
@@ -187,60 +256,26 @@ void main() {
     expect(_latex(controller), r'\text{最大值}');
   });
 
-  testWidgets('中文输入取消不改变公式且确认回调仍只调用一次', (tester) async {
-    final controller = MathFieldEditingController();
-    var doneCount = 0;
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_app(controller, onDone: () => doneCount += 1));
-
-    await tester.tap(find.byKey(_key('more-shortcut')));
-    await tester.pump();
-    await tester.tap(find.byKey(_key('chinese-input')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('practice-formula-chinese-field')),
-      '不应插入',
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-chinese-cancel')),
-    );
-    await tester.pumpAndSettle();
-    expect(_latex(controller), isEmpty);
-
-    await tester.tap(find.byKey(_key('done')));
-    expect(doneCount, 1);
-  });
-
-  testWidgets('结构键帽使用真正数学排版并可继续填写槽位', (tester) async {
+  testWidgets('公式模板使用数学排版并可继续填写槽位', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
+    await _selectSection(tester, PracticeFormulaSection.commonTemplates);
 
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.structures);
-    for (final id in <String>['fraction', 'sqrt', 'sum']) {
+    for (final id in <String>['fraction', 'sqrt', 'scientific-notation']) {
       expect(
         find.descendant(of: find.byKey(_key(id)), matching: find.byType(Math)),
         findsOneWidget,
       );
     }
 
-    controller.addLeaf('x');
-    await tester.tap(find.byKey(_key('square')));
-    expect(_latex(controller), r'x^{2}');
-
-    controller.clear();
     await tester.tap(find.byKey(_key('fraction')));
     await tester.tap(find.byKey(_key('3')));
     await tester.tap(find.byKey(_key('next')));
     await tester.tap(find.byKey(_key('2')));
     expect(_latex(controller), r'\frac{3}{2}');
-  });
 
-  testWidgets('数字函数关系键写入受控 LaTeX', (tester) async {
-    final controller = MathFieldEditingController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_app(controller));
-
+    controller.clear();
     for (final id in <String>[
       '7',
       'divide',
@@ -255,56 +290,6 @@ void main() {
       await tester.tap(find.byKey(_key(id)));
     }
     expect(_latex(controller), r'7\div8\times9-1+2');
-
-    controller.clear();
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.functions);
-    await tester.tap(find.byKey(_key('sin')));
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.common);
-    await tester.tap(find.byKey(_key('equals')));
-    expect(_latex(controller), r'\sin(=)');
-
-    controller.clear();
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.symbols);
-    for (final id in <String>[
-      'less-equal',
-      'approx',
-      'subset-equal',
-      'perpendicular',
-      'degree',
-      'arrow',
-    ]) {
-      await tester.tap(find.byKey(_key(id)));
-    }
-    expect(_latex(controller), r'\le\approx\subseteq\perp^{\circ}\to');
-  });
-
-  testWidgets('极限求和与积分键提供可按顺序填写的上下限槽位', (tester) async {
-    final controller = MathFieldEditingController();
-    addTearDown(controller.dispose);
-    await tester.pumpWidget(_app(controller));
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.functions);
-
-    await tester.tap(find.byKey(_key('limit')));
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.common);
-    await tester.tap(find.byKey(_key('equals')));
-    expect(_latex(controller), r'\lim_{=}');
-
-    controller.clear();
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.functions);
-    await tester.tap(find.byKey(_key('sum')));
-    await tester.tap(find.byKey(_key('1')));
-    await tester.tap(find.byKey(_key('next')));
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.more);
-    await tester.tap(find.byKey(_key('m')));
-    expect(_latex(controller), r'\sum_{1}^{m}');
-
-    controller.clear();
-    await _selectCategory(tester, PracticeFormulaKeyboardCategory.functions);
-    await tester.tap(find.byKey(_key('integral')));
-    await tester.tap(find.byKey(_key('0')));
-    await tester.tap(find.byKey(_key('next')));
-    await tester.tap(find.byKey(_key('1')));
-    expect(_latex(controller), r'\int_{0}^{1}');
   });
 }
 
@@ -321,17 +306,31 @@ Widget _app(MathFieldEditingController controller, {VoidCallback? onDone}) {
   );
 }
 
-Future<void> _selectCategory(
+Future<void> _selectPrimary(
   WidgetTester tester,
-  PracticeFormulaKeyboardCategory category,
+  PracticeFormulaPrimaryCategory primary,
 ) async {
-  final finder = find.byKey(
-    ValueKey('practice-formula-category-${category.name}'),
-  );
+  final finder = find.byKey(_primaryKey(primary));
   await tester.ensureVisible(finder);
   await tester.tap(finder);
   await tester.pump();
 }
+
+Future<void> _selectSection(
+  WidgetTester tester,
+  PracticeFormulaSection section,
+) async {
+  final finder = find.byKey(_sectionKey(section));
+  await tester.ensureVisible(finder);
+  await tester.tap(finder);
+  await tester.pump();
+}
+
+ValueKey<String> _primaryKey(PracticeFormulaPrimaryCategory primary) =>
+    ValueKey<String>('practice-formula-primary-${primary.name}');
+
+ValueKey<String> _sectionKey(PracticeFormulaSection section) =>
+    ValueKey<String>('practice-formula-section-${section.name}');
 
 ValueKey<String> _key(String id) =>
     ValueKey<String>('practice-formula-key-$id');

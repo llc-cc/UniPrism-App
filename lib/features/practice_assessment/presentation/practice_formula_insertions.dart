@@ -172,6 +172,23 @@ void insertPracticeFormulaText(
   controller.addLeaf('\\text{$escaped}');
 }
 
+/// 前进到下一个可编辑槽位；相邻上下标需要额外跨过两个函数节点之间的边界。
+void goToNextPracticeFormulaSlot(MathFieldEditingController controller) {
+  controller.goNext();
+  final node = controller.currentNode;
+  final position = node.courserPosition;
+  final previous = position > 0 ? node.children[position - 1] : null;
+  final next = position + 1 < node.children.length
+      ? node.children[position + 1]
+      : null;
+  if (previous is TeXFunction &&
+      next is TeXFunction &&
+      previous.expression.endsWith('_') &&
+      next.expression == '^') {
+    controller.goNext();
+  }
+}
+
 TeXArg _toTeXArgument(PracticeFormulaArgument argument) => switch (argument) {
   PracticeFormulaArgument.braces => TeXArg.braces,
   PracticeFormulaArgument.brackets => TeXArg.brackets,
