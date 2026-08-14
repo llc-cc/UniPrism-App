@@ -189,7 +189,26 @@ void main() {
       find.byKey(const ValueKey('practice-math-answer-field')),
       findsOneWidget,
     );
+    expect(
+      find.byKey(const ValueKey('practice-fill-blank-prompt-before')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-fill-blank-prompt-after')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('______'), findsNothing);
     expect(find.byKey(const ValueKey('practice-answer-input')), findsNothing);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('practice-math-answer-input')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('practice-formula-keyboard')),
+      findsOneWidget,
+    );
 
     controller.selectQuestion(18);
     await tester.pump();

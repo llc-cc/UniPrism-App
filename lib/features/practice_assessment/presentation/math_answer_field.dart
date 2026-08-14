@@ -13,12 +13,16 @@ final class MathAnswerField extends StatefulWidget {
     required this.enabled,
     required this.onChanged,
     this.controller,
+    this.prompt,
   });
 
   final String questionId;
   final String value;
   final bool enabled;
   final ValueChanged<String> onChanged;
+
+  /// 提供题干时把编辑器替换到首个连续下划线位置；为空时保留独立输入框模式。
+  final String? prompt;
 
   /// 允许测试或上层复用控制器；只有组件自行创建时才负责销毁。
   final MathFieldEditingController? controller;
@@ -115,6 +119,85 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
     }
     _lastAcceptedValue = value;
     widget.onChanged(value);
+    if (widget.prompt != null && mounted) setState(() {});
+  }
+
+  double get _inlineAnswerWidth {
+    final visibleValue = _lastAcceptedValue
+        .replaceAll(RegExp(r'\\[a-zA-Z]+'), 'x')
+        .replaceAll(RegExp(r'[{}]'), '');
+    return (88 + visibleValue.runes.length * 8).clamp(96, 260).toDouble();
+  }
+
+  Widget _buildMathField({required bool isInline}) {
+    return IgnorePointer(
+      ignoring: !widget.enabled,
+      child: MathField(
+        key: const ValueKey('practice-math-answer-input'),
+        controller: _controller,
+        focusNode: _focusNode,
+        keyboardType: MathKeyboardType.expression,
+        variables: practiceFormulaVariables,
+        // 默认键盘颜色与键位均为包内硬编码；App 使用下方受控浅色键盘。
+        opensKeyboard: false,
+        decoration: InputDecoration(
+          labelText: isInline ? null : '填写数学答案',
+          hintText: isInline ? '答案' : '点击此处输入分数、根式或公式',
+          isDense: isInline,
+          contentPadding: isInline
+              ? const EdgeInsets.symmetric(horizontal: 10, vertical: 10)
+              : null,
+          filled: true,
+          fillColor: widget.enabled ? Colors.white : const Color(0xFFF1EFF5),
+          enabled: widget.enabled,
+          border: const OutlineInputBorder(),
+          focusedBorder: const OutlineInputBorder(
+            borderSide: BorderSide(color: Color(0xFF6B23FF), width: 2),
+          ),
+        ),
+        onChanged: _handleChanged,
+        onSubmitted: (_) => _finishEditing(),
+      ),
+    );
+  }
+
+  Widget _buildEditor(BuildContext context) {
+    final prompt = widget.prompt;
+    if (prompt == null) return _buildMathField(isInline: false);
+
+    final placeholder = RegExp(r'_{3,}').firstMatch(prompt);
+    final before = placeholder == null
+        ? prompt
+        : prompt.substring(0, placeholder.start);
+    final after = placeholder == null ? '' : prompt.substring(placeholder.end);
+    final promptStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      height: 1.55,
+      fontWeight: FontWeight.w600,
+    );
+
+    // 键盘必须留在外层 Column；这里只把编辑器嵌入题干，避免键盘被答案框宽度压缩。
+    return Wrap(
+      key: const ValueKey('practice-fill-blank-prompt'),
+      spacing: 6,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          before,
+          key: const ValueKey('practice-fill-blank-prompt-before'),
+          style: promptStyle,
+        ),
+        SizedBox(
+          width: _inlineAnswerWidth,
+          child: _buildMathField(isInline: true),
+        ),
+        Text(
+          after,
+          key: const ValueKey('practice-fill-blank-prompt-after'),
+          style: promptStyle,
+        ),
+      ],
+    );
   }
 
   @override
@@ -126,33 +209,7 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
         key: const ValueKey('practice-math-answer-field'),
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IgnorePointer(
-            ignoring: !widget.enabled,
-            child: MathField(
-              key: const ValueKey('practice-math-answer-input'),
-              controller: _controller,
-              focusNode: _focusNode,
-              keyboardType: MathKeyboardType.expression,
-              variables: practiceFormulaVariables,
-              // 默认键盘颜色与键位均为包内硬编码；App 使用下方受控浅色键盘。
-              opensKeyboard: false,
-              decoration: InputDecoration(
-                labelText: '填写数学答案',
-                hintText: '点击此处输入分数、根式或公式',
-                filled: true,
-                fillColor: widget.enabled
-                    ? Colors.white
-                    : const Color(0xFFF1EFF5),
-                enabled: widget.enabled,
-                border: const OutlineInputBorder(),
-                focusedBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF6B23FF), width: 2),
-                ),
-              ),
-              onChanged: _handleChanged,
-              onSubmitted: (_) => _finishEditing(),
-            ),
-          ),
+          _buildEditor(context),
           if (_formatError case final message?) ...[
             const SizedBox(height: 6),
             Text(

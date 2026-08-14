@@ -364,57 +364,62 @@ final class _QuestionCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            Text(
-              question.prompt,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                height: 1.55,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (isChoice)
-              for (final entry in question.options.entries)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: CheckboxListTile(
-                    key: ValueKey('practice-option-${entry.key}'),
-                    contentPadding: EdgeInsets.zero,
-                    controlAffinity: ListTileControlAffinity.leading,
-                    value: draft.answer.contains(entry.key),
-                    title: Text('${entry.key}. ${entry.value}'),
-                    onChanged: isSubmitting ? null : (_) => onOption(entry.key),
-                  ),
-                )
-            else if (question.type == PracticeQuestionType.fillBlank)
+            if (question.type == PracticeQuestionType.fillBlank)
               MathAnswerField(
                 key: ValueKey('practice-math-answer-${question.id}'),
                 questionId: question.id,
+                prompt: question.prompt,
                 value: draft.answer,
                 enabled: !isSubmitting,
                 onChanged: onAnswer,
               )
-            else
-              KeyedSubtree(
-                key: const ValueKey('practice-answer-input'),
-                child: TextFormField(
-                  key: ValueKey('practice-answer-field-${question.id}'),
-                  initialValue: draft.answer,
-                  enabled: !isSubmitting,
-                  minLines: question.type == PracticeQuestionType.solution
-                      ? 2
-                      : 1,
-                  maxLines: question.type == PracticeQuestionType.solution
-                      ? 5
-                      : 2,
-                  decoration: InputDecoration(
-                    labelText: question.type == PracticeQuestionType.solution
-                        ? '最终结论或当前答案'
-                        : '填写答案',
-                    border: const OutlineInputBorder(),
-                  ),
-                  onChanged: onAnswer,
+            else ...[
+              Text(
+                question.prompt,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  height: 1.55,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
+              const SizedBox(height: 16),
+              if (isChoice)
+                for (final entry in question.options.entries)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: CheckboxListTile(
+                      key: ValueKey('practice-option-${entry.key}'),
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: draft.answer.contains(entry.key),
+                      title: Text('${entry.key}. ${entry.value}'),
+                      onChanged: isSubmitting
+                          ? null
+                          : (_) => onOption(entry.key),
+                    ),
+                  )
+              else
+                KeyedSubtree(
+                  key: const ValueKey('practice-answer-input'),
+                  child: TextFormField(
+                    key: ValueKey('practice-answer-field-${question.id}'),
+                    initialValue: draft.answer,
+                    enabled: !isSubmitting,
+                    minLines: question.type == PracticeQuestionType.solution
+                        ? 2
+                        : 1,
+                    maxLines: question.type == PracticeQuestionType.solution
+                        ? 5
+                        : 2,
+                    decoration: InputDecoration(
+                      labelText: question.type == PracticeQuestionType.solution
+                          ? '最终结论或当前答案'
+                          : '填写答案',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: onAnswer,
+                  ),
+                ),
+            ],
             const SizedBox(height: 14),
             KeyedSubtree(
               key: const ValueKey('practice-reasoning-input'),

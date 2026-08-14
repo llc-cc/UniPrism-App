@@ -4,6 +4,52 @@ import 'package:math_keyboard/math_keyboard.dart';
 import 'package:uniprism_app/features/practice_assessment/presentation/math_answer_field.dart';
 
 void main() {
+  testWidgets('填空题把公式输入框嵌入题干占位符而不保留下划线', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q12',
+          prompt: '双曲线的离心率为______。',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('practice-fill-blank-prompt-before')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-math-answer-input')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-fill-blank-prompt-after')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('______'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-fraction')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-3')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-2')));
+    await tester.pump();
+
+    expect(changes.last, r'\frac{3}{2}');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('公式草稿初始化为排版值且不回传伪造的编辑事件', (tester) async {
     final controller = MathFieldEditingController();
     final changes = <String>[];
