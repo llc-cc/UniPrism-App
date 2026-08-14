@@ -47,8 +47,8 @@ final class PairFormulaInsertion implements PracticeFormulaInsertion {
   @override
   void apply(MathFieldEditingController controller) {
     controller
-      ..addLeaf(left)
-      ..addLeaf(right)
+      ..addLeaf(_withTeXCommandSeparator(left))
+      ..addLeaf(_withTeXCommandSeparator(right))
       ..goBack();
   }
 }
@@ -139,13 +139,19 @@ final class UnitFormulaInsertion implements PracticeFormulaInsertion {
 
   @override
   void apply(MathFieldEditingController controller) {
-    final current = controller
-        .currentEditingValue(placeholderWhenEmpty: false)
-        .replaceAll(' ', '');
-    if (RegExp(r'(?:\d|\})$').hasMatch(current)) controller.addLeaf(r'\,');
-    controller.addLeaf(latex);
+    final node = controller.currentNode;
+    final position = node.courserPosition;
+    final previous = position > 0 ? node.children[position - 1] : null;
+    final leftLatex = previous?.buildString(cursorColor: null).trim() ?? '';
+    // 单位间距只取决于光标左邻节点，不能被光标右侧的表达式误导。
+    if (RegExp(r'(?:\d|\})$').hasMatch(leftLatex)) controller.addLeaf(r'\,');
+    controller.addLeaf(_withTeXCommandSeparator(latex));
   }
 }
+
+/// TeX 控制词后若紧跟拉丁字母会被合并成另一条命令，需保留语法分隔空格。
+String _withTeXCommandSeparator(String value) =>
+    RegExp(r'\\[A-Za-z]+$').hasMatch(value) ? '$value ' : value;
 
 /// 将系统输入法产生的普通文本安全写入当前公式光标。
 void insertPracticeFormulaText(

@@ -46,9 +46,9 @@ final PracticeFormulaKeySpec practiceFormulaConditionalProbabilityKey =
       r'P\left({}\mid{}\right)',
       '依次填写事件和条件事件',
       const CompositeFormulaInsertion(<String>[
-        r'P\left({',
-        r'}\mid{',
-        r'}\right)',
+        r'P\left(',
+        r'\mid ',
+        r'\right)',
       ]),
     );
 

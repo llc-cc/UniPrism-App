@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:math_keyboard/math_keyboard.dart';
 
 import 'practice_formula_config.dart';
+import 'practice_formula_draft_restorer.dart';
 import 'practice_formula_keyboard.dart';
 
 /// 填空题的可排版数学输入框；对外只暴露 LaTeX 字符串，不泄漏编辑器内部树。
@@ -91,7 +93,14 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
       if (value.isEmpty) {
         if (!_controller.isEmpty) _controller.clear();
       } else {
-        _controller.updateValue(TeXParser(value).parse());
+        try {
+          _controller.updateValue(TeXParser(value).parse());
+        } catch (_) {
+          final preview = Math.tex(value);
+          if (preview.parseError != null) throw preview.parseError!;
+          // 编辑器解析器覆盖面较窄；渲染器验证通过后重建可导航树，避免合法目录公式降级成整段文本。
+          restorePracticeFormulaDraft(_controller, value);
+        }
       }
       _lastAcceptedValue = value;
       _formatError = null;

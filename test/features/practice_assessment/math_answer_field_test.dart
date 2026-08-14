@@ -107,6 +107,151 @@ void main() {
     expect(changes, isEmpty);
   });
 
+  testWidgets('目录生成的复杂公式可由新控制器恢复并继续编辑', (tester) async {
+    const values = <String>[
+      r'5\,\mathrm{m}/\mathrm{s}^{2}',
+      r'\alpha\in\mathbb{R}',
+      r'P\left(A\mid B\right)',
+      r'\begin{cases}{x}\\{-x}\end{cases}',
+      r'{}_{6}^{14}C',
+      r'\left\lvert x\right\rvert',
+    ];
+
+    for (final value in values) {
+      final controller = MathFieldEditingController();
+      final changes = <String>[];
+      await tester.pumpWidget(
+        _app(
+          MathAnswerField(
+            questionId: 'q-restore-$value',
+            value: value,
+            enabled: true,
+            controller: controller,
+            onChanged: changes.add,
+          ),
+        ),
+      );
+
+      expect(
+        find.byKey(const ValueKey('practice-math-answer-error')),
+        findsNothing,
+      );
+      expect(
+        controller.currentEditingValue(placeholderWhenEmpty: false),
+        value,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('practice-math-answer-input')),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('practice-formula-key-plus')));
+      await tester.pump();
+      expect(changes.last, '$value+');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    }
+  });
+
+  testWidgets('恢复后的目录公式可进入内部结构逐项修改', (tester) async {
+    Future<void> verifyInternalEdit({
+      required String questionId,
+      required String value,
+      required String expected,
+      required void Function(MathFieldEditingController controller) edit,
+    }) async {
+      final controller = MathFieldEditingController();
+      await tester.pumpWidget(
+        _app(
+          MathAnswerField(
+            questionId: questionId,
+            value: value,
+            enabled: true,
+            controller: controller,
+            onChanged: (_) {},
+          ),
+        ),
+      );
+
+      edit(controller);
+      await tester.pump();
+      expect(
+        controller.currentEditingValue(placeholderWhenEmpty: false),
+        expected,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    }
+
+    await verifyInternalEdit(
+      questionId: 'q-edit-unit',
+      value: r'5\,\mathrm{m}/\mathrm{s}^{2}',
+      expected: r'5\,\mathrm{m}/\mathrm{s}^{3}',
+      edit: (controller) {
+        controller
+          ..goBack()
+          ..goBack(deleteMode: true)
+          ..addLeaf('3');
+      },
+    );
+    await verifyInternalEdit(
+      questionId: 'q-edit-set',
+      value: r'\alpha\in\mathbb{R}',
+      expected: r'\alpha\in\mathbb{C}',
+      edit: (controller) {
+        controller
+          ..goBack()
+          ..goBack(deleteMode: true)
+          ..addLeaf('C');
+      },
+    );
+    await verifyInternalEdit(
+      questionId: 'q-edit-conditional',
+      value: r'P\left(A\mid B\right)',
+      expected: r'P\left(A\mid C\right)',
+      edit: (controller) {
+        controller
+          ..goBack()
+          ..goBack(deleteMode: true)
+          ..addLeaf('C');
+      },
+    );
+    await verifyInternalEdit(
+      questionId: 'q-edit-cases',
+      value: r'\begin{cases}{x}\\{-x}\end{cases}',
+      expected: r'\begin{cases}{x}\\{-y}\end{cases}',
+      edit: (controller) {
+        controller
+          ..goBack()
+          ..goBack()
+          ..goBack(deleteMode: true)
+          ..addLeaf('y');
+      },
+    );
+    await verifyInternalEdit(
+      questionId: 'q-edit-nucleus',
+      value: r'{}_{6}^{14}C',
+      expected: r'{}_{6}^{14}N',
+      edit: (controller) {
+        controller
+          ..goBack(deleteMode: true)
+          ..addLeaf('N');
+      },
+    );
+    await verifyInternalEdit(
+      questionId: 'q-edit-pair',
+      value: r'\left\lvert x\right\rvert',
+      expected: r'\left\lvert y\right\rvert',
+      edit: (controller) {
+        controller
+          ..goBack()
+          ..goBack(deleteMode: true)
+          ..addLeaf('y');
+      },
+    );
+  });
+
   testWidgets('学生编辑公式时只上报一次不带定界符的 LaTeX', (tester) async {
     final controller = MathFieldEditingController();
     final changes = <String>[];
@@ -255,7 +400,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(changes.last, r'P\left({A}\mid{B}\right)');
+    expect(changes.last, r'P\left(A\mid B\right)');
   });
 
   testWidgets('核素模板通过真实公式框按质量数原子序数元素填写', (tester) async {
@@ -333,13 +478,9 @@ void main() {
       find.byKey(const ValueKey('practice-formula-section-physicsUnits')),
     );
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-page-next')),
-    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-page-next')),
-    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
     await tester.pump();
     await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-unit-m-per-s2')),

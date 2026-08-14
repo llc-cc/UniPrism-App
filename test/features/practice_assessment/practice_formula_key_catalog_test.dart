@@ -244,7 +244,7 @@ void main() {
       ..addLeaf('A')
       ..goNext()
       ..addLeaf('B');
-    expect(_latex(controller), r'P\left({A}\mid{B}\right)');
+    expect(_latex(controller), r'P\left(A\midB\right)');
 
     controller.clear();
     templates
@@ -467,8 +467,58 @@ void main() {
     ).singleWhere((item) => item.id == 'unit-m').insert(controller);
     expect(_latex(controller), r'5\,\mathrm{m}');
   });
+
+  test('单位间距依据当前光标且控制词与后续字母保持边界', () {
+    final units = practiceFormulaKeysForSection(
+      PracticeFormulaSection.physicsUnits,
+    );
+    final metre = units.singleWhere((item) => item.id == 'unit-m');
+    final ohm = units.singleWhere((item) => item.id == 'unit-ohm');
+    final absolute = practiceFormulaKeysForSection(
+      PracticeFormulaSection.commonTemplates,
+    ).singleWhere((item) => item.id == 'absolute');
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+
+    controller
+      ..addLeaf('1')
+      ..addLeaf('+')
+      ..addLeaf('2')
+      ..goBack();
+    metre.insert(controller);
+    expect(_rawLatex(controller), r'1+\mathrm{m}2');
+
+    controller
+      ..clear()
+      ..addLeaf('1')
+      ..addLeaf('2')
+      ..addLeaf('+')
+      ..addLeaf('x')
+      ..goBack()
+      ..goBack();
+    metre.insert(controller);
+    expect(_rawLatex(controller), r'12\,\mathrm{m}+x');
+
+    controller.clear();
+    absolute.insert(controller);
+    controller
+      ..addLeaf('x')
+      ..goNext()
+      ..addLeaf('y');
+    expect(_rawLatex(controller), r'\left\lvert x\right\rvert y');
+
+    controller
+      ..clear()
+      ..addLeaf('5');
+    ohm.insert(controller);
+    controller.addLeaf('R');
+    expect(_rawLatex(controller), r'5\,\Omega R');
+  });
 }
 
 String _latex(MathFieldEditingController controller) => controller
     .currentEditingValue(placeholderWhenEmpty: false)
     .replaceAll(' ', '');
+
+String _rawLatex(MathFieldEditingController controller) =>
+    controller.currentEditingValue(placeholderWhenEmpty: false);
