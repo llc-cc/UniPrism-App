@@ -6,7 +6,7 @@ import 'package:uniprism_app/features/practice_assessment/presentation/practice_
 import 'package:uniprism_app/features/practice_assessment/presentation/practice_formula_keyboard.dart';
 
 void main() {
-  testWidgets('桌面端显示两级导航并保持右侧五行数字区', (tester) async {
+  testWidgets('桌面端显示一级导航和二级下拉并保持右侧五行数字区', (tester) async {
     tester.view.physicalSize = const Size(1100, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -19,11 +19,15 @@ void main() {
     for (final primary in PracticeFormulaPrimaryCategory.values) {
       expect(find.byKey(_primaryKey(primary)), findsOneWidget);
     }
-    for (final section
-        in practiceFormulaSectionsByPrimary[PracticeFormulaPrimaryCategory
-            .common]!) {
-      expect(find.byKey(_sectionKey(section)), findsOneWidget);
-    }
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-selector-row')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-selector')),
+      findsOneWidget,
+    );
+    expect(find.text('字母与数字'), findsOneWidget);
     expect(
       find.byKey(
         const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
@@ -58,15 +62,20 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('切换一级分类只显示所属二级标签并自动选择首项', (tester) async {
+  testWidgets('二级下拉只列出当前一级分类选项并自动选择首项', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
     await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(find.text('数学符号'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-selector')),
+    );
+    await tester.pumpAndSettle();
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.mathSymbols)),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)),
@@ -78,13 +87,23 @@ void main() {
     );
     expect(find.byKey(_key('infinity')), findsOneWidget);
 
-    await _selectSection(tester, PracticeFormulaSection.mathTemplates);
+    await tester.tapAt(
+      tester.getCenter(
+        find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)).last,
+      ),
+    );
+    await tester.pumpAndSettle();
     expect(find.byKey(_key('conditional-prob')), findsOneWidget);
 
     await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
+    expect(find.text('物理符号'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-section-selector')),
+    );
+    await tester.pumpAndSettle();
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.physicsSymbols)),
-      findsOneWidget,
+      findsWidgets,
     );
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.physicsUnits)),
@@ -99,6 +118,12 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(_key('nucleus')), findsOneWidget);
+    await tester.tapAt(
+      tester.getCenter(
+        find.byKey(_sectionKey(PracticeFormulaSection.physicsSymbols)).last,
+      ),
+    );
+    await tester.pumpAndSettle();
   });
 
   testWidgets('物理单位每页二十项且切换标签重置页码', (tester) async {
@@ -138,7 +163,7 @@ void main() {
     expect(find.byKey(_key('unit-mm')), findsOneWidget);
   });
 
-  testWidgets('375 窄屏使用两行横向导航并逐标签无溢出', (tester) async {
+  testWidgets('375 窄屏使用一级横栏和二级下拉并逐标签无溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -152,8 +177,12 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('practice-formula-section-scroll')),
+      find.byKey(const ValueKey('practice-formula-section-selector-row')),
       findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-scroll')),
+      findsNothing,
     );
 
     for (final primary in PracticeFormulaPrimaryCategory.values) {
@@ -184,6 +213,47 @@ void main() {
         find.byKey(const ValueKey('practice-formula-wide-layout')),
         findsOneWidget,
       );
+      final navigation = tester.getRect(
+        find.byKey(const ValueKey('practice-formula-navigation-rail')),
+      );
+      final selector = tester.getRect(
+        find.byKey(const ValueKey('practice-formula-section-selector')),
+      );
+      final content = tester.getRect(
+        find.byKey(
+          const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
+        ),
+      );
+      final numeric = tester.getRect(
+        find.byKey(const ValueKey('practice-formula-numeric-pad')),
+      );
+      expect(navigation.right, lessThan(selector.left));
+      expect(selector.left, greaterThanOrEqualTo(content.left));
+      expect(selector.right, lessThanOrEqualTo(content.right));
+      expect(content.right, lessThan(numeric.left));
+
+      final keyboardHeight = tester
+          .getSize(find.byKey(const ValueKey('practice-formula-keyboard')))
+          .height;
+      await tester.tap(
+        find.byKey(const ValueKey('practice-formula-section-selector')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('practice-formula-keyboard')))
+            .height,
+        keyboardHeight,
+      );
+      await tester.tapAt(
+        tester.getCenter(
+          find
+              .byKey(_sectionKey(PracticeFormulaSection.lettersAndNumbers))
+              .last,
+        ),
+      );
+      await tester.pumpAndSettle();
+
       for (final primary in PracticeFormulaPrimaryCategory.values) {
         await _selectPrimary(tester, primary);
         for (final section in practiceFormulaSectionsByPrimary[primary]!) {
@@ -310,10 +380,14 @@ Future<void> _selectSection(
   WidgetTester tester,
   PracticeFormulaSection section,
 ) async {
-  final finder = find.byKey(_sectionKey(section));
-  await tester.ensureVisible(finder);
-  await tester.tap(finder);
-  await tester.pump();
+  final selector = find.byKey(
+    const ValueKey('practice-formula-section-selector'),
+  );
+  await tester.ensureVisible(selector);
+  await tester.tap(selector);
+  await tester.pumpAndSettle();
+  await tester.tapAt(tester.getCenter(find.byKey(_sectionKey(section)).last));
+  await tester.pumpAndSettle();
 }
 
 ValueKey<String> _primaryKey(PracticeFormulaPrimaryCategory primary) =>

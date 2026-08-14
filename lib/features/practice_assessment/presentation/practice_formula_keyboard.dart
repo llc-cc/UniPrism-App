@@ -8,8 +8,9 @@ import 'practice_formula_key_catalog.dart';
 
 /// 初高中数学与物理公式键盘。
 ///
-/// 桌面端采用“两级导航 + 公式区 + 固定数字区”，窄屏将两级导航横置；键位只消费
-/// 目录元数据和受控插入策略，不改变练习草稿与后端的 LaTeX 字符串协议。
+/// 桌面端保留左侧一级导航，窄屏将一级导航横置；二级目录统一收进公式区顶部的
+/// 紧凑选择器。键位只消费目录元数据和受控插入策略，不改变练习草稿与后端的
+/// LaTeX 字符串协议。
 final class PracticeFormulaKeyboard extends StatefulWidget {
   const PracticeFormulaKeyboard({
     super.key,
@@ -84,11 +85,11 @@ final class _PracticeFormulaKeyboardState
       key: const ValueKey('practice-formula-wide-layout'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        SizedBox(width: 112, child: _verticalNavigationRail()),
+        SizedBox(width: 112, child: _verticalPrimaryRail()),
         const SizedBox(width: 8),
         _verticalSeparator(),
         const SizedBox(width: 10),
-        Expanded(child: _contentPad(isWide: true)),
+        Expanded(child: _contentArea(isWide: true)),
         const SizedBox(width: 10),
         _verticalSeparator(),
         const SizedBox(width: 10),
@@ -103,10 +104,8 @@ final class _PracticeFormulaKeyboardState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _horizontalPrimaryRail(),
-        const SizedBox(height: 6),
-        _horizontalSectionRail(),
         const SizedBox(height: 10),
-        _contentPad(isWide: false),
+        _contentArea(isWide: false),
         const SizedBox(height: 10),
         const Divider(height: 1, color: Color(0xFFCCD3DF)),
         const SizedBox(height: 10),
@@ -118,8 +117,7 @@ final class _PracticeFormulaKeyboardState
   Widget _verticalSeparator() =>
       Container(width: 1, height: 320, color: const Color(0xFFCCD3DF));
 
-  Widget _verticalNavigationRail() {
-    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
+  Widget _verticalPrimaryRail() {
     return Column(
       key: const ValueKey('practice-formula-navigation-rail'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -128,14 +126,6 @@ final class _PracticeFormulaKeyboardState
           _primaryButton(primary, compact: true),
           if (primary != PracticeFormulaPrimaryCategory.values.last)
             const SizedBox(height: 4),
-        ],
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 7),
-          child: Divider(height: 1, color: Color(0xFFCCD3DF)),
-        ),
-        for (final section in sections) ...[
-          _sectionButton(section, compact: true),
-          if (section != sections.last) const SizedBox(height: 4),
         ],
       ],
     );
@@ -157,22 +147,6 @@ final class _PracticeFormulaKeyboardState
     );
   }
 
-  Widget _horizontalSectionRail() {
-    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
-    return SingleChildScrollView(
-      key: const ValueKey('practice-formula-section-scroll'),
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final section in sections) ...[
-            SizedBox(width: 118, child: _sectionButton(section)),
-            if (section != sections.last) const SizedBox(width: 5),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _primaryButton(
     PracticeFormulaPrimaryCategory primary, {
     bool compact = false,
@@ -185,21 +159,6 @@ final class _PracticeFormulaKeyboardState
       selected: selected,
       compact: compact,
       onPressed: () => _selectPrimary(primary),
-    );
-  }
-
-  Widget _sectionButton(
-    PracticeFormulaSection section, {
-    bool compact = false,
-  }) {
-    final selected = section == _section;
-    return _navigationButton(
-      key: ValueKey('practice-formula-section-${section.name}'),
-      label: practiceFormulaSectionLabels[section]!,
-      semanticLabel: '${practiceFormulaSectionLabels[section]} 二级标签',
-      selected: selected,
-      compact: compact,
-      onPressed: () => _selectSection(section),
     );
   }
 
@@ -261,6 +220,78 @@ final class _PracticeFormulaKeyboardState
       // 各标签长度不同，切换时统一复位，保证分页状态始终有效。
       _pageIndex = 0;
     });
+  }
+
+  Widget _contentArea({required bool isWide}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _compactSectionSelector(),
+        const SizedBox(height: 8),
+        _contentPad(isWide: isWide),
+      ],
+    );
+  }
+
+  Widget _compactSectionSelector() {
+    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
+    return Row(
+      key: const ValueKey('practice-formula-section-selector-row'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          '二级',
+          style: TextStyle(
+            color: Color(0xFF626A78),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          width: 154,
+          height: 34,
+          padding: const EdgeInsets.only(left: 10, right: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFC8CFDA)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<PracticeFormulaSection>(
+              key: const ValueKey('practice-formula-section-selector'),
+              value: _section,
+              isExpanded: true,
+              isDense: true,
+              borderRadius: BorderRadius.circular(8),
+              dropdownColor: Colors.white,
+              icon: const Icon(Icons.expand_more_rounded, size: 18),
+              style: const TextStyle(
+                color: Color(0xFF252932),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+              items: [
+                for (final section in sections)
+                  DropdownMenuItem<PracticeFormulaSection>(
+                    key: ValueKey('practice-formula-section-${section.name}'),
+                    value: section,
+                    child: Text(
+                      practiceFormulaSectionLabels[section]!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              // 一级分类切换时先同步到首个合法二级项，避免 value 跨目录失效。
+              onChanged: (section) {
+                if (section != null) _selectSection(section);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _contentPad({required bool isWide}) {

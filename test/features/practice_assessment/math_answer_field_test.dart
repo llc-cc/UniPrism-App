@@ -38,10 +38,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'commonTemplates');
     await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-fraction')),
     );
@@ -299,10 +296,7 @@ void main() {
       find.byKey(const ValueKey('practice-formula-keyboard')),
       findsOneWidget,
     );
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'commonTemplates');
     expect(
       find.byKey(const ValueKey('practice-formula-key-fraction')),
       findsOneWidget,
@@ -338,10 +332,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-commonTemplates')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'commonTemplates');
     await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-scientific-notation')),
     );
@@ -376,10 +367,7 @@ void main() {
       find.byKey(const ValueKey('practice-formula-primary-mathematics')),
     );
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-mathTemplates')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'mathTemplates');
     await tester.tap(
       find.byKey(const ValueKey('practice-formula-key-conditional-prob')),
     );
@@ -474,10 +462,7 @@ void main() {
       find.byKey(const ValueKey('practice-formula-primary-physics')),
     );
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-physicsUnits')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'physicsUnits');
     await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
     await tester.pump();
     await tester.tap(find.byKey(const ValueKey('practice-formula-page-next')));
@@ -508,10 +493,7 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-commonSymbols')),
-    );
-    await tester.pump();
+    await _selectFormulaSection(tester, 'commonSymbols');
 
     expect(
       find.byKey(const ValueKey('practice-formula-key-less-equal')),
@@ -533,4 +515,21 @@ Widget _app(Widget child) {
   return MaterialApp(
     home: MathKeyboardViewInsets(child: Scaffold(body: child)),
   );
+}
+
+Future<void> _selectFormulaSection(
+  WidgetTester tester,
+  String sectionName,
+) async {
+  final selector = find.byKey(
+    const ValueKey('practice-formula-section-selector'),
+  );
+  await tester.ensureVisible(selector);
+  await tester.tap(selector);
+  await tester.pumpAndSettle();
+  final option = find.byKey(
+    ValueKey<String>('practice-formula-section-$sectionName'),
+  );
+  await tester.tapAt(tester.getCenter(option.last));
+  await tester.pumpAndSettle();
 }
