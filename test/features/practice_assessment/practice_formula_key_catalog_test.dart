@@ -173,6 +173,117 @@ void main() {
     );
   });
 
+  test('数学符号目录精确覆盖三十三个教材符号', () {
+    final symbols =
+        practiceFormulaMathSectionKeys[PracticeFormulaSection.mathSymbols]!;
+    final latexById = <String, String>{
+      for (final key in symbols) key.id: key.expectedLatex,
+    };
+
+    expect(latexById, hasLength(33));
+    expect(latexById, <String, String>{
+      'infinity': r'\infty',
+      'equivalent': r'\equiv',
+      'arrow': r'\to',
+      'prime': "'",
+      'empty-set': r'\varnothing',
+      'in': r'\in',
+      'not-in': r'\notin',
+      'subset': r'\subset',
+      'subset-equal': r'\subseteq',
+      'union': r'\cup',
+      'intersection': r'\cap',
+      'set-minus': r'\setminus',
+      'complement': r'\complement',
+      'divides': r'\mid',
+      'natural-set': r'\mathbb{N}',
+      'integer-set': r'\mathbb{Z}',
+      'rational-set': r'\mathbb{Q}',
+      'real-set': r'\mathbb{R}',
+      'complex-set': r'\mathbb{C}',
+      'forall': r'\forall',
+      'exists': r'\exists',
+      'not': r'\neg',
+      'logical-and': r'\land',
+      'logical-or': r'\lor',
+      'implies': r'\Rightarrow',
+      'iff': r'\Leftrightarrow',
+      'angle': r'\angle',
+      'triangle': r'\triangle',
+      'perpendicular': r'\perp',
+      'parallel': r'\parallel',
+      'congruent': r'\cong',
+      'similar': r'\sim',
+      'sigma': r'\sigma',
+    });
+    expect(latexById['empty-set'], isNot(r'\emptyset'));
+  });
+
+  test('数学模板覆盖十五项并按语义顺序填写复合槽位', () {
+    final templates =
+        practiceFormulaMathSectionKeys[PracticeFormulaSection.mathTemplates]!;
+    expect(
+      <String, String>{for (final key in templates) key.id: key.expectedLatex},
+      <String, String>{
+        'log-base': r'\log_{}\left(\right)',
+        'common-log': r'\lg\left(\right)',
+        'natural-log': r'\ln\left(\right)',
+        'sin': r'\sin\left(\right)',
+        'cos': r'\cos\left(\right)',
+        'tan': r'\tan\left(\right)',
+        'derivative': r"f'\left(\right)",
+        'permutation': r'A_{}^{}',
+        'combination': r'C_{}^{}',
+        'probability': r'P\left(\right)',
+        'conditional-prob': r'P\left({}\mid{}\right)',
+        'set-builder': r'\left\{x\mid{}\right\}',
+        'open-interval': r'\left({},{}\right)',
+        'closed-interval': r'\left[{},{}\right]',
+        'cases': r'\begin{cases}{}\\{}\end{cases}',
+      },
+    );
+
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    templates
+        .singleWhere((key) => key.id == 'conditional-prob')
+        .insert(controller);
+    controller
+      ..addLeaf('A')
+      ..goNext()
+      ..addLeaf('B');
+    expect(_latex(controller), r'P\left({A}\mid{B}\right)');
+
+    controller.clear();
+    templates
+        .singleWhere((key) => key.id == 'open-interval')
+        .insert(controller);
+    controller
+      ..addLeaf('1')
+      ..goNext()
+      ..addLeaf('2');
+    expect(_latex(controller), r'\left({1},{2}\right)');
+
+    controller.clear();
+    templates.singleWhere((key) => key.id == 'cases').insert(controller);
+    controller
+      ..addLeaf('x')
+      ..goNext()
+      ..addLeaf('-x');
+    expect(_latex(controller), r'\begin{cases}{x}\\{-x}\end{cases}');
+
+    final officialIds = practiceFormulaMathSectionKeys.values
+        .expand((items) => items)
+        .map((key) => key.id)
+        .toSet();
+    expect(
+      officialIds.intersection(
+        practiceFormulaExtendedKeys.map((key) => key.id).toSet(),
+      ),
+      isEmpty,
+    );
+  });
+
   test('字母目录完整产生二十六个小写或大写键', () {
     final lowercase = practiceFormulaAlphabetKeys(uppercase: false);
     final uppercase = practiceFormulaAlphabetKeys(uppercase: true);

@@ -6,10 +6,12 @@ import 'package:math_keyboard/src/foundation/node.dart';
 import 'practice_formula_common_catalog.dart';
 import 'practice_formula_insertions.dart';
 import 'practice_formula_key_models.dart';
+import 'practice_formula_math_catalog.dart';
 
 export 'practice_formula_common_catalog.dart';
 export 'practice_formula_insertions.dart';
 export 'practice_formula_key_models.dart';
+export 'practice_formula_math_catalog.dart';
 
 /// 公式键盘的一级分类；顺序同时决定桌面左栏和窄屏分类栏顺序。
 enum PracticeFormulaKeyboardCategory {
@@ -302,6 +304,7 @@ practiceFormulaCategoryKeys =
         PracticeFormulaKeySpec('degree', '°', '角度', _leaf(r'^{\circ}')),
       ],
       PracticeFormulaKeyboardCategory.functions: <PracticeFormulaKeySpec>[
+        practiceFormulaConditionalProbabilityKey,
         PracticeFormulaKeySpec('sin', 'sin', '正弦函数', _function(r'\sin')),
         PracticeFormulaKeySpec('cos', 'cos', '余弦函数', _function(r'\cos')),
         PracticeFormulaKeySpec('tan', 'tan', '正切函数', _function(r'\tan')),

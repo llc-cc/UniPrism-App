@@ -196,6 +196,52 @@ void main() {
     expect(changes.last, r'3\times10^{8}');
   });
 
+  testWidgets('条件概率模板通过真实公式框按条件两侧填写', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-conditional-probability',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-category-functions')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-conditional-prob')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-more-shortcut')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-uppercase')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-letter-a')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-letter-b')),
+    );
+    await tester.pump();
+
+    expect(changes.last, r'P\left({A}\mid{B}\right)');
+  });
+
   testWidgets('关系符号页覆盖高中数学填空题常用符号且窄屏不溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 812);
     tester.view.devicePixelRatio = 1;
