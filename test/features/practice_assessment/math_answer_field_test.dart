@@ -521,15 +521,10 @@ Future<void> _selectFormulaSection(
   WidgetTester tester,
   String sectionName,
 ) async {
-  final selector = find.byKey(
-    const ValueKey('practice-formula-section-selector'),
-  );
-  await tester.ensureVisible(selector);
-  await tester.tap(selector);
-  await tester.pumpAndSettle();
-  final option = find.byKey(
+  final section = find.byKey(
     ValueKey<String>('practice-formula-section-$sectionName'),
   );
-  await tester.tapAt(tester.getCenter(option.last));
-  await tester.pumpAndSettle();
+  await tester.ensureVisible(section);
+  await tester.tap(section);
+  await tester.pump();
 }

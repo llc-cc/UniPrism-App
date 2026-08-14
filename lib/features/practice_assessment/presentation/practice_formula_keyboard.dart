@@ -8,9 +8,8 @@ import 'practice_formula_key_catalog.dart';
 
 /// 初高中数学与物理公式键盘。
 ///
-/// 桌面端保留左侧一级导航，窄屏将一级导航横置；二级目录统一收进公式区顶部的
-/// 紧凑选择器。键位只消费目录元数据和受控插入策略，不改变练习草稿与后端的
-/// LaTeX 字符串协议。
+/// 桌面端把二级目录折叠在左侧所属一级分类下，窄屏则放在横向一级栏下一行。
+/// 键位只消费目录元数据和受控插入策略，不改变练习草稿与后端的 LaTeX 字符串协议。
 final class PracticeFormulaKeyboard extends StatefulWidget {
   const PracticeFormulaKeyboard({
     super.key,
@@ -35,6 +34,7 @@ final class _PracticeFormulaKeyboardState
   PracticeFormulaPrimaryCategory _primaryCategory =
       PracticeFormulaPrimaryCategory.common;
   PracticeFormulaSection _section = PracticeFormulaSection.lettersAndNumbers;
+  bool _sectionsExpanded = true;
   bool _uppercaseLetters = false;
   int _pageIndex = 0;
 
@@ -89,7 +89,7 @@ final class _PracticeFormulaKeyboardState
         const SizedBox(width: 8),
         _verticalSeparator(),
         const SizedBox(width: 10),
-        Expanded(child: _contentArea(isWide: true)),
+        Expanded(child: _contentPad(isWide: true)),
         const SizedBox(width: 10),
         _verticalSeparator(),
         const SizedBox(width: 10),
@@ -104,8 +104,12 @@ final class _PracticeFormulaKeyboardState
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _horizontalPrimaryRail(),
+        if (_sectionsExpanded) ...[
+          const SizedBox(height: 6),
+          _horizontalSectionPanel(),
+        ],
         const SizedBox(height: 10),
-        _contentArea(isWide: false),
+        _contentPad(isWide: false),
         const SizedBox(height: 10),
         const Divider(height: 1, color: Color(0xFFCCD3DF)),
         const SizedBox(height: 10),
@@ -124,6 +128,10 @@ final class _PracticeFormulaKeyboardState
       children: [
         for (final primary in PracticeFormulaPrimaryCategory.values) ...[
           _primaryButton(primary, compact: true),
+          if (primary == _primaryCategory && _sectionsExpanded) ...[
+            const SizedBox(height: 4),
+            _verticalSectionPanel(),
+          ],
           if (primary != PracticeFormulaPrimaryCategory.values.last)
             const SizedBox(height: 4),
         ],
@@ -147,6 +155,39 @@ final class _PracticeFormulaKeyboardState
     );
   }
 
+  Widget _verticalSectionPanel() {
+    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
+    return Padding(
+      key: const ValueKey('practice-formula-section-panel'),
+      padding: const EdgeInsets.only(left: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final section in sections) ...[
+            _sectionButton(section, compact: true),
+            if (section != sections.last) const SizedBox(height: 3),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _horizontalSectionPanel() {
+    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
+    return SingleChildScrollView(
+      key: const ValueKey('practice-formula-section-panel'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final section in sections) ...[
+            SizedBox(width: 118, child: _sectionButton(section)),
+            if (section != sections.last) const SizedBox(width: 5),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _primaryButton(
     PracticeFormulaPrimaryCategory primary, {
     bool compact = false,
@@ -155,10 +196,30 @@ final class _PracticeFormulaKeyboardState
     return _navigationButton(
       key: ValueKey('practice-formula-primary-${primary.name}'),
       label: practiceFormulaPrimaryLabels[primary]!,
-      semanticLabel: '${practiceFormulaPrimaryLabels[primary]} 一级分类',
+      semanticLabel:
+          '${practiceFormulaPrimaryLabels[primary]} 一级分类，${selected && _sectionsExpanded ? '已展开' : '已收起'}',
       selected: selected,
       compact: compact,
-      onPressed: () => _selectPrimary(primary),
+      expanded: selected && _sectionsExpanded,
+      trailingIcon: selected && _sectionsExpanded
+          ? Icons.expand_more_rounded
+          : Icons.chevron_right_rounded,
+      onPressed: () => _handlePrimaryPressed(primary),
+    );
+  }
+
+  Widget _sectionButton(
+    PracticeFormulaSection section, {
+    bool compact = false,
+  }) {
+    return _navigationButton(
+      key: ValueKey('practice-formula-section-${section.name}'),
+      label: practiceFormulaSectionLabels[section]!,
+      semanticLabel: '${practiceFormulaSectionLabels[section]} 二级标签',
+      selected: section == _section,
+      compact: compact,
+      secondary: true,
+      onPressed: () => _selectSection(section),
     );
   }
 
@@ -169,16 +230,25 @@ final class _PracticeFormulaKeyboardState
     required bool selected,
     required bool compact,
     required VoidCallback onPressed,
+    IconData? trailingIcon,
+    bool secondary = false,
+    bool? expanded,
   }) {
+    // 二级标签视觉保持紧凑，但实际触控热区不低于 44px，兼顾窄屏操作。
+    final minimumHeight = secondary ? 44.0 : (compact ? 34.0 : 38.0);
     return Semantics(
       button: true,
       selected: selected,
+      expanded: expanded,
       label: semanticLabel,
       child: TextButton(
         key: key,
         onPressed: onPressed,
         style: TextButton.styleFrom(
-          minimumSize: Size(0, compact ? 34 : 38),
+          minimumSize: Size(0, minimumHeight),
+          tapTargetSize: secondary
+              ? MaterialTapTargetSize.shrinkWrap
+              : MaterialTapTargetSize.padded,
           padding: const EdgeInsets.symmetric(horizontal: 6),
           foregroundColor: selected ? Colors.white : const Color(0xFF3F4652),
           backgroundColor: selected
@@ -186,30 +256,45 @@ final class _PracticeFormulaKeyboardState
               : Colors.transparent,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Text(
-            label,
-            maxLines: 1,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: trailingIcon == null ? 12 : 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            if (trailingIcon != null) ...[
+              const SizedBox(width: 2),
+              Icon(trailingIcon, size: 16),
+            ],
+          ],
         ),
       ),
     );
   }
 
-  void _selectPrimary(PracticeFormulaPrimaryCategory primary) {
-    final firstSection = practiceFormulaSectionsByPrimary[primary]!.first;
-    if (primary == _primaryCategory &&
-        firstSection == _section &&
-        _pageIndex == 0) {
+  void _handlePrimaryPressed(PracticeFormulaPrimaryCategory primary) {
+    if (primary == _primaryCategory) {
+      // 收起导航只影响目录可见性，不能重置学生当前标签与分页位置。
+      setState(() => _sectionsExpanded = !_sectionsExpanded);
       return;
     }
     setState(() {
       _primaryCategory = primary;
-      _section = firstSection;
+      _section = practiceFormulaSectionsByPrimary[primary]!.first;
       // 一级分类改变后必须回到首标签首屏，避免沿用其他目录的越界页码。
       _pageIndex = 0;
+      _sectionsExpanded = true;
     });
   }
 
@@ -220,78 +305,6 @@ final class _PracticeFormulaKeyboardState
       // 各标签长度不同，切换时统一复位，保证分页状态始终有效。
       _pageIndex = 0;
     });
-  }
-
-  Widget _contentArea({required bool isWide}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _compactSectionSelector(),
-        const SizedBox(height: 8),
-        _contentPad(isWide: isWide),
-      ],
-    );
-  }
-
-  Widget _compactSectionSelector() {
-    final sections = practiceFormulaSectionsByPrimary[_primaryCategory]!;
-    return Row(
-      key: const ValueKey('practice-formula-section-selector-row'),
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          '二级',
-          style: TextStyle(
-            color: Color(0xFF626A78),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        const SizedBox(width: 8),
-        Container(
-          width: 154,
-          height: 34,
-          padding: const EdgeInsets.only(left: 10, right: 6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFC8CFDA)),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<PracticeFormulaSection>(
-              key: const ValueKey('practice-formula-section-selector'),
-              value: _section,
-              isExpanded: true,
-              isDense: true,
-              borderRadius: BorderRadius.circular(8),
-              dropdownColor: Colors.white,
-              icon: const Icon(Icons.expand_more_rounded, size: 18),
-              style: const TextStyle(
-                color: Color(0xFF252932),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-              items: [
-                for (final section in sections)
-                  DropdownMenuItem<PracticeFormulaSection>(
-                    key: ValueKey('practice-formula-section-${section.name}'),
-                    value: section,
-                    child: Text(
-                      practiceFormulaSectionLabels[section]!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-              ],
-              // 一级分类切换时先同步到首个合法二级项，避免 value 跨目录失效。
-              onChanged: (section) {
-                if (section != null) _selectSection(section);
-              },
-            ),
-          ),
-        ),
-      ],
-    );
   }
 
   Widget _contentPad({required bool isWide}) {
@@ -429,13 +442,15 @@ final class _PracticeFormulaKeyboardState
   void _handleAlphabetShortcut() {
     if (_primaryCategory == PracticeFormulaPrimaryCategory.common &&
         _isAlphabet &&
-        _pageIndex == 0) {
+        _pageIndex == 0 &&
+        _sectionsExpanded) {
       return;
     }
     setState(() {
       _primaryCategory = PracticeFormulaPrimaryCategory.common;
       _section = PracticeFormulaSection.lettersAndNumbers;
       _pageIndex = 0;
+      _sectionsExpanded = true;
     });
   }
 

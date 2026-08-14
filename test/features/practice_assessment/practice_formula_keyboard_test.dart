@@ -6,7 +6,7 @@ import 'package:uniprism_app/features/practice_assessment/presentation/practice_
 import 'package:uniprism_app/features/practice_assessment/presentation/practice_formula_keyboard.dart';
 
 void main() {
-  testWidgets('桌面端显示一级导航和二级下拉并保持右侧五行数字区', (tester) async {
+  testWidgets('桌面端二级标签嵌套在所属一级标签下并保持右侧数字区', (tester) async {
     tester.view.physicalSize = const Size(1100, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -20,14 +20,32 @@ void main() {
       expect(find.byKey(_primaryKey(primary)), findsOneWidget);
     }
     expect(
-      find.byKey(const ValueKey('practice-formula-section-selector-row')),
+      find.byKey(const ValueKey('practice-formula-section-panel')),
       findsOneWidget,
     );
     expect(
       find.byKey(const ValueKey('practice-formula-section-selector')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('字母与数字'), findsOneWidget);
+    for (final section
+        in practiceFormulaSectionsByPrimary[PracticeFormulaPrimaryCategory
+            .common]!) {
+      expect(find.byKey(_sectionKey(section)), findsOneWidget);
+    }
+    final commonBottom = tester
+        .getRect(_primaryFinder(PracticeFormulaPrimaryCategory.common))
+        .bottom;
+    final firstSectionTop = tester
+        .getRect(_sectionFinder(PracticeFormulaSection.lettersAndNumbers))
+        .top;
+    final lastSectionBottom = tester
+        .getRect(_sectionFinder(PracticeFormulaSection.commonTemplates))
+        .bottom;
+    final mathematicsTop = tester
+        .getRect(_primaryFinder(PracticeFormulaPrimaryCategory.mathematics))
+        .top;
+    expect(firstSectionTop, greaterThan(commonBottom));
+    expect(lastSectionBottom, lessThan(mathematicsTop));
     expect(
       find.byKey(
         const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
@@ -62,20 +80,59 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('二级下拉只列出当前一级分类选项并自动选择首项', (tester) async {
+  testWidgets('一级分类向辅助技术暴露展开状态', (tester) async {
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+
+    expect(
+      _isPrimaryExpanded(tester, PracticeFormulaPrimaryCategory.common),
+      isTrue,
+    );
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.common);
+    expect(
+      _isPrimaryExpanded(tester, PracticeFormulaPrimaryCategory.common),
+      isFalse,
+    );
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.common);
+    expect(
+      _isPrimaryExpanded(tester, PracticeFormulaPrimaryCategory.common),
+      isTrue,
+    );
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(
+      _isPrimaryExpanded(tester, PracticeFormulaPrimaryCategory.common),
+      isFalse,
+    );
+    expect(
+      _isPrimaryExpanded(tester, PracticeFormulaPrimaryCategory.mathematics),
+      isTrue,
+    );
+  });
+
+  testWidgets('宽屏二级按钮高度小于一级按钮', (tester) async {
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller));
+
+    final primaryHeight = tester
+        .getSize(_primaryFinder(PracticeFormulaPrimaryCategory.common))
+        .height;
+    final sectionHeight = tester
+        .getSize(_sectionFinder(PracticeFormulaSection.lettersAndNumbers))
+        .height;
+    expect(sectionHeight, lessThan(primaryHeight));
+  });
+
+  testWidgets('一级分类只展开所属二级标签且当前项可收起再展开', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
 
     await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
-    expect(find.text('数学符号'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-selector')),
-    );
-    await tester.pumpAndSettle();
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.mathSymbols)),
-      findsWidgets,
+      findsOneWidget,
     );
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)),
@@ -87,23 +144,31 @@ void main() {
     );
     expect(find.byKey(_key('infinity')), findsOneWidget);
 
-    await tester.tapAt(
-      tester.getCenter(
-        find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)).last,
-      ),
+    await _selectSection(tester, PracticeFormulaSection.mathTemplates);
+    expect(find.byKey(_key('conditional-prob')), findsOneWidget);
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathSymbols)),
+      findsNothing,
     );
-    await tester.pumpAndSettle();
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)),
+      findsNothing,
+    );
+    expect(find.byKey(_key('conditional-prob')), findsOneWidget);
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(
+      find.byKey(_sectionKey(PracticeFormulaSection.mathTemplates)),
+      findsOneWidget,
+    );
     expect(find.byKey(_key('conditional-prob')), findsOneWidget);
 
     await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
-    expect(find.text('物理符号'), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-section-selector')),
-    );
-    await tester.pumpAndSettle();
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.physicsSymbols)),
-      findsWidgets,
+      findsOneWidget,
     );
     expect(
       find.byKey(_sectionKey(PracticeFormulaSection.physicsUnits)),
@@ -118,12 +183,6 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(_key('nucleus')), findsOneWidget);
-    await tester.tapAt(
-      tester.getCenter(
-        find.byKey(_sectionKey(PracticeFormulaSection.physicsSymbols)).last,
-      ),
-    );
-    await tester.pumpAndSettle();
   });
 
   testWidgets('物理单位每页二十项且切换标签重置页码', (tester) async {
@@ -151,7 +210,16 @@ void main() {
     expect(find.text('3/3'), findsOneWidget);
     expect(find.byKey(_key('unit-kW-hour')), findsOneWidget);
 
-    await _selectSection(tester, PracticeFormulaSection.physicsSymbols);
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
+    expect(find.text('3/3'), findsOneWidget);
+    expect(find.byKey(_key('unit-kW-hour')), findsOneWidget);
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
+    expect(find.text('3/3'), findsOneWidget);
+    expect(find.byKey(_key('unit-kW-hour')), findsOneWidget);
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.mathematics);
+    expect(find.byKey(_key('infinity')), findsOneWidget);
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.physics);
     expect(find.byKey(_key('nucleus')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('practice-formula-page-controls')),
@@ -163,7 +231,7 @@ void main() {
     expect(find.byKey(_key('unit-mm')), findsOneWidget);
   });
 
-  testWidgets('375 窄屏使用一级横栏和二级下拉并逐标签无溢出', (tester) async {
+  testWidgets('375 窄屏使用一级横栏和下一行折叠二级面板', (tester) async {
     tester.view.physicalSize = const Size(375, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -177,16 +245,33 @@ void main() {
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('practice-formula-section-selector-row')),
+      find.byKey(const ValueKey('practice-formula-section-panel')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey('practice-formula-section-scroll')),
+      find.byKey(const ValueKey('practice-formula-section-selector')),
       findsNothing,
+    );
+    final sectionTapHeight = tester
+        .getSize(_sectionFinder(PracticeFormulaSection.lettersAndNumbers))
+        .height;
+    expect(sectionTapHeight, greaterThanOrEqualTo(44));
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.common);
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-panel')),
+      findsNothing,
+    );
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.common);
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-panel')),
+      findsOneWidget,
     );
 
     for (final primary in PracticeFormulaPrimaryCategory.values) {
-      await _selectPrimary(tester, primary);
+      if (primary != PracticeFormulaPrimaryCategory.common) {
+        await _selectPrimary(tester, primary);
+      }
       for (final section in practiceFormulaSectionsByPrimary[primary]!) {
         await _selectSection(tester, section);
         expect(
@@ -216,9 +301,6 @@ void main() {
       final navigation = tester.getRect(
         find.byKey(const ValueKey('practice-formula-navigation-rail')),
       );
-      final selector = tester.getRect(
-        find.byKey(const ValueKey('practice-formula-section-selector')),
-      );
       final content = tester.getRect(
         find.byKey(
           const ValueKey('practice-formula-section-grid-lettersAndNumbers'),
@@ -227,35 +309,13 @@ void main() {
       final numeric = tester.getRect(
         find.byKey(const ValueKey('practice-formula-numeric-pad')),
       );
-      expect(navigation.right, lessThan(selector.left));
-      expect(selector.left, greaterThanOrEqualTo(content.left));
-      expect(selector.right, lessThanOrEqualTo(content.right));
+      expect(navigation.right, lessThan(content.left));
       expect(content.right, lessThan(numeric.left));
 
-      final keyboardHeight = tester
-          .getSize(find.byKey(const ValueKey('practice-formula-keyboard')))
-          .height;
-      await tester.tap(
-        find.byKey(const ValueKey('practice-formula-section-selector')),
-      );
-      await tester.pumpAndSettle();
-      expect(
-        tester
-            .getSize(find.byKey(const ValueKey('practice-formula-keyboard')))
-            .height,
-        keyboardHeight,
-      );
-      await tester.tapAt(
-        tester.getCenter(
-          find
-              .byKey(_sectionKey(PracticeFormulaSection.lettersAndNumbers))
-              .last,
-        ),
-      );
-      await tester.pumpAndSettle();
-
       for (final primary in PracticeFormulaPrimaryCategory.values) {
-        await _selectPrimary(tester, primary);
+        if (primary != PracticeFormulaPrimaryCategory.common) {
+          await _selectPrimary(tester, primary);
+        }
         for (final section in practiceFormulaSectionsByPrimary[primary]!) {
           await _selectSection(tester, section);
           expect(tester.takeException(), isNull);
@@ -301,6 +361,18 @@ void main() {
     );
     await tester.tap(find.byKey(_key('letter-z')));
     expect(_latex(controller), 'AZ');
+
+    await _selectPrimary(tester, PracticeFormulaPrimaryCategory.common);
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-panel')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('practice-formula-section-panel')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('字母页不再提供中文自由文本入口', (tester) async {
@@ -380,15 +452,17 @@ Future<void> _selectSection(
   WidgetTester tester,
   PracticeFormulaSection section,
 ) async {
-  final selector = find.byKey(
-    const ValueKey('practice-formula-section-selector'),
-  );
-  await tester.ensureVisible(selector);
-  await tester.tap(selector);
-  await tester.pumpAndSettle();
-  await tester.tapAt(tester.getCenter(find.byKey(_sectionKey(section)).last));
-  await tester.pumpAndSettle();
+  final finder = _sectionFinder(section);
+  await tester.ensureVisible(finder);
+  await tester.tap(finder);
+  await tester.pump();
 }
+
+Finder _primaryFinder(PracticeFormulaPrimaryCategory primary) =>
+    find.byKey(_primaryKey(primary));
+
+Finder _sectionFinder(PracticeFormulaSection section) =>
+    find.byKey(_sectionKey(section));
 
 ValueKey<String> _primaryKey(PracticeFormulaPrimaryCategory primary) =>
     ValueKey<String>('practice-formula-primary-${primary.name}');
@@ -409,6 +483,18 @@ bool _isSelected(WidgetTester tester, String id) {
         .first,
   );
   return semantics.properties.selected ?? false;
+}
+
+bool _isPrimaryExpanded(
+  WidgetTester tester,
+  PracticeFormulaPrimaryCategory primary,
+) {
+  final semantics = tester.widget<Semantics>(
+    find
+        .ancestor(of: _primaryFinder(primary), matching: find.byType(Semantics))
+        .first,
+  );
+  return semantics.properties.expanded ?? false;
 }
 
 void _expectSameRow(WidgetTester tester, List<String> ids) {
