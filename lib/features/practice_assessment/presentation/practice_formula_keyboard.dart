@@ -183,6 +183,14 @@ final class _PracticeFormulaKeyboardState
       children: [
         if (isAlphabet)
           _textActionButton(
+            id: 'uppercase',
+            label: '⇧ 大写',
+            semanticLabel: '切换大写字母',
+            onPressed: _toggleUppercaseLetters,
+            selected: _uppercaseLetters,
+          ),
+        if (isAlphabet)
+          _textActionButton(
             id: 'chinese-input',
             label: '中文',
             semanticLabel: '打开系统中文输入',
@@ -206,10 +214,8 @@ final class _PracticeFormulaKeyboardState
       children: [
         _textActionButton(
           id: 'more-shortcut',
-          label: _uppercaseLetters ? 'ABC' : 'abc',
-          semanticLabel: _category == PracticeFormulaKeyboardCategory.letters
-              ? '切换字母大小写'
-              : '打开完整字母键盘',
+          label: 'abc',
+          semanticLabel: '打开完整字母键盘',
           onPressed: _handleAlphabetShortcut,
           selected: _category == PracticeFormulaKeyboardCategory.letters,
         ),
@@ -247,13 +253,11 @@ final class _PracticeFormulaKeyboardState
   }
 
   void _handleAlphabetShortcut() {
-    setState(() {
-      if (_category == PracticeFormulaKeyboardCategory.letters) {
-        _uppercaseLetters = !_uppercaseLetters;
-      } else {
-        _category = PracticeFormulaKeyboardCategory.letters;
-      }
-    });
+    _selectCategory(PracticeFormulaKeyboardCategory.letters);
+  }
+
+  void _toggleUppercaseLetters() {
+    setState(() => _uppercaseLetters = !_uppercaseLetters);
   }
 
   Future<void> _showChineseInput() async {
@@ -417,6 +421,10 @@ final class _ChineseFormulaTextDialogState
         autofocus: true,
         minLines: 1,
         maxLines: 3,
+        keyboardType: TextInputType.text,
+        textCapitalization: TextCapitalization.none,
+        enableSuggestions: true,
+        autocorrect: true,
         textInputAction: TextInputAction.done,
         decoration: const InputDecoration(
           hintText: '例如：最大值、充分条件',

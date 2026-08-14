@@ -106,7 +106,7 @@ void main() {
     _expectSameRow(tester, const ['0', 'decimal', 'plus', 'done']);
   });
 
-  testWidgets('abc 打开完整字母页并可往返切换大小写', (tester) async {
+  testWidgets('字母页通过手机式大写键切换并保持 abc 仅作为入口', (tester) async {
     final controller = MathFieldEditingController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(_app(controller));
@@ -120,18 +120,41 @@ void main() {
     for (final letter in 'abcdefghijklmnopqrstuvwxyz'.split('')) {
       expect(find.byKey(_key('letter-$letter')), findsOneWidget);
     }
+    expect(find.byKey(_key('uppercase')), findsOneWidget);
+    expect(find.text('⇧ 大写'), findsOneWidget);
+    expect(find.text('小写'), findsNothing);
+    expect(_isSelected(tester, 'uppercase'), isFalse);
 
-    await tester.tap(find.byKey(_key('letter-a')));
     await tester.tap(find.byKey(_key('more-shortcut')));
     await tester.pump();
-    expect(find.text('ABC'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(_key('letter-a')),
+        matching: find.text('a'),
+      ),
+      findsOneWidget,
+    );
+    expect(_isSelected(tester, 'uppercase'), isFalse);
+
+    await tester.tap(find.byKey(_key('uppercase')));
+    await tester.pump();
+    expect(_isSelected(tester, 'uppercase'), isTrue);
+    expect(
+      find.descendant(
+        of: find.byKey(_key('letter-a')),
+        matching: find.text('A'),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(_key('letter-a')));
     await tester.tap(find.byKey(_key('letter-z')));
 
-    await tester.tap(find.byKey(_key('more-shortcut')));
+    await tester.tap(find.byKey(_key('uppercase')));
     await tester.pump();
-    expect(find.text('abc'), findsOneWidget);
+    expect(_isSelected(tester, 'uppercase'), isFalse);
+    expect(find.text('小写'), findsNothing);
     await tester.tap(find.byKey(_key('letter-b')));
-    expect(_latex(controller), 'aZb');
+    expect(_latex(controller), 'AZb');
   });
 
   testWidgets('中文入口使用系统文本框并把确认内容插入公式', (tester) async {
@@ -145,6 +168,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('输入中文'), findsOneWidget);
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('practice-formula-chinese-field')),
+    );
+    expect(field.autofocus, isTrue);
+    expect(field.keyboardType, TextInputType.text);
+    expect(field.enableSuggestions, isTrue);
+    expect(field.autocorrect, isTrue);
+    expect(field.textCapitalization, TextCapitalization.none);
     await tester.enterText(
       find.byKey(const ValueKey('practice-formula-chinese-field')),
       '最大值',
@@ -307,6 +338,15 @@ ValueKey<String> _key(String id) =>
 
 Offset _center(WidgetTester tester, String id) =>
     tester.getCenter(find.byKey(_key(id)));
+
+bool _isSelected(WidgetTester tester, String id) {
+  final semantics = tester.widget<Semantics>(
+    find
+        .ancestor(of: find.byKey(_key(id)), matching: find.byType(Semantics))
+        .first,
+  );
+  return semantics.properties.selected ?? false;
+}
 
 void _expectSameRow(WidgetTester tester, List<String> ids) {
   final positions = ids.map((id) => _center(tester, id)).toList();
