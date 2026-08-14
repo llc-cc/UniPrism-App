@@ -242,6 +242,85 @@ void main() {
     expect(changes.last, r'P\left({A}\mid{B}\right)');
   });
 
+  testWidgets('核素模板通过真实公式框按质量数原子序数元素填写', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-nucleus',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-category-physics')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-nucleus')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-1')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-4')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-6')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-more-shortcut')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-uppercase')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-letter-c')),
+    );
+    await tester.pump();
+
+    expect(changes.last, r'{}_{6}^{14}C');
+  });
+
+  testWidgets('复合单位通过真实公式框保留数值间距和直立体', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-compound-unit',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-5')));
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-category-units')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-unit-m-per-s2')),
+    );
+    await tester.pump();
+
+    expect(changes.last, r'5\,\mathrm{m}/\mathrm{s}^{2}');
+  });
+
   testWidgets('关系符号页覆盖高中数学填空题常用符号且窄屏不溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 812);
     tester.view.devicePixelRatio = 1;

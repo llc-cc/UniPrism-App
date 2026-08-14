@@ -96,14 +96,38 @@ final class CompositeFormulaInsertion implements PracticeFormulaInsertion {
   @override
   void apply(MathFieldEditingController controller) {
     assert(pieces.length >= 2, '复合公式至少需要一个可编辑槽位。');
-    final parent = controller.currentNode;
-    parent.removeCursor();
-    final function = _CompositeTeXFunction(parent: parent, pieces: pieces);
-    parent.addTeX(function);
-    controller.currentNode = function.argNodes.first..setCursor();
-    // 公式树的公开控制器没有“插入自定义节点”入口，集中在适配层触发刷新。
-    // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
-    controller.notifyListeners();
+    _insertCustomFunction(
+      controller,
+      (parent) => _CompositeTeXFunction(parent: parent, pieces: pieces),
+    );
+  }
+}
+
+/// 核素按“质量数、原子序数、元素”填写，但序列化为规范的 `{}_{Z}^{A}X`。
+final class NucleusFormulaInsertion implements PracticeFormulaInsertion {
+  const NucleusFormulaInsertion();
+
+  @override
+  void apply(MathFieldEditingController controller) {
+    _insertCustomFunction(controller, _NucleusTeXFunction.new);
+  }
+}
+
+/// 插入由基字符和固定下标组成的语义符号，如 N_A、k_B 和 p_0。
+final class SubscriptedSymbolFormulaInsertion
+    implements PracticeFormulaInsertion {
+  const SubscriptedSymbolFormulaInsertion(this.base, this.subscript);
+
+  final String base;
+  final String subscript;
+
+  @override
+  void apply(MathFieldEditingController controller) {
+    controller
+      ..addLeaf(base)
+      ..addFunction('_', const <TeXArg>[TeXArg.braces])
+      ..addLeaf(subscript)
+      ..goNext();
   }
 }
 
@@ -171,4 +195,36 @@ final class _CompositeTeXFunction extends TeXFunction {
     }
     return buffer.toString();
   }
+}
+
+/// 参数节点按学生填写顺序保存，输出时交换前两个槽位以符合核素书写规范。
+final class _NucleusTeXFunction extends TeXFunction {
+  _NucleusTeXFunction(TeXNode parent)
+    : super('', parent, const <TeXArg>[
+        TeXArg.braces,
+        TeXArg.braces,
+        TeXArg.braces,
+      ]);
+
+  @override
+  String buildString({Color? cursorColor}) {
+    final massNumber = argNodes[0].buildTeXString(cursorColor: cursorColor);
+    final atomicNumber = argNodes[1].buildTeXString(cursorColor: cursorColor);
+    final element = argNodes[2].buildTeXString(cursorColor: cursorColor);
+    return '{}_{$atomicNumber}^{$massNumber}$element';
+  }
+}
+
+void _insertCustomFunction(
+  MathFieldEditingController controller,
+  TeXFunction Function(TeXNode parent) createFunction,
+) {
+  final parent = controller.currentNode;
+  parent.removeCursor();
+  final function = createFunction(parent);
+  parent.addTeX(function);
+  controller.currentNode = function.argNodes.first..setCursor();
+  // 公式树的公开控制器没有“插入自定义节点”入口，集中在适配层触发刷新。
+  // ignore: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
+  controller.notifyListeners();
 }

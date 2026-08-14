@@ -284,6 +284,150 @@ void main() {
     );
   });
 
+  test('物理符号覆盖十一项且核素按质量数原子序数元素填写', () {
+    final symbols =
+        practiceFormulaPhysicsSectionKeys[PracticeFormulaSection
+            .physicsSymbols]!;
+    expect(symbols, hasLength(11));
+    expect(
+      <String, String>{for (final key in symbols) key.id: key.expectedLatex},
+      <String, String>{
+        'physics-delta': r'\Delta',
+        'physics-rho': r'\rho',
+        'physics-eta': r'\eta',
+        'physics-mu': r'\mu',
+        'physics-lambda': r'\lambda',
+        'physics-nu': r'\nu',
+        'physics-omega': r'\omega',
+        'physics-varphi': r'\varphi',
+        'physics-capital-phi': r'\Phi',
+        'physics-gamma': r'\gamma',
+        'nucleus': r'{}_{Z}^{A}X',
+      },
+    );
+
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    symbols.singleWhere((key) => key.id == 'nucleus').insert(controller);
+    controller
+      ..addLeaf('14')
+      ..goNext()
+      ..addLeaf('6')
+      ..goNext()
+      ..addLeaf('C');
+    expect(_latex(controller), r'{}_{6}^{14}C');
+  });
+
+  test('物理单位精确覆盖五十一项并按上下文补单位间距', () {
+    final units =
+        practiceFormulaPhysicsSectionKeys[PracticeFormulaSection.physicsUnits]!;
+    expect(
+      <String, String>{for (final key in units) key.id: key.expectedLatex},
+      <String, String>{
+        'unit-mm': r'\mathrm{mm}',
+        'unit-nm': r'\mathrm{nm}',
+        'unit-cm': r'\mathrm{cm}',
+        'unit-m': r'\mathrm{m}',
+        'unit-km': r'\mathrm{km}',
+        'unit-mL': r'\mathrm{mL}',
+        'unit-L': r'\mathrm{L}',
+        'unit-mg': r'\mathrm{mg}',
+        'unit-g': r'\mathrm{g}',
+        'unit-kg': r'\mathrm{kg}',
+        'unit-t': r'\mathrm{t}',
+        'unit-s': r'\mathrm{s}',
+        'unit-ms': r'\mathrm{ms}',
+        'unit-min': r'\mathrm{min}',
+        'unit-h': r'\mathrm{h}',
+        'unit-celsius': r'^{\circ}\mathrm{C}',
+        'unit-K': r'\mathrm{K}',
+        'unit-rad': r'\mathrm{rad}',
+        'unit-Hz': r'\mathrm{Hz}',
+        'unit-kHz': r'\mathrm{kHz}',
+        'unit-MHz': r'\mathrm{MHz}',
+        'unit-dB': r'\mathrm{dB}',
+        'unit-N': r'\mathrm{N}',
+        'unit-Pa': r'\mathrm{Pa}',
+        'unit-kPa': r'\mathrm{kPa}',
+        'unit-J': r'\mathrm{J}',
+        'unit-W': r'\mathrm{W}',
+        'unit-kW': r'\mathrm{kW}',
+        'unit-C': r'\mathrm{C}',
+        'unit-A': r'\mathrm{A}',
+        'unit-mA': r'\mathrm{mA}',
+        'unit-microA': r'\mu\mathrm{A}',
+        'unit-V': r'\mathrm{V}',
+        'unit-ohm': r'\Omega',
+        'unit-kilohm': r'\mathrm{k}\Omega',
+        'unit-megaohm': r'\mathrm{M}\Omega',
+        'unit-F': r'\mathrm{F}',
+        'unit-microF': r'\mu\mathrm{F}',
+        'unit-Wb': r'\mathrm{Wb}',
+        'unit-T': r'\mathrm{T}',
+        'unit-mol': r'\mathrm{mol}',
+        'unit-eV': r'\mathrm{eV}',
+        'unit-u': r'\mathrm{u}',
+        'unit-m-per-s': r'\mathrm{m}/\mathrm{s}',
+        'unit-km-per-h': r'\mathrm{km}/\mathrm{h}',
+        'unit-m-per-s2': r'\mathrm{m}/\mathrm{s}^{2}',
+        'unit-kg-per-m3': r'\mathrm{kg}/\mathrm{m}^{3}',
+        'unit-g-per-cm3': r'\mathrm{g}/\mathrm{cm}^{3}',
+        'unit-N-per-C': r'\mathrm{N}/\mathrm{C}',
+        'unit-rad-per-s': r'\mathrm{rad}/\mathrm{s}',
+        'unit-kW-hour': r'\mathrm{kW}\cdot\mathrm{h}',
+      },
+    );
+    expect(units, hasLength(51));
+
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    final metre = units.singleWhere((key) => key.id == 'unit-m');
+    metre.insert(controller);
+    expect(_latex(controller), r'\mathrm{m}');
+    controller
+      ..clear()
+      ..addLeaf('5');
+    metre.insert(controller);
+    expect(_latex(controller), r'5\,\mathrm{m}');
+  });
+
+  test('物理常数保留十项教材说明并受控插入组合下标', () {
+    final constants =
+        practiceFormulaPhysicsSectionKeys[PracticeFormulaSection
+            .physicsConstants]!;
+    expect(
+      <String, String>{for (final key in constants) key.id: key.usage},
+      <String, String>{
+        'constant-g':
+            r'常取 9.8\,\mathrm{m}/\mathrm{s}^{2}，题目有时取 10\,\mathrm{m}/\mathrm{s}^{2}',
+        'constant-G':
+            r'6.67\times10^{-11}\,\mathrm{N}\cdot\mathrm{m}^{2}/\mathrm{kg}^{2}',
+        'constant-c': r'3.0\times10^{8}\,\mathrm{m}/\mathrm{s}',
+        'constant-k':
+            r'9.0\times10^{9}\,\mathrm{N}\cdot\mathrm{m}^{2}/\mathrm{C}^{2}',
+        'constant-e': r'1.60\times10^{-19}\,\mathrm{C}',
+        'constant-h': r'6.63\times10^{-34}\,\mathrm{J}\cdot\mathrm{s}',
+        'constant-NA': r'6.02\times10^{23}\,\mathrm{mol}^{-1}',
+        'constant-kB': r'1.38\times10^{-23}\,\mathrm{J}/\mathrm{K}',
+        'constant-R': r'8.31\,\mathrm{J}/(\mathrm{mol}\cdot\mathrm{K})',
+        'constant-p0': r'常取 1.01\times10^{5}\,\mathrm{Pa}',
+      },
+    );
+    expect(constants, hasLength(10));
+
+    final controller = MathFieldEditingController();
+    addTearDown(controller.dispose);
+    for (final entry in <String, String>{
+      'constant-NA': r'N_{A}',
+      'constant-kB': r'k_{B}',
+      'constant-p0': r'p_{0}',
+    }.entries) {
+      controller.clear();
+      constants.singleWhere((key) => key.id == entry.key).insert(controller);
+      expect(_latex(controller), entry.value);
+    }
+  });
+
   test('字母目录完整产生二十六个小写或大写键', () {
     final lowercase = practiceFormulaAlphabetKeys(uppercase: false);
     final uppercase = practiceFormulaAlphabetKeys(uppercase: true);

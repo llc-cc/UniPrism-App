@@ -4,14 +4,15 @@ import 'package:math_keyboard/math_keyboard.dart';
 import 'package:math_keyboard/src/foundation/node.dart';
 
 import 'practice_formula_common_catalog.dart';
-import 'practice_formula_insertions.dart';
 import 'practice_formula_key_models.dart';
 import 'practice_formula_math_catalog.dart';
+import 'practice_formula_physics_catalog.dart';
 
 export 'practice_formula_common_catalog.dart';
 export 'practice_formula_insertions.dart';
 export 'practice_formula_key_models.dart';
 export 'practice_formula_math_catalog.dart';
+export 'practice_formula_physics_catalog.dart';
 
 /// 公式键盘的一级分类；顺序同时决定桌面左栏和窄屏分类栏顺序。
 enum PracticeFormulaKeyboardCategory {
@@ -360,6 +361,7 @@ practiceFormulaCategoryKeys =
         PracticeFormulaKeySpec('Omega', 'Ω', '大写 Omega', _leaf(r'\Omega ')),
       ],
       PracticeFormulaKeyboardCategory.physics: <PracticeFormulaKeySpec>[
+        practiceFormulaNucleusKey,
         PracticeFormulaKeySpec(
           'vector-force',
           r'\vec{F}',
@@ -426,6 +428,7 @@ practiceFormulaCategoryKeys =
         PracticeFormulaKeySpec('charge', 'Q', '电荷量', _leaf('Q')),
       ],
       PracticeFormulaKeyboardCategory.units: <PracticeFormulaKeySpec>[
+        practiceFormulaMetrePerSecondSquaredKey,
         PracticeFormulaKeySpec('unit-metre', 'm', '米', _unit(r'\mathrm{m}')),
         PracticeFormulaKeySpec('unit-second', 's', '秒', _unit(r'\mathrm{s}')),
         PracticeFormulaKeySpec(
