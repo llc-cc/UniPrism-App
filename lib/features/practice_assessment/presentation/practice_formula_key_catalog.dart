@@ -3,8 +3,12 @@ import 'package:math_keyboard/math_keyboard.dart';
 // ignore: implementation_imports
 import 'package:math_keyboard/src/foundation/node.dart';
 
+import 'practice_formula_common_catalog.dart';
+import 'practice_formula_insertions.dart';
 import 'practice_formula_key_models.dart';
 
+export 'practice_formula_common_catalog.dart';
+export 'practice_formula_insertions.dart';
 export 'practice_formula_key_models.dart';
 
 /// 公式键盘的一级分类；顺序同时决定桌面左栏和窄屏分类栏顺序。
@@ -103,41 +107,9 @@ PracticeFormulaKeyAction _unit(String latex) => (controller) {
 /// 按当前大小写状态生成完整的 26 个受控字母键。
 List<PracticeFormulaKeySpec> practiceFormulaAlphabetKeys({
   required bool uppercase,
-}) => List<PracticeFormulaKeySpec>.generate(26, (index) {
-  final lowercase = String.fromCharCode('a'.codeUnitAt(0) + index);
-  final value = uppercase ? lowercase.toUpperCase() : lowercase;
-  return PracticeFormulaKeySpec(
-    'letter-$lowercase',
-    value,
-    '字母 $value',
-    _leaf(value),
-  );
-}, growable: false);
-
-/// 将系统输入法产生的普通文本安全插入当前公式光标。
-void insertPracticeFormulaText(
-  MathFieldEditingController controller,
-  String value,
-) {
-  if (value.isEmpty) return;
-  const escapedCharacters = <String, String>{
-    r'\': r'\backslash{}',
-    '{': r'\{',
-    '}': r'\}',
-    '%': r'\%',
-    '_': r'\_',
-    '#': r'\#',
-    r'$': r'\$',
-    '&': r'\&',
-    '^': r'\^{}',
-    '~': r'\~{}',
-  };
-  final escaped = value
-      .split('')
-      .map((character) => escapedCharacters[character] ?? character)
-      .join();
-  controller.addLeaf('\\text{$escaped}');
-}
+}) => practiceFormulaLetterAndNumberKeys(
+  uppercase: uppercase,
+).take(26).toList(growable: false);
 
 final PracticeFormulaKeySpec _fraction = PracticeFormulaKeySpec(
   'fraction',
@@ -228,26 +200,6 @@ final PracticeFormulaKeySpec _integral = PracticeFormulaKeySpec(
   isTexLabel: true,
 );
 
-/// 固定数字与四则运算键；编辑控制键由布局层插入首尾空位。
-final List<PracticeFormulaKeySpec> practiceFormulaNumericKeys =
-    <PracticeFormulaKeySpec>[
-      PracticeFormulaKeySpec('7', '7', '数字 7', _leaf('7')),
-      PracticeFormulaKeySpec('8', '8', '数字 8', _leaf('8')),
-      PracticeFormulaKeySpec('9', '9', '数字 9', _leaf('9')),
-      PracticeFormulaKeySpec('divide', '÷', '除号', _leaf(r'\div ')),
-      PracticeFormulaKeySpec('4', '4', '数字 4', _leaf('4')),
-      PracticeFormulaKeySpec('5', '5', '数字 5', _leaf('5')),
-      PracticeFormulaKeySpec('6', '6', '数字 6', _leaf('6')),
-      PracticeFormulaKeySpec('multiply', '×', '乘号', _leaf(r'\times ')),
-      PracticeFormulaKeySpec('1', '1', '数字 1', _leaf('1')),
-      PracticeFormulaKeySpec('2', '2', '数字 2', _leaf('2')),
-      PracticeFormulaKeySpec('3', '3', '数字 3', _leaf('3')),
-      PracticeFormulaKeySpec('minus', '−', '减号', _leaf('-')),
-      PracticeFormulaKeySpec('0', '0', '数字 0', _leaf('0')),
-      PracticeFormulaKeySpec('decimal', '.', '小数点', _leaf('.')),
-      PracticeFormulaKeySpec('plus', '+', '加号', _leaf('+')),
-    ];
-
 /// 八类公式键目录；列表顺序就是面板中的阅读与键位优先级。
 final Map<PracticeFormulaKeyboardCategory, List<PracticeFormulaKeySpec>>
 practiceFormulaCategoryKeys =
@@ -269,6 +221,7 @@ practiceFormulaCategoryKeys =
         PracticeFormulaKeySpec('e', 'e', '自然常数 e', _leaf('e')),
         _infinity,
         PracticeFormulaKeySpec('plus-minus', '±', '正负号', _leaf(r'\pm ')),
+        practiceFormulaScientificNotationKey,
       ],
       PracticeFormulaKeyboardCategory.structures: <PracticeFormulaKeySpec>[
         _fraction,

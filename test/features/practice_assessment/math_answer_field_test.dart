@@ -166,6 +166,36 @@ void main() {
     expect(changes.last, r'\frac{3}{2}');
   });
 
+  testWidgets('科学记数法模板通过真实公式框输出可编辑槽位', (tester) async {
+    final controller = MathFieldEditingController();
+    final changes = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-scientific',
+          value: '',
+          enabled: true,
+          controller: controller,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-key-scientific-notation')),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-3')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-next')));
+    await tester.tap(find.byKey(const ValueKey('practice-formula-key-8')));
+    await tester.pump();
+
+    expect(changes.last, r'3\times10^{8}');
+  });
+
   testWidgets('关系符号页覆盖高中数学填空题常用符号且窄屏不溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 812);
     tester.view.devicePixelRatio = 1;

@@ -82,6 +82,97 @@ void main() {
     );
   });
 
+  test('常用目录覆盖唯一主位置', () {
+    expect(
+      practiceFormulaCommonSectionKeys[PracticeFormulaSection.commonSymbols]!
+          .map((item) => item.id)
+          .toSet(),
+      <String>{
+        'plus-minus',
+        'dot-multiply',
+        'slash',
+        'equals',
+        'not-equal',
+        'approx',
+        'less',
+        'greater',
+        'less-equal',
+        'greater-equal',
+        'percent',
+        'degree',
+        'comma',
+        'semicolon',
+        'factorial',
+        'ellipsis',
+      },
+    );
+    expect(
+      practiceFormulaCommonSectionKeys[PracticeFormulaSection.commonTemplates]!
+          .map((item) => item.id)
+          .toSet(),
+      <String>{
+        'fraction',
+        'power',
+        'square',
+        'cube',
+        'subscript',
+        'sub-superscript',
+        'sqrt',
+        'nth-root',
+        'parentheses',
+        'brackets',
+        'braces',
+        'absolute',
+        'overline',
+        'vector',
+        'scientific-notation',
+      },
+    );
+
+    final fixedIds = practiceFormulaNumericKeys.map((item) => item.id).toSet();
+    expect(
+      fixedIds,
+      containsAll(<String>{
+        '0',
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        'decimal',
+        'plus',
+        'minus',
+        'multiply',
+        'divide',
+      }),
+    );
+    final gridIds = practiceFormulaCommonSectionKeys.values
+        .expand((items) => items)
+        .map((item) => item.id)
+        .toSet();
+    expect(
+      gridIds.intersection(<String>{
+        'decimal',
+        'plus',
+        'minus',
+        'multiply',
+        'divide',
+      }),
+      isEmpty,
+    );
+    expect(practiceFormulaLetterAndNumberKeys(uppercase: false), hasLength(30));
+    expect(
+      practiceFormulaLetterAndNumberKeys(
+        uppercase: true,
+      ).take(26).map((item) => item.label).join(),
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    );
+  });
+
   test('字母目录完整产生二十六个小写或大写键', () {
     final lowercase = practiceFormulaAlphabetKeys(uppercase: false);
     final uppercase = practiceFormulaAlphabetKeys(uppercase: true);
