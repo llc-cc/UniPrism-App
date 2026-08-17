@@ -37,6 +37,7 @@ final class _PracticeFormulaKeyboardState
   bool _sectionsExpanded = true;
   bool _uppercaseLetters = false;
   int _pageIndex = 0;
+  PracticeFormulaKeySpec? _hoveredKey;
 
   bool get _isAlphabet => _section == PracticeFormulaSection.lettersAndNumbers;
 
@@ -68,13 +69,21 @@ final class _PracticeFormulaKeyboardState
         border: Border.all(color: const Color(0xFFD3D9E4)),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= _wideContentBreakpoint) {
-            return _wideKeyboard(constraints.maxWidth);
-          }
-          return _narrowKeyboard();
-        },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) =>
+                constraints.maxWidth >= _wideContentBreakpoint
+                    ? _wideKeyboard(constraints.maxWidth)
+                    : _narrowKeyboard(),
+          ),
+          if (_hoveredKey case final hovered? when hovered.usage.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _keyTooltipCard(hovered),
+          ],
+        ],
       ),
     );
   }
@@ -462,30 +471,40 @@ final class _PracticeFormulaKeyboardState
     return Semantics(
       button: true,
       label: key.semanticLabel,
-      child: FilledButton(
-        key: ValueKey('practice-formula-key-${key.id}'),
-        onPressed: () => key.insert(widget.controller),
-        style: _keyButtonStyle(),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: key.isTexLabel
-              ? Math.tex(
-                  key.label,
-                  mathStyle: MathStyle.text,
-                  textStyle: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
+      child: MouseRegion(
+        onEnter: (_) {
+          if (key.usage.isNotEmpty) {
+            setState(() => _hoveredKey = key);
+          }
+        },
+        onExit: (_) {
+          setState(() => _hoveredKey = null);
+        },
+        child: FilledButton(
+          key: ValueKey('practice-formula-key-${key.id}'),
+          onPressed: () => key.insert(widget.controller),
+          style: _keyButtonStyle(),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: key.isTexLabel
+                ? Math.tex(
+                    key.label,
+                    mathStyle: MathStyle.text,
+                    textStyle: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  )
+                : Text(
+                    key.label,
+                    maxLines: 1,
+                    softWrap: false,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                )
-              : Text(
-                  key.label,
-                  maxLines: 1,
-                  softWrap: false,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+          ),
         ),
       ),
     );
@@ -558,6 +577,76 @@ final class _PracticeFormulaKeyboardState
       shape: RoundedRectangleBorder(
         side: const BorderSide(color: Color(0xFFC8CFDA)),
         borderRadius: BorderRadius.circular(8),
+      ),
+    );
+  }
+
+  Widget _keyTooltipCard(PracticeFormulaKeySpec key) {
+    return Material(
+      elevation: 8,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        key: const ValueKey('practice-formula-key-tooltip'),
+        width: 240,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFE8EBF0)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF5F2FF),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: key.isTexLabel
+                      ? Math.tex(
+                          key.label,
+                          mathStyle: MathStyle.text,
+                          textStyle: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                        )
+                      : Text(
+                          key.label,
+                          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                        ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    key.name,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF6B23FF),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Color(0xFFEEF0F5)),
+            const SizedBox(height: 8),
+            Text(
+              key.usage,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF595959),
+                height: 1.5,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

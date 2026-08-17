@@ -10,6 +10,7 @@ enum PracticeFormulaSection {
   commonTemplates,
   mathSymbols,
   mathTemplates,
+  mathUniversity,
   physicsSymbols,
   physicsUnits,
   physicsConstants,
@@ -37,6 +38,7 @@ const Map<PracticeFormulaSection, String> practiceFormulaSectionLabels =
       PracticeFormulaSection.commonTemplates: '常用公式模板',
       PracticeFormulaSection.mathSymbols: '数学符号',
       PracticeFormulaSection.mathTemplates: '数学公式模板',
+      PracticeFormulaSection.mathUniversity: '大学数学',
       PracticeFormulaSection.physicsSymbols: '物理符号',
       PracticeFormulaSection.physicsUnits: '物理单位',
       PracticeFormulaSection.physicsConstants: '物理常数',
@@ -54,6 +56,7 @@ practiceFormulaSectionsByPrimary =
       PracticeFormulaPrimaryCategory.mathematics: <PracticeFormulaSection>[
         PracticeFormulaSection.mathSymbols,
         PracticeFormulaSection.mathTemplates,
+        PracticeFormulaSection.mathUniversity,
       ],
       PracticeFormulaPrimaryCategory.physics: <PracticeFormulaSection>[
         PracticeFormulaSection.physicsSymbols,

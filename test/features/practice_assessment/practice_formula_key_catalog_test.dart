@@ -3,7 +3,7 @@ import 'package:math_keyboard/math_keyboard.dart';
 import 'package:uniprism_app/features/practice_assessment/presentation/practice_formula_key_catalog.dart';
 
 void main() {
-  test('目录固定为三个一级分类和八个二级标签', () {
+  test('目录固定为三个一级分类和九个二级标签', () {
     expect(
       PracticeFormulaPrimaryCategory.values.map((item) => item.name),
       <String>['common', 'mathematics', 'physics'],
@@ -14,6 +14,7 @@ void main() {
       'commonTemplates',
       'mathSymbols',
       'mathTemplates',
+      'mathUniversity',
       'physicsSymbols',
       'physicsUnits',
       'physicsConstants',
@@ -29,6 +30,7 @@ void main() {
         PracticeFormulaPrimaryCategory.mathematics: <PracticeFormulaSection>[
           PracticeFormulaSection.mathSymbols,
           PracticeFormulaSection.mathTemplates,
+          PracticeFormulaSection.mathUniversity,
         ],
         PracticeFormulaPrimaryCategory.physics: <PracticeFormulaSection>[
           PracticeFormulaSection.physicsSymbols,
@@ -143,6 +145,7 @@ void main() {
         PracticeFormulaSection.commonTemplates: 15,
         PracticeFormulaSection.mathSymbols: 33,
         PracticeFormulaSection.mathTemplates: 15,
+        PracticeFormulaSection.mathUniversity: 38,
         PracticeFormulaSection.physicsSymbols: 11,
         PracticeFormulaSection.physicsUnits: 51,
         PracticeFormulaSection.physicsConstants: 10,
@@ -152,7 +155,7 @@ void main() {
     final official = practiceFormulaSectionKeys.values
         .expand((items) => items)
         .toList(growable: false);
-    expect(official, hasLength(181));
+    expect(official, hasLength(219));
     expect(official.map((item) => item.id).toSet(), hasLength(official.length));
     expect(
       official.where(

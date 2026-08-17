@@ -2,12 +2,14 @@ import 'practice_formula_common_catalog.dart';
 import 'practice_formula_key_models.dart';
 import 'practice_formula_math_catalog.dart';
 import 'practice_formula_physics_catalog.dart';
+import 'practice_formula_university_math_catalog.dart';
 
 export 'practice_formula_common_catalog.dart';
 export 'practice_formula_insertions.dart';
 export 'practice_formula_key_models.dart';
 export 'practice_formula_math_catalog.dart';
 export 'practice_formula_physics_catalog.dart';
+export 'practice_formula_university_math_catalog.dart';
 
 /// 八个正式标签的单一索引；字母默认使用小写，界面可按状态动态生成大写版本。
 final Map<PracticeFormulaSection, List<PracticeFormulaKeySpec>>
@@ -17,6 +19,7 @@ practiceFormulaSectionKeys =
           practiceFormulaLetterAndNumberKeys(uppercase: false),
       ...practiceFormulaCommonSectionKeys,
       ...practiceFormulaMathSectionKeys,
+      PracticeFormulaSection.mathUniversity: practiceFormulaUniversityMathKeys,
       ...practiceFormulaPhysicsSectionKeys,
     };
 
