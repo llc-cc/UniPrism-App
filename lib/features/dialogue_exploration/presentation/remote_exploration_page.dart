@@ -478,8 +478,6 @@ final class _RemoteLearningSessionPageState
   final _whiteboardLauncher = const MockExplorationWhiteboardLauncher();
   final _guidedActionPanelKey = GlobalKey<_GuidedTeachingActionPanelState>();
   Timer? _timingTicker;
-  Timer? _extraSupportAutoAdvanceTimer;
-  String? _extraSupportAutoAdvanceKey;
   String? _inspectedBoardId;
   String? _lastActiveBoardId;
 
@@ -492,48 +490,9 @@ final class _RemoteLearningSessionPageState
         flow?.stage == RemoteTeachingStage.focus;
   }
 
-  void _maybeScheduleExtraSupportAutoAdvance() {
-    final snapshot = widget.controller.state.snapshot;
-    if (!_needsExtraSupportRepairAck(snapshot)) {
-      _extraSupportAutoAdvanceKey = null;
-      return;
-    }
-    final flow = snapshot?.teachingFlow;
-    final key =
-        '${snapshot?.session.id}:${flow?.updatedAt}:${flow?.stage.name}';
-    if (_extraSupportAutoAdvanceKey == key) return;
-    _extraSupportAutoAdvanceKey = key;
-    _scheduleExtraSupportAutoAdvance();
-  }
-
-  void _scheduleExtraSupportAutoAdvance() {
-    _extraSupportAutoAdvanceTimer?.cancel();
-    _extraSupportAutoAdvanceTimer = Timer(
-      const Duration(milliseconds: 2800),
-      () {
-        if (!mounted) return;
-        if (!_needsExtraSupportRepairAck(widget.controller.state.snapshot)) {
-          return;
-        }
-        unawaited(_acknowledgeExtraSupportRepair(autoOpenPractice: false));
-      },
-    );
-  }
-
-  Future<void> _acknowledgeExtraSupportRepair({
-    bool autoOpenPractice = false,
-  }) async {
-    _extraSupportAutoAdvanceTimer?.cancel();
-    _extraSupportAutoAdvanceKey = null;
-    await widget.controller.submitQuestion('继续', force: true);
-    if (!mounted || !autoOpenPractice) return;
-    if (widget.controller.state.status == RemoteExplorationStatus.failed) {
-      return;
-    }
-    final snapshot = widget.controller.state.snapshot;
-    if (snapshot?.capabilities?.canSubmitPractice == true) {
-      await _showGuidedPractice();
-    }
+  Future<void> _acknowledgeExtraSupportRepair() async {
+    // 使用专用语义文案区分“确认补救”和普通对话，避免后端再次把“继续”送入 AI 诊断。
+    await widget.controller.submitQuestion('我明白了，继续这道练习', force: true);
   }
 
   @override
@@ -563,7 +522,6 @@ final class _RemoteLearningSessionPageState
     }
     _lastActiveBoardId = nextActiveBoardId;
     setState(() {});
-    _maybeScheduleExtraSupportAutoAdvance();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       _scrollController.animateTo(
@@ -589,7 +547,6 @@ final class _RemoteLearningSessionPageState
   @override
   void dispose() {
     _timingTicker?.cancel();
-    _extraSupportAutoAdvanceTimer?.cancel();
     widget.controller.removeListener(_refresh);
     _inputController.dispose();
     _scrollController.dispose();
@@ -900,45 +857,60 @@ final class _RemoteLearningSessionPageState
                 mobile ? 12 : 20,
                 8,
               ),
-              child: _GuidedTeachingActionPanel(
-                key: _guidedActionPanelKey,
-                snapshot: snapshot,
-                focusBoard: focusBoard,
-                isCurrentBoard: isCurrentBoard,
-                flow: teachingFlow,
-                guidance: guidance,
-                capabilities: snapshot.capabilities,
-                correctionFeedback: correctionFeedback,
-                material: guidedMaterial,
-                assetEventType: guidedEventType,
-                onAssetComplete:
-                    guidedMaterial == null || guidedEventType == null
-                    ? null
-                    : (interactionPayload) =>
-                          widget.controller.submitMaterialEvent(
-                            materialUsageId: guidedMaterial.id,
-                            eventType: guidedEventType,
-                            payload: {
-                              'componentKey': guidedMaterial.componentKey,
-                              'completionConfirmed': true,
-                              ...interactionPayload,
-                            },
-                          ),
-                onSkipMaterial:
-                    guidedMaterial == null ||
-                        snapshot.capabilities?.canSkipMaterial != true
-                    ? null
-                    : () => widget.controller.submitMaterialEvent(
-                        materialUsageId: guidedMaterial.id,
-                        eventType: 'MATERIAL_SKIPPED',
-                        payload: const {'reason': 'student_requested'},
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (state.status == RemoteExplorationStatus.failed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _ErrorPanel(
+                        message: state.errorMessage ?? '操作失败，请重试',
+                        onRetry: widget.controller.retry,
                       ),
-                onSubmitPractice: (draft) =>
-                    _submitGuidedPractice(draft, force: isRemediationDialogue),
-                onSendMessage: (text) => isRemediationDialogue
-                    ? widget.controller.submitQuestion(text, force: true)
-                    : widget.controller.submitQuestion(text),
-                onStartReflection: _complete,
+                    ),
+                  _GuidedTeachingActionPanel(
+                    key: _guidedActionPanelKey,
+                    snapshot: snapshot,
+                    focusBoard: focusBoard,
+                    isCurrentBoard: isCurrentBoard,
+                    flow: teachingFlow,
+                    guidance: guidance,
+                    capabilities: snapshot.capabilities,
+                    correctionFeedback: correctionFeedback,
+                    material: guidedMaterial,
+                    assetEventType: guidedEventType,
+                    onAssetComplete:
+                        guidedMaterial == null || guidedEventType == null
+                        ? null
+                        : (interactionPayload) =>
+                              widget.controller.submitMaterialEvent(
+                                materialUsageId: guidedMaterial.id,
+                                eventType: guidedEventType,
+                                payload: {
+                                  'componentKey': guidedMaterial.componentKey,
+                                  'completionConfirmed': true,
+                                  ...interactionPayload,
+                                },
+                              ),
+                    onSkipMaterial:
+                        guidedMaterial == null ||
+                            snapshot.capabilities?.canSkipMaterial != true
+                        ? null
+                        : () => widget.controller.submitMaterialEvent(
+                            materialUsageId: guidedMaterial.id,
+                            eventType: 'MATERIAL_SKIPPED',
+                            payload: const {'reason': 'student_requested'},
+                          ),
+                    onSubmitPractice: (draft) => _submitGuidedPractice(
+                      draft,
+                      force: isRemediationDialogue,
+                    ),
+                    onSendMessage: (text) => isRemediationDialogue
+                        ? widget.controller.submitQuestion(text, force: true)
+                        : widget.controller.submitQuestion(text),
+                    onStartReflection: _complete,
+                  ),
+                ],
               ),
             )
           : null,
@@ -1213,11 +1185,7 @@ final class _RemoteLearningSessionPageState
         course?.practiceResult == 'MASTERED' ||
         proc?.currentPhase == RemoteTeachingPhase.conceptIntroduction ||
         proc?.currentPhase == RemoteTeachingPhase.goalComplete;
-    if (!mastered && _needsExtraSupportRepairAck(snapshot)) {
-      _scheduleExtraSupportAutoAdvance();
-    } else if (!mastered &&
-        flow?.feedback?.trim().isNotEmpty == true &&
-        mounted) {
+    if (!mastered && flow?.feedback?.trim().isNotEmpty == true && mounted) {
       final feedback = flow!.feedback!.trim();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1315,7 +1283,7 @@ final class _RemoteLearningSessionPageState
     final snapshot = widget.controller.state.snapshot;
     final caps = snapshot?.capabilities;
     if (_needsExtraSupportRepairAck(snapshot)) {
-      await _acknowledgeExtraSupportRepair(autoOpenPractice: false);
+      await _acknowledgeExtraSupportRepair();
       return;
     }
     if (caps?.canSubmitMaterial == true) {
@@ -2650,7 +2618,8 @@ final class _GuidedTeachingActionPanelState
       return;
     }
     if (widget.onSendMessage != null) {
-      await widget.onSendMessage!('继续');
+      // 补救卡的确认是独立于普通问答的状态机事件，使用稳定文案供旧快照兜底识别。
+      await widget.onSendMessage!('我明白了，继续这道练习');
     }
   }
 
@@ -2703,7 +2672,7 @@ final class _GuidedTeachingActionPanelState
           readOnly: !isCurrentBoard,
           nextAction: isSupportDialogue ? flow.currentAction.prompt : null,
           onContinue: isSupportDialogue && widget.onSendMessage != null
-              ? () => widget.onSendMessage!('继续')
+              ? () => widget.onSendMessage!('我明白了，继续这道练习')
               : null,
         );
       }
