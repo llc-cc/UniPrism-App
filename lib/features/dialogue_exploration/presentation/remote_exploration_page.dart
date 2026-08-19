@@ -2500,13 +2500,18 @@ final class _GuidedTeachingActionPanelState
           break;
         }
       }
-      if (branch != null) {
+      final isRepairDialogue =
+          isCurrentBoard &&
+          flow.stage == RemoteTeachingStage.dialogue &&
+          flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair;
+      // 当前补救分支进入 FOCUS 后必须交还给正式练习面板；否则快捷讲解卡会截住作答和提交接口。
+      if (branch != null && (!isCurrentBoard || isRepairDialogue)) {
         return ClassroomRemediationPanel.fromBranch(
           branch: branch,
           knowledgeNodeNames: focusBoard!.knowledgeNodeNames,
           readOnly: !isCurrentBoard,
-          onQuickAnswer: isCurrentBoard && widget.onSendMessage != null
-              ? widget.onSendMessage
+          onContinue: isRepairDialogue && widget.onSendMessage != null
+              ? () => widget.onSendMessage!('继续')
               : null,
         );
       }
@@ -2557,7 +2562,7 @@ final class _GuidedTeachingActionPanelState
                 : '薄弱知识点',
             feedback: flow.feedback?.trim() ?? '',
             repairFocus: flow.repairFocus,
-            onQuickAnswer: widget.onSendMessage,
+            onContinue: () => widget.onSendMessage!('继续'),
           ),
         if (showMaterial && widget.material == null)
           _GuidedMaterialPlaceholder(goal: flow.goal, stage: flow.stage),

@@ -13,20 +13,20 @@ final class ClassroomRemediationPanel extends StatelessWidget {
     required this.feedback,
     this.repairFocus,
     this.readOnly = false,
-    this.onQuickAnswer,
+    this.onContinue,
   });
 
   final String topic;
   final String feedback;
   final String? repairFocus;
   final bool readOnly;
-  final Future<void> Function(String answer)? onQuickAnswer;
+  final Future<void> Function()? onContinue;
 
   factory ClassroomRemediationPanel.fromBranch({
     required RemoteTeachingBranchRecord branch,
     required List<String> knowledgeNodeNames,
     bool readOnly = false,
-    Future<void> Function(String answer)? onQuickAnswer,
+    Future<void> Function()? onContinue,
   }) {
     final topic = knowledgeNodeNames.isNotEmpty
         ? knowledgeNodeNames.first
@@ -36,7 +36,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
       feedback: branch.feedback,
       repairFocus: branch.repairFocus,
       readOnly: readOnly,
-      onQuickAnswer: onQuickAnswer,
+      onContinue: onContinue,
     );
   }
 
@@ -101,48 +101,15 @@ final class ClassroomRemediationPanel extends StatelessWidget {
             _conceptExplanation,
             style: const TextStyle(height: 1.55, color: _ink, fontSize: 14),
           ),
-          if (!readOnly && onQuickAnswer != null) ...[
+          if (!readOnly && onContinue != null) ...[
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFFED7AA)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    '互动练习',
-                    style: TextStyle(fontWeight: FontWeight.w800, color: _ink),
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    '判断：{a, b, c} 与 {c, a, b} 是否相等？',
-                    style: TextStyle(height: 1.45, color: _ink),
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      FilledButton(
-                        key: const ValueKey('remediation-quick-yes'),
-                        onPressed: () => onQuickAnswer!(
-                          '是，它们相等，因为集合具有无序性，元素相同即可。',
-                        ),
-                        child: const Text('是，相等'),
-                      ),
-                      OutlinedButton(
-                        key: const ValueKey('remediation-quick-no'),
-                        onPressed: () => onQuickAnswer!(
-                          '不是，我还需要再想想无序性和元素是否相同。',
-                        ),
-                        child: const Text('还不确定'),
-                      ),
-                    ],
-                  ),
-                ],
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton.icon(
+                key: const ValueKey('remediation-start-consolidation'),
+                onPressed: () => onContinue!(),
+                icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                label: const Text('听懂了，开始巩固'),
               ),
             ),
           ] else if (readOnly)
