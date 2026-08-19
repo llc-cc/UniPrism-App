@@ -457,6 +457,7 @@ final class _RemoteLearningSessionPageState
   Timer? _extraSupportAutoAdvanceTimer;
   String? _extraSupportAutoAdvanceKey;
   String? _inspectedBoardId;
+  String? _lastActiveBoardId;
 
   bool _needsExtraSupportRepairAck(RemoteLearningSessionSnapshot? snapshot) {
     final flow = snapshot?.teachingFlow;
@@ -514,6 +515,8 @@ final class _RemoteLearningSessionPageState
   @override
   void initState() {
     super.initState();
+    _lastActiveBoardId =
+        widget.controller.state.snapshot?.teachingArchitecture?.activeBoardId;
     widget.controller.addListener(_refresh);
     _timingTicker = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -525,6 +528,16 @@ final class _RemoteLearningSessionPageState
 
   void _refresh() {
     if (!mounted) return;
+    final nextActiveBoardId =
+        widget.controller.state.snapshot?.teachingArchitecture?.activeBoardId;
+    final wasFollowingPreviousActiveBoard =
+        _inspectedBoardId != null && _inspectedBoardId == _lastActiveBoardId;
+    // 服务端会重新投影画板 ID；原本跟随当前进度时必须切到新的活动画板，避免误落入同 ID 的历史板。
+    if (nextActiveBoardId != _lastActiveBoardId &&
+        wasFollowingPreviousActiveBoard) {
+      _inspectedBoardId = null;
+    }
+    _lastActiveBoardId = nextActiveBoardId;
     setState(() {});
     _maybeScheduleExtraSupportAutoAdvance();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -544,6 +557,9 @@ final class _RemoteLearningSessionPageState
     // 页面复用时迁移监听，避免旧会话的更新误刷新当前课堂。
     oldWidget.controller.removeListener(_refresh);
     widget.controller.addListener(_refresh);
+    _inspectedBoardId = null;
+    _lastActiveBoardId =
+        widget.controller.state.snapshot?.teachingArchitecture?.activeBoardId;
   }
 
   @override
@@ -761,6 +777,17 @@ final class _RemoteLearningSessionPageState
         !showClassroomBottom &&
         widget.controller.canSubmitEntryDialogue(snapshot);
 
+    void inspectBoard(String boardId) {
+      final board = snapshot.teachingArchitecture?.boardById(boardId);
+      final shouldFollowCurrent = board?.isActive == true;
+      setState(() {
+        _inspectedBoardId = shouldFollowCurrent ? null : boardId;
+      });
+      if (shouldFollowCurrent && snapshot.currentNodeId != null) {
+        widget.controller.inspectNode(snapshot.currentNodeId!);
+      }
+    }
+
     return TeachingModeSelectionStage(
       topicLabel: topicLabel,
       historyEntries: ClassroomBoardCatalog.historyEntries(snapshot),
@@ -772,7 +799,7 @@ final class _RemoteLearningSessionPageState
               focusBoard,
               isModeSelectionIntro: inIntro && isCurrentBoard,
             ),
-      onBoardTap: (boardId) => setState(() => _inspectedBoardId = boardId),
+      onBoardTap: inspectBoard,
       isReviewingHistory: isReviewingHistory,
       onReturnToCurrent: isReviewingHistory
           ? () {
@@ -795,7 +822,7 @@ final class _RemoteLearningSessionPageState
       onHistoryTap: (nodeId) {
         final boardId = ClassroomBoardCatalog.boardIdForNode(snapshot, nodeId);
         if (boardId != null) {
-          setState(() => _inspectedBoardId = boardId);
+          inspectBoard(boardId);
         } else {
           setState(() => _inspectedBoardId = null);
           widget.controller.inspectNode(nodeId);

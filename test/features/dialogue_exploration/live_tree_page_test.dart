@@ -1853,12 +1853,15 @@ void main() {
   testWidgets('active support focus shows formal reasoning and answer inputs', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.physicalSize = const Size(1440, 1200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final api = _UiFakeApi(sessionSnapshot: _supportFocusSnapshot());
+    final api = _UiFakeApi(
+      sessionSnapshot: _supportFocusSnapshot(),
+      practiceSnapshots: [_g2AssetAfterSupportSnapshot()],
+    );
     final controller = RemoteExplorationSessionController(api: api);
     await controller.loadEntry('quadratic-function');
     await controller.start();
@@ -1876,6 +1879,31 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('remediation-quick-yes')), findsNothing);
+
+    await tester.tap(find.text('补救 #1'));
+    await tester.enterText(
+      find.byKey(const ValueKey('inline-practice-reasoning-input')),
+      '补救理由',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('inline-practice-answer-input')),
+      '补救结论',
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('inline-practice-submit-button')),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('inline-practice-submit-button')),
+    );
+    await tester.pump();
+
+    expect(api.practiceCalls, 1);
+    expect(find.byKey(const ValueKey('history-review-banner')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('guided-asset-complete-button')),
+      findsOneWidget,
+    );
   });
 }
 
@@ -1973,6 +2001,78 @@ RemoteLearningSessionSnapshot _supportFocusSnapshot() {
           boardId: 'board-support',
         ),
       ],
+    ),
+  );
+}
+
+RemoteLearningSessionSnapshot _g2AssetAfterSupportSnapshot() {
+  final base = _contractSnapshot(
+    phase: RemoteTeachingPhase.example,
+    stage: RemoteTeachingStage.asset,
+    goalIndex: 1,
+    stageLabel: '互动探索',
+    actionHint: '完成 G2 互动素材。',
+    canSubmitMaterial: true,
+  );
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: base.summary,
+    learningGraph: base.learningGraph,
+    teachingFlow: base.teachingFlow,
+    processSchedulerState: base.processSchedulerState,
+    studentGuidance: base.studentGuidance,
+    courseState: base.courseState,
+    teacherDecision: base.teacherDecision,
+    capabilities: base.capabilities,
+    allowedActions: base.allowedActions,
+    teachingArchitecture: RemoteTeachingArchitectureSnapshot(
+      chapterId: 'bnu-math-ch1-set-concept',
+      atomId: 'bnu-set-concept-representation',
+      activeBoardId: 'board-g2-asset',
+      boards: [
+        RemoteTeachingBoardSnapshot(
+          id: 'board-support',
+          kind: 'CHECK',
+          label: '练习：练一练',
+          goalId: 'G2',
+          goalIndex: 1,
+          beatKind: 'CHECK',
+          knowledgeNodeIds: const ['set-notation'],
+          knowledgeNodeNames: const ['两种表示法'],
+          nodeIds: const ['sign-node'],
+          materialUsageIds: const [],
+          practiceAttemptIds: const [],
+          practiceId: 'set-roster-v1',
+          branchId: null,
+          parentBoardId: null,
+          isActive: false,
+          openedAt: '2026-08-19T01:01:00.000Z',
+        ),
+        RemoteTeachingBoardSnapshot(
+          id: 'board-g2-asset',
+          kind: 'INTERACTION',
+          label: '互动：两种表示法',
+          goalId: 'G2',
+          goalIndex: 1,
+          beatKind: 'EXAMPLE',
+          knowledgeNodeIds: const ['set-notation'],
+          knowledgeNodeNames: const ['两种表示法'],
+          nodeIds: const [],
+          materialUsageIds: const ['sign-material'],
+          practiceAttemptIds: const [],
+          practiceId: null,
+          branchId: null,
+          parentBoardId: 'board-support',
+          isActive: true,
+          openedAt: '2026-08-19T01:02:00.000Z',
+        ),
+      ],
+      branches: const [],
     ),
   );
 }
