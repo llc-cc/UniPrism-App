@@ -85,6 +85,27 @@ String _studentFriendlyFollowUp(String value) {
   return value;
 }
 
+bool _isActiveRemediationDialogue({
+  required bool isCurrentBoard,
+  required RemoteTeachingFlow? flow,
+  required RemoteTeachingBoardSnapshot? board,
+  required RemoteTeachingPhase? phase,
+}) {
+  if (!isCurrentBoard || flow?.stage != RemoteTeachingStage.dialogue) {
+    return false;
+  }
+
+  final hasRepairAction =
+      flow?.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
+      flow?.explorationAct == RemoteGuidedExplorationAct.transferRevisit;
+  final hasAnsweredCheck =
+      board?.kind == 'CHECK' && board?.practiceAttemptIds.isNotEmpty == true;
+  // 已有会话可能在补救讲解期间恢复成 UNDERSTANDING_CHECK，并丢失新动作字段；练习画板上的作答记录是更稳定的兼容信号。
+  return phase == RemoteTeachingPhase.extraSupport ||
+      hasRepairAction ||
+      hasAnsweredCheck;
+}
+
 typedef _LessonProgressInfo = ({
   String title,
   int currentStep,
@@ -777,21 +798,12 @@ final class _RemoteLearningSessionPageState
         isCurrentBoard &&
         focusBoard?.kind == 'SUPPORT_BRANCH' &&
         teachingFlow?.stage == RemoteTeachingStage.dialogue;
-    final isExtraSupportDialogue =
-        isCurrentBoard &&
-        teachingFlow?.stage == RemoteTeachingStage.dialogue &&
-        snapshot.processSchedulerState?.currentPhase ==
-            RemoteTeachingPhase.extraSupport;
-    final isRepairRevisitDialogue =
-        isCurrentBoard &&
-        teachingFlow?.stage == RemoteTeachingStage.dialogue &&
-        (teachingFlow?.explorationAct ==
-                RemoteGuidedExplorationAct.practiceRepair ||
-            teachingFlow?.explorationAct ==
-                RemoteGuidedExplorationAct.transferRevisit);
-    // 老版本快照可能不带 TRANSFER_REVISIT/repairFocus，但调度阶段仍明确是额外辅导；此时必须保留操作卡，不能退回普通聊天框。
-    final isRemediationDialogue =
-        isExtraSupportDialogue || isRepairRevisitDialogue;
+    final isRemediationDialogue = _isActiveRemediationDialogue(
+      isCurrentBoard: isCurrentBoard,
+      flow: teachingFlow,
+      board: focusBoard,
+      phase: snapshot.processSchedulerState?.currentPhase,
+    );
     final showReplyBar =
         isCurrentBoard &&
         !state.isReadOnly &&
@@ -2608,7 +2620,8 @@ final class _GuidedTeachingActionPanelState
   RemoteTeachingBranchRecord? _repairBranchForBoard(
     RemoteTeachingBoardSnapshot? board,
   ) {
-    final branches = widget.snapshot?.teachingArchitecture?.branches ??
+    final branches =
+        widget.snapshot?.teachingArchitecture?.branches ??
         const <RemoteTeachingBranchRecord>[];
     if (branches.isEmpty) return null;
 
@@ -2690,16 +2703,12 @@ final class _GuidedTeachingActionPanelState
         guidance?.stageLabel == '巩固练习';
     final practice = flow.activePractice;
     final repairBranch = _repairBranchForBoard(focusBoard);
-    final isExtraSupportDialogue =
-        flow.stage == RemoteTeachingStage.dialogue &&
-        widget.snapshot?.processSchedulerState?.currentPhase ==
-            RemoteTeachingPhase.extraSupport;
-    final showRepairDialogue =
-        flow.stage == RemoteTeachingStage.dialogue &&
-        (isExtraSupportDialogue ||
-            flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
-            flow.explorationAct ==
-                RemoteGuidedExplorationAct.transferRevisit);
+    final showRepairDialogue = _isActiveRemediationDialogue(
+      isCurrentBoard: isCurrentBoard,
+      flow: flow,
+      board: focusBoard,
+      phase: widget.snapshot?.processSchedulerState?.currentPhase,
+    );
     final effectiveFeedback = flow.feedback?.trim().isNotEmpty == true
         ? flow.feedback!.trim()
         : repairBranch?.feedback.trim() ?? '';
