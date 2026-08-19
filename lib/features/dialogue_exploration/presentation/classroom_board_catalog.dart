@@ -32,6 +32,7 @@ abstract final class ClassroomBoardCatalog {
     final entries = <TeachingModeHistoryEntry>[];
     int? lastGoalIndex;
     final repairCountByGoal = <int, int>{};
+    final checkEntryIndexByBoardId = <String, int>{};
     final activeBoardId = _resolvedActiveBoardId(architecture);
     final activeBoardIndex = architecture.boards.indexWhere(
       (board) => board.id == activeBoardId,
@@ -71,6 +72,32 @@ abstract final class ClassroomBoardCatalog {
         repairIndex: repairIndex,
         isModeSelectionIntro: isModeSelectionIntro && board.id == activeBoardId,
       );
+
+      final parentCheckEntryIndex = board.kind == 'SUPPORT_BRANCH'
+          ? checkEntryIndexByBoardId[board.parentBoardId]
+          : null;
+      if (parentCheckEntryIndex != null) {
+        final checkEntry = entries[parentCheckEntryIndex];
+        // 补救是一次练习内的教学状态，不是新的课程节点；侧边栏仍保留一张练习卡，
+        // 但把点击目标切到补救画板，确保讲解、下一步和巩固作答在同一页面完成。
+        entries[parentCheckEntryIndex] = TeachingModeHistoryEntry(
+          label: checkEntry.label,
+          boardId: board.id,
+          nodeId: board.nodeIds.isNotEmpty ? board.nodeIds.first : null,
+          isActive: board.id == activeBoardId,
+          isCompleted: _isBoardCompleted(
+            architecture,
+            board,
+            boardIndex: index,
+            activeBoardIndex: activeBoardIndex,
+          ),
+          depth: checkEntry.depth,
+          kind: 'CHECK',
+        );
+        continue;
+      }
+
+      final entryIndex = entries.length;
       entries.add(
         TeachingModeHistoryEntry(
           label: displayLabel,
@@ -87,6 +114,9 @@ abstract final class ClassroomBoardCatalog {
           kind: board.kind,
         ),
       );
+      if (board.kind == 'CHECK') {
+        checkEntryIndexByBoardId[board.id] = entryIndex;
+      }
     }
 
     return List.unmodifiable(entries);
@@ -639,6 +669,7 @@ abstract final class ClassroomBoardCatalog {
   static String boardPanelTitle(
     RemoteTeachingBoardSnapshot board, {
     bool isModeSelectionIntro = false,
+    RemoteTeachingBoardSnapshot? parentBoard,
   }) {
     final normalized = _sanitizeLabel(board.label);
     final label = normalized.isNotEmpty && !_looksLikeDevLabel(normalized)
@@ -649,12 +680,21 @@ abstract final class ClassroomBoardCatalog {
       'MODE_SELECTION' when isModeSelectionIntro => '课前交流',
       'MODE_SELECTION' => '选择学习方式',
       'CHECK' => '练习 · $label',
-      'SUPPORT_BRANCH' => _studentBoardLabel(board),
+      'SUPPORT_BRANCH' when parentBoard?.kind == 'CHECK' =>
+        '练习 · ${_boardCoreLabel(parentBoard!)}',
+      'SUPPORT_BRANCH' => '练习 · ${_studentBoardLabel(board)}',
       'INTERACTION' => '互动 · $label',
       'CONCEPT' => '概念 · $label',
       'EXAMPLE' => '例子 · $label',
       _ => label,
     };
+  }
+
+  static String _boardCoreLabel(RemoteTeachingBoardSnapshot board) {
+    final normalized = _sanitizeLabel(board.label);
+    return normalized.isNotEmpty && !_looksLikeDevLabel(normalized)
+        ? normalized
+        : _fallbackBoardLabel(board);
   }
 }
 

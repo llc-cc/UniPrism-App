@@ -73,6 +73,9 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('remediation-quick-yes')), findsNothing);
+    expect(find.byKey(const ValueKey('remediation-next-step')), findsOneWidget);
+    expect(find.text('下一步怎么做'), findsOneWidget);
+    expect(find.text('我明白了，继续这道练习'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('remediation-start-consolidation')),
     );
