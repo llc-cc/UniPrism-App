@@ -1,8 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/guided_teaching_flow_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/core/remote_exploration_session_controller.dart';
+import 'package:uniprism_app/features/dialogue_exploration/presentation/teaching_mode_selection_stage.dart';
 
 void main() {
   group('RemoteProcessSchedulerState.tryFromJson', () {
@@ -244,9 +246,7 @@ void main() {
           _ModeSelectionFakeGateway.chapterNodeId,
         );
 
-        gateway.snapshotToReturn = _exampleSnapshot(
-          selectedSkill: 'VIDEO',
-        );
+        gateway.snapshotToReturn = _exampleSnapshot(selectedSkill: 'VIDEO');
         await controller.selectTeachingMode('VIDEO');
 
         expect(gateway.selectSkillCalls, ['VIDEO']);
@@ -279,6 +279,118 @@ void main() {
       expect(controller.state.canRetry, isTrue);
       expect(gateway.selectSkillCalls, ['MORE_EXAMPLES']);
     });
+  });
+
+  testWidgets('lesson map separates opening and expands only selected goal', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1000, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const entries = [
+      TeachingModeHistoryEntry(
+        label: '寒暄 · 了解基础',
+        kind: 'OPENING',
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: '学习方式',
+        kind: 'MODE_SELECTION',
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: 'G1 · 集合定义与三大特性',
+        kind: 'GOAL',
+        isGoalHeader: true,
+        goalStatus: 'completed',
+      ),
+      TeachingModeHistoryEntry(
+        label: '概念：∈ / ∉ 与三大特性',
+        boardId: 'g1-concept',
+        kind: 'CONCEPT',
+        depth: 1,
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: '例子：集合与元素',
+        boardId: 'g1-example',
+        kind: 'EXAMPLE',
+        depth: 2,
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: '练习：无序性判断',
+        boardId: 'g1-check',
+        kind: 'CHECK',
+        depth: 1,
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: '老师帮助 #1',
+        boardId: 'g1-help',
+        kind: 'SUPPORT_BRANCH',
+        depth: 2,
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: 'G2 · 列举法与描述法',
+        kind: 'GOAL',
+        isGoalHeader: true,
+        goalStatus: 'ongoing',
+      ),
+      TeachingModeHistoryEntry(
+        label: '概念：两种表示法',
+        boardId: 'g2-concept',
+        kind: 'CONCEPT',
+        depth: 1,
+        isCompleted: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: '练习：列举法',
+        boardId: 'g2-check',
+        kind: 'CHECK',
+        depth: 1,
+        isActive: true,
+      ),
+      TeachingModeHistoryEntry(
+        label: 'G3 · 集合之间的关系',
+        kind: 'GOAL',
+        isGoalHeader: true,
+        goalStatus: 'pending',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              ModeSelectionSidebar(entries: entries, mobile: false),
+              Expanded(child: SizedBox()),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('本节课'), findsOneWidget);
+    expect(find.text('历史记录'), findsNothing);
+    expect(find.text('开场'), findsOneWidget);
+    expect(find.text('寒暄 · 了解基础'), findsOneWidget);
+    expect(find.text('当前学习'), findsOneWidget);
+    expect(find.text('练习：列举法'), findsOneWidget);
+    expect(find.text('概念：∈ / ∉ 与三大特性'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('goal-header-G1 · 集合定义与三大特性')));
+    await tester.pump();
+
+    expect(find.text('概念：∈ / ∉ 与三大特性'), findsOneWidget);
+    expect(find.text('例子：集合与元素'), findsOneWidget);
+    expect(find.text('老师帮助 #1'), findsOneWidget);
+    expect(find.text('练习：列举法'), findsNothing);
+    expect(find.text('当前学习'), findsOneWidget);
   });
 }
 
@@ -344,7 +456,9 @@ RemoteLearningSessionSnapshot _modeSelectionSnapshot({
   );
 }
 
-RemoteLearningSessionSnapshot _exampleSnapshot({required String selectedSkill}) {
+RemoteLearningSessionSnapshot _exampleSnapshot({
+  required String selectedSkill,
+}) {
   return RemoteLearningSessionSnapshot(
     session: const RemoteLearningSessionInfo(
       id: 'learning-1',
@@ -440,7 +554,8 @@ final class _ModeSelectionFakeGateway implements RemoteExplorationGateway {
   );
 
   @override
-  Future<List<LearningChapterCatalogItem>> listChapterCatalog() async => const [];
+  Future<List<LearningChapterCatalogItem>> listChapterCatalog() async =>
+      const [];
 
   @override
   Future<LearningChapterOverviewSnapshot> getChapterOverview(
@@ -460,8 +575,7 @@ final class _ModeSelectionFakeGateway implements RemoteExplorationGateway {
     RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
     RemoteSessionEntryMode? entryMode,
   }) async {
-    return snapshotToReturn ??
-        (throw StateError('测试未设置 snapshotToReturn'));
+    return snapshotToReturn ?? (throw StateError('测试未设置 snapshotToReturn'));
   }
 
   @override

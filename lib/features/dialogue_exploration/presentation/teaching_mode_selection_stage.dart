@@ -655,8 +655,15 @@ abstract final class TeachingModeOptionCatalog {
   }
 }
 
-final class ModeSelectionSidebar extends StatelessWidget {
+typedef _SidebarGoalSection = ({
+  TeachingModeHistoryEntry header,
+  List<TeachingModeHistoryEntry> children,
+});
+
+/// 以“开场—教学目标—教学节点”的结构展示本节课学习地图。
+final class ModeSelectionSidebar extends StatefulWidget {
   const ModeSelectionSidebar({
+    super.key,
     required this.entries,
     required this.mobile,
     this.onBoardTap,
@@ -682,11 +689,166 @@ final class ModeSelectionSidebar extends StatelessWidget {
   ];
 
   @override
+  State<ModeSelectionSidebar> createState() => _ModeSelectionSidebarState();
+
+  static bool _isSelected(
+    TeachingModeHistoryEntry entry,
+    String? selectedBoardId,
+    String? selectedNodeId,
+  ) {
+    return entry.boardId == selectedBoardId ||
+        (entry.boardId == null &&
+            entry.nodeId != null &&
+            entry.nodeId == selectedNodeId) ||
+        (entry.isActive && selectedBoardId == null && selectedNodeId == null);
+  }
+
+  static Color _entryBackground(
+    TeachingModeHistoryEntry entry,
+    String? selectedBoardId,
+    String? selectedNodeId,
+  ) {
+    if (_isSelected(entry, selectedBoardId, selectedNodeId)) {
+      return const Color(0xFFE8F0FF);
+    }
+    if (entry.isActive) return const Color(0xFFF3F7FF);
+    if (entry.kind == 'SUPPORT_BRANCH') {
+      return const Color(0xFFFFF7ED);
+    }
+    return Colors.white;
+  }
+
+  static Color _entryIconColor(
+    TeachingModeHistoryEntry entry,
+    String? selectedBoardId,
+    String? selectedNodeId,
+  ) {
+    if (_isSelected(entry, selectedBoardId, selectedNodeId)) {
+      return const Color(0xFF1D4ED8);
+    }
+    return switch (entry.kind) {
+      'CONCEPT' => const Color(0xFFF59E0B),
+      'INTERACTION' => const Color(0xFF8B5CF6),
+      'CHECK' => const Color(0xFF2563EB),
+      'SUPPORT_BRANCH' => const Color(0xFFEA580C),
+      'EXAMPLE' => const Color(0xFF64748B),
+      _ => const Color(0xFF64748B),
+    };
+  }
+
+  static IconData _entryIcon(String? kind) {
+    return switch (kind) {
+      'OPENING' => Icons.waving_hand_outlined,
+      'MODE_SELECTION' => Icons.alt_route_rounded,
+      'CONCEPT' => Icons.lightbulb_outline_rounded,
+      'INTERACTION' => Icons.extension_outlined,
+      'EXAMPLE' => Icons.search_rounded,
+      'CHECK' => Icons.edit_note_rounded,
+      'SUPPORT_BRANCH' => Icons.support_agent_rounded,
+      _ => Icons.circle_outlined,
+    };
+  }
+}
+
+final class _ModeSelectionSidebarState extends State<ModeSelectionSidebar> {
+  String? _expandedGoalLabel;
+  String? _lastActiveGoalLabel;
+  String? _lastSelectedGoalLabel;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastActiveGoalLabel = _activeGoalLabel(widget.entries);
+    _lastSelectedGoalLabel = _selectedGoalLabel(widget.entries);
+    final goalSections = _goalSections(widget.entries);
+    _expandedGoalLabel =
+        _lastSelectedGoalLabel ??
+        _lastActiveGoalLabel ??
+        (goalSections.isEmpty ? null : goalSections.first.header.label);
+  }
+
+  @override
+  void didUpdateWidget(covariant ModeSelectionSidebar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final activeGoalLabel = _activeGoalLabel(widget.entries);
+    final selectedGoalLabel = _selectedGoalLabel(widget.entries);
+    if (selectedGoalLabel != null &&
+        selectedGoalLabel != _lastSelectedGoalLabel) {
+      _expandedGoalLabel = selectedGoalLabel;
+    } else if (activeGoalLabel != _lastActiveGoalLabel &&
+        (_expandedGoalLabel == null ||
+            _expandedGoalLabel == _lastActiveGoalLabel)) {
+      // 正常推进时跟随新的 Goal；明确回看旧 Goal 时保留用户展开选择。
+      _expandedGoalLabel = activeGoalLabel;
+    }
+    _lastActiveGoalLabel = activeGoalLabel;
+    _lastSelectedGoalLabel = selectedGoalLabel;
+  }
+
+  List<_SidebarGoalSection> _goalSections(
+    List<TeachingModeHistoryEntry> entries,
+  ) {
+    final sections = <_SidebarGoalSection>[];
+    TeachingModeHistoryEntry? header;
+    var children = <TeachingModeHistoryEntry>[];
+    for (final entry in entries) {
+      if (entry.isGoalHeader || entry.isSectionHeader) {
+        if (header != null) {
+          sections.add((header: header, children: List.unmodifiable(children)));
+        }
+        header = entry;
+        children = [];
+      } else if (header != null) {
+        children.add(entry);
+      }
+    }
+    if (header != null) {
+      sections.add((header: header, children: List.unmodifiable(children)));
+    }
+    return List.unmodifiable(sections);
+  }
+
+  List<TeachingModeHistoryEntry> _openingEntries(
+    List<TeachingModeHistoryEntry> entries,
+  ) {
+    return entries
+        .takeWhile((entry) => !entry.isGoalHeader && !entry.isSectionHeader)
+        .toList(growable: false);
+  }
+
+  String? _activeGoalLabel(List<TeachingModeHistoryEntry> entries) {
+    for (final section in _goalSections(entries)) {
+      if (section.header.goalStatus == 'ongoing' ||
+          section.children.any((entry) => entry.isActive)) {
+        return section.header.label;
+      }
+    }
+    return null;
+  }
+
+  String? _selectedGoalLabel(List<TeachingModeHistoryEntry> entries) {
+    for (final section in _goalSections(entries)) {
+      if (section.children.any(
+        (entry) => ModeSelectionSidebar._isSelected(
+          entry,
+          widget.selectedBoardId,
+          widget.selectedNodeId,
+        ),
+      )) {
+        return section.header.label;
+      }
+    }
+    return null;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final openingEntries = _openingEntries(widget.entries);
+    final goalSections = _goalSections(widget.entries);
     return Material(
       color: Colors.transparent,
       child: Container(
-        width: mobile ? 220 : 248,
+        width: widget.mobile ? 236 : 272,
         decoration: const BoxDecoration(
           color: Colors.white,
           border: Border(right: BorderSide(color: Color(0xFFE8E4EE))),
@@ -696,181 +858,71 @@ final class ModeSelectionSidebar extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (onCollapse != null)
+              if (widget.onCollapse != null)
                 Align(
                   alignment: Alignment.centerRight,
                   child: IconButton(
                     tooltip: '收起侧边栏',
-                    onPressed: onCollapse,
+                    onPressed: widget.onCollapse,
                     icon: const Icon(Icons.chevron_left_rounded),
                   ),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF4F7FF),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFDCE8FF)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(
-                            Icons.history_rounded,
-                            size: 18,
-                            color: Color(0xFF3B82F6),
-                          ),
-                          SizedBox(width: 6),
-                          Text(
-                            '历史记录',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        '点击可回看本节课各阶段',
-                        style: TextStyle(
-                          color: _muted,
-                          fontSize: 11,
-                          height: 1.35,
-                        ),
-                      ),
-                      if (entries.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        for (final (index, entry) in entries.indexed)
-                          if (entry.isGoalHeader)
-                            Padding(
-                              padding: EdgeInsets.only(
-                                top: index == 0 ? 0 : 10,
-                                bottom: 6,
-                                left: 2,
-                                right: 2,
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      entry.label,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 11,
-                                        color: Color(0xFF334155),
-                                      ),
-                                    ),
-                                  ),
-                                  if (entry.goalStatus != null)
-                                    _GoalStatusBadge(status: entry.goalStatus!),
-                                ],
-                              ),
-                            )
-                          else if (entry.isSectionHeader)
-                            Padding(
-                              padding: EdgeInsets.only(
-                                top: index == 0 ? 0 : 8,
-                                bottom: 4,
-                                left: 4,
-                              ),
-                              child: Text(
-                                entry.label,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 10,
-                                  color: Color(0xFF64748B),
-                                  letterSpacing: 0.2,
-                                ),
-                              ),
-                            )
-                          else
-                            Padding(
-                              padding: EdgeInsets.only(
-                                bottom: 4,
-                                left: (entry.depth * 14).toDouble(),
-                              ),
-                              child: Material(
-                                color: _entryBackground(
-                                  entry,
-                                  selectedBoardId,
-                                  selectedNodeId,
-                                ),
-                                borderRadius: BorderRadius.circular(8),
-                                child: InkWell(
-                                  onTap:
-                                      entry.boardId != null &&
-                                          onBoardTap != null
-                                      ? () => onBoardTap!(entry.boardId!)
-                                      : entry.nodeId == null ||
-                                            onHistoryTap == null
-                                      ? null
-                                      : () => onHistoryTap!(entry.nodeId!),
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 6,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        _EntryStatusIcon(
-                                          entry: entry,
-                                          selectedBoardId: selectedBoardId,
-                                          selectedNodeId: selectedNodeId,
-                                        ),
-                                        if (entry.depth > 0)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              right: 4,
-                                            ),
-                                            child: Icon(
-                                              _entryIcon(entry.kind),
-                                              size: 12,
-                                              color: _entryIconColor(
-                                                entry,
-                                                selectedBoardId,
-                                                selectedNodeId,
-                                              ),
-                                            ),
-                                          ),
-                                        Expanded(
-                                          child: Text(
-                                            entry.label,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: entry.isActive
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                              color: entry.isActive
-                                                  ? const Color(0xFF1D4ED8)
-                                                  : const Color(0xFF334155),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              const Divider(height: 1, color: Color(0xFFE8E4EE)),
               Expanded(
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 12),
                   children: [
-                    for (final area in _functionAreas)
+                    Container(
+                      key: const ValueKey('lesson-map-card'),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFF),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFDCE8FF)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(
+                                Icons.auto_stories_outlined,
+                                size: 18,
+                                color: Color(0xFF3B82F6),
+                              ),
+                              SizedBox(width: 7),
+                              Text(
+                                '本节课',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            '查看老师带你完成的学习路径',
+                            style: TextStyle(
+                              color: _muted,
+                              fontSize: 11,
+                              height: 1.35,
+                            ),
+                          ),
+                          if (openingEntries.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            _openingStage(openingEntries),
+                          ],
+                          for (final section in goalSections) ...[
+                            const SizedBox(height: 10),
+                            _goalSection(section),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1, color: Color(0xFFE8E4EE)),
+                    const SizedBox(height: 6),
+                    for (final area in ModeSelectionSidebar._functionAreas)
                       InkWell(
                         onTap: () {},
                         child: Padding(
@@ -919,60 +971,219 @@ final class ModeSelectionSidebar extends StatelessWidget {
     );
   }
 
-  static bool _isSelected(
-    TeachingModeHistoryEntry entry,
-    String? selectedBoardId,
-    String? selectedNodeId,
-  ) {
-    return entry.boardId == selectedBoardId ||
-        (entry.boardId == null &&
-            entry.nodeId != null &&
-            entry.nodeId == selectedNodeId) ||
-        (entry.isActive && selectedBoardId == null && selectedNodeId == null);
+  Widget _openingStage(List<TeachingModeHistoryEntry> entries) {
+    final isCompleted = entries.every((entry) => entry.isCompleted);
+    return Container(
+      key: const ValueKey('lesson-opening-stage'),
+      padding: const EdgeInsets.fromLTRB(9, 8, 9, 6),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isCompleted ? Icons.check_circle : Icons.play_circle_outline,
+                size: 15,
+                color: isCompleted
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFF3B82F6),
+              ),
+              const SizedBox(width: 6),
+              const Text(
+                '开场',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                  color: Color(0xFF334155),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (final entry in entries) _entryTile(entry, compact: true),
+        ],
+      ),
+    );
   }
 
-  static Color _entryBackground(
-    TeachingModeHistoryEntry entry,
-    String? selectedBoardId,
-    String? selectedNodeId,
-  ) {
-    if (_isSelected(entry, selectedBoardId, selectedNodeId)) {
-      return const Color(0xFFE8F0FF);
-    }
-    if (entry.kind == 'SUPPORT_BRANCH') {
-      return const Color(0xFFFFF7ED);
-    }
-    return Colors.white;
+  Widget _goalSection(_SidebarGoalSection section) {
+    final isExpanded = _expandedGoalLabel == section.header.label;
+    final status = section.header.goalStatus ?? 'pending';
+    final isCurrent = status == 'ongoing';
+    return Container(
+      key: ValueKey('goal-section-${section.header.label}'),
+      decoration: BoxDecoration(
+        color: isCurrent ? const Color(0xFFF8FBFF) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isCurrent ? const Color(0xFFBFDBFE) : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: ValueKey('goal-header-${section.header.label}'),
+            borderRadius: BorderRadius.circular(10),
+            onTap: () {
+              setState(() {
+                _expandedGoalLabel = isExpanded ? null : section.header.label;
+              });
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    isExpanded
+                        ? Icons.keyboard_arrow_down_rounded
+                        : Icons.keyboard_arrow_right_rounded,
+                    size: 17,
+                    color: const Color(0xFF475569),
+                  ),
+                  const SizedBox(width: 3),
+                  Expanded(
+                    child: Text(
+                      section.header.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 11.5,
+                        color: Color(0xFF1E293B),
+                      ),
+                    ),
+                  ),
+                  if (section.header.goalStatus != null)
+                    _GoalStatusBadge(status: section.header.goalStatus!),
+                ],
+              ),
+            ),
+          ),
+          if (isExpanded) ...[
+            const Divider(height: 1, color: Color(0xFFE8EEF7)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(7, 6, 7, 7),
+              child: Column(
+                children: [
+                  for (final entry in section.children) _entryTile(entry),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
-  static Color _entryIconColor(
-    TeachingModeHistoryEntry entry,
-    String? selectedBoardId,
-    String? selectedNodeId,
-  ) {
-    if (_isSelected(entry, selectedBoardId, selectedNodeId)) {
-      return const Color(0xFF1D4ED8);
-    }
-    return switch (entry.kind) {
-      'INTERACTION' => const Color(0xFF8B5CF6),
-      'CHECK' => const Color(0xFFF59E0B),
-      'SUPPORT_BRANCH' => const Color(0xFFEA580C),
-      'EXAMPLE' => const Color(0xFF22C55E),
-      _ => const Color(0xFF64748B),
-    };
-  }
-
-  static IconData _entryIcon(String? kind) {
-    return switch (kind) {
-      'OPENING' => Icons.waving_hand_outlined,
-      'MODE_SELECTION' => Icons.alt_route_rounded,
-      'CONCEPT' => Icons.menu_book_outlined,
-      'INTERACTION' => Icons.videogame_asset_outlined,
-      'EXAMPLE' => Icons.menu_book_outlined,
-      'CHECK' => Icons.assignment_outlined,
-      'SUPPORT_BRANCH' => Icons.healing_outlined,
-      _ => Icons.circle_outlined,
-    };
+  Widget _entryTile(TeachingModeHistoryEntry entry, {bool compact = false}) {
+    final isExample = entry.kind == 'EXAMPLE';
+    final isActive = entry.isActive;
+    final leftIndent = compact
+        ? 8.0
+        : (entry.depth * (isExample ? 9 : 7)).toDouble();
+    final onTap = entry.boardId != null && widget.onBoardTap != null
+        ? () => widget.onBoardTap!(entry.boardId!)
+        : entry.nodeId == null || widget.onHistoryTap == null
+        ? null
+        : () => widget.onHistoryTap!(entry.nodeId!);
+    return Padding(
+      padding: EdgeInsets.only(bottom: 3, left: leftIndent),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (isActive)
+            Container(
+              width: 3,
+              height: compact ? 22 : 28,
+              margin: const EdgeInsets.only(right: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2563EB),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          Expanded(
+            child: Material(
+              color: ModeSelectionSidebar._entryBackground(
+                entry,
+                widget.selectedBoardId,
+                widget.selectedNodeId,
+              ),
+              borderRadius: BorderRadius.circular(7),
+              child: InkWell(
+                onTap: onTap,
+                borderRadius: BorderRadius.circular(7),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? 5 : 6,
+                    vertical: compact ? 4 : (isExample ? 4 : 6),
+                  ),
+                  child: Row(
+                    children: [
+                      _EntryStatusIcon(
+                        entry: entry,
+                        selectedBoardId: widget.selectedBoardId,
+                        selectedNodeId: widget.selectedNodeId,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 5),
+                        child: Icon(
+                          ModeSelectionSidebar._entryIcon(entry.kind),
+                          size: isExample || compact ? 12 : 14,
+                          color: ModeSelectionSidebar._entryIconColor(
+                            entry,
+                            widget.selectedBoardId,
+                            widget.selectedNodeId,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          entry.label,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: isExample || compact ? 10.5 : 11,
+                            height: 1.3,
+                            fontWeight: isActive
+                                ? FontWeight.w800
+                                : isExample
+                                ? FontWeight.w400
+                                : FontWeight.w600,
+                            color: isActive
+                                ? const Color(0xFF1D4ED8)
+                                : isExample
+                                ? const Color(0xFF64748B)
+                                : const Color(0xFF334155),
+                          ),
+                        ),
+                      ),
+                      if (isActive)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: Text(
+                            '当前',
+                            style: TextStyle(
+                              color: Color(0xFF2563EB),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -984,7 +1195,7 @@ final class _GoalStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (label, color, bg) = switch (status) {
-      'ongoing' => ('进行中', const Color(0xFF15803D), const Color(0xFFDCFCE7)),
+      'ongoing' => ('当前学习', const Color(0xFF15803D), const Color(0xFFDCFCE7)),
       'completed' => ('已完成', const Color(0xFF1D4ED8), const Color(0xFFDBEAFE)),
       _ => ('未开始', const Color(0xFF64748B), const Color(0xFFF1F5F9)),
     };
@@ -1052,7 +1263,7 @@ final class _EntryStatusIcon extends StatelessWidget {
 }
 
 final class TeacherModePromptBanner extends StatelessWidget {
-  const TeacherModePromptBanner({required this.prompt});
+  const TeacherModePromptBanner({super.key, required this.prompt});
 
   final String prompt;
 
@@ -1104,6 +1315,7 @@ final class TeacherModePromptBanner extends StatelessWidget {
 
 final class ModeSelectionChoiceRow extends StatelessWidget {
   const ModeSelectionChoiceRow({
+    super.key,
     required this.options,
     required this.submitting,
     required this.onSelect,
@@ -1201,6 +1413,7 @@ final class ModeSelectionChoiceRow extends StatelessWidget {
 
 final class ModeSelectionChoiceCard extends StatelessWidget {
   const ModeSelectionChoiceCard({
+    super.key,
     required this.option,
     required this.optionLetter,
     required this.palette,
