@@ -749,10 +749,13 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   Future<void> submitGuidedPractice({
     required String reasoning,
     required String answer,
+    bool force = false,
   }) async {
     final snapshot = _requireMutableSnapshot();
     final flow = snapshot.teachingFlow;
-    if (snapshot.capabilities != null &&
+    // 旧会话可能已经进入 FOCUS，却仍携带上一轮 canSubmitPractice=false；仅由已显示纠错卡片的 UI 显式放行。
+    if (!force &&
+        snapshot.capabilities != null &&
         !snapshot.capabilities!.canSubmitPractice) {
       throw StateError('服务端当前不允许提交练习');
     }

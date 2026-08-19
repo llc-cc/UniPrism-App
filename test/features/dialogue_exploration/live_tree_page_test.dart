@@ -1920,17 +1920,16 @@ void main() {
   });
 
   testWidgets(
-    'legacy extra support dialogue keeps remediation actions on the same practice page',
+    'focus correction card opens submits and exits practice on the same page',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      final focusSnapshot = _supportFocusSnapshot();
       final api = _UiFakeApi(
         sessionSnapshot: _legacyCheckExtraSupportSnapshot(),
-        turnSnapshots: [focusSnapshot],
+        practiceSnapshots: [_g2AssetAfterSupportSnapshot()],
       );
       final controller = RemoteExplorationSessionController(api: api);
       await controller.loadEntry('quadratic-function');
@@ -1951,7 +1950,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(api.turnCalls, 1);
+      expect(api.turnCalls, 0);
       expect(find.text('练习：无序性判断'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('inline-practice-reasoning-input')),
@@ -1959,6 +1958,29 @@ void main() {
       );
       expect(
         find.byKey(const ValueKey('inline-practice-answer-input')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('inline-practice-reasoning-input')),
+        '两个集合的元素完全相同，排列顺序不影响集合。',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('inline-practice-answer-input')),
+        '是同一个集合',
+      );
+      final submit = find.byKey(
+        const ValueKey('inline-practice-submit-button'),
+      );
+      await tester.ensureVisible(submit);
+      await tester.pump();
+      await tester.tap(submit);
+      await tester.pump();
+
+      expect(api.practiceCalls, 1);
+      expect(find.byKey(const ValueKey('history-review-banner')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('guided-asset-complete-button')),
         findsOneWidget,
       );
     },
