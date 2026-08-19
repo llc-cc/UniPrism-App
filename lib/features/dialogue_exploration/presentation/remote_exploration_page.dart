@@ -90,6 +90,7 @@ bool _isActiveRemediationDialogue({
   required RemoteTeachingFlow? flow,
   required RemoteTeachingBoardSnapshot? board,
   required RemoteTeachingPhase? phase,
+  String? correctionFeedback,
 }) {
   if (!isCurrentBoard || flow?.stage != RemoteTeachingStage.dialogue) {
     return false;
@@ -100,10 +101,12 @@ bool _isActiveRemediationDialogue({
       flow?.explorationAct == RemoteGuidedExplorationAct.transferRevisit;
   final hasAnsweredCheck =
       board?.kind == 'CHECK' && board?.practiceAttemptIds.isNotEmpty == true;
-  // 已有会话可能在补救讲解期间恢复成 UNDERSTANDING_CHECK，并丢失新动作字段；练习画板上的作答记录是更稳定的兼容信号。
+  final hasCorrectionFeedback = correctionFeedback?.trim().isNotEmpty == true;
+  // 已有会话可能丢失阶段、动作和作答关联；纠错消息是用户已经看到的最终展示证据，必须优先保证后续操作可达。
   return phase == RemoteTeachingPhase.extraSupport ||
       hasRepairAction ||
-      hasAnsweredCheck;
+      hasAnsweredCheck ||
+      hasCorrectionFeedback;
 }
 
 typedef _LessonProgressInfo = ({
@@ -782,6 +785,12 @@ final class _RemoteLearningSessionPageState
             appendModePrompt: showModeOptions,
             liveTeachingFlow: isCurrentBoard ? teachingFlow : null,
           );
+    String? correctionFeedback;
+    for (final message in messages) {
+      if (message.isCorrectionFeedback && message.text.trim().isNotEmpty) {
+        correctionFeedback = message.text.trim();
+      }
+    }
     final submitting = state.status == RemoteExplorationStatus.submitting;
     final needsRepairAck = _needsExtraSupportRepairAck(snapshot);
     final showClassroomBottom =
@@ -803,6 +812,7 @@ final class _RemoteLearningSessionPageState
       flow: teachingFlow,
       board: focusBoard,
       phase: snapshot.processSchedulerState?.currentPhase,
+      correctionFeedback: correctionFeedback,
     );
     final showReplyBar =
         isCurrentBoard &&
@@ -898,6 +908,7 @@ final class _RemoteLearningSessionPageState
                 flow: teachingFlow,
                 guidance: guidance,
                 capabilities: snapshot.capabilities,
+                correctionFeedback: correctionFeedback,
                 material: guidedMaterial,
                 assetEventType: guidedEventType,
                 onAssetComplete:
@@ -2548,6 +2559,7 @@ final class _GuidedTeachingActionPanel extends StatefulWidget {
     required this.flow,
     required this.guidance,
     required this.capabilities,
+    this.correctionFeedback,
     required this.material,
     required this.assetEventType,
     required this.onAssetComplete,
@@ -2564,6 +2576,7 @@ final class _GuidedTeachingActionPanel extends StatefulWidget {
   final RemoteTeachingFlow flow;
   final RemoteStudentGuidance? guidance;
   final RemoteCourseCapabilities? capabilities;
+  final String? correctionFeedback;
   final RemoteLearningMaterial? material;
   final String? assetEventType;
   final Future<void> Function(Map<String, Object?> payload)? onAssetComplete;
@@ -2708,9 +2721,12 @@ final class _GuidedTeachingActionPanelState
       flow: flow,
       board: focusBoard,
       phase: widget.snapshot?.processSchedulerState?.currentPhase,
+      correctionFeedback: widget.correctionFeedback,
     );
     final effectiveFeedback = flow.feedback?.trim().isNotEmpty == true
         ? flow.feedback!.trim()
+        : widget.correctionFeedback?.trim().isNotEmpty == true
+        ? widget.correctionFeedback!.trim()
         : repairBranch?.feedback.trim() ?? '';
     final effectiveRepairFocus = flow.repairFocus?.trim().isNotEmpty == true
         ? flow.repairFocus!.trim()

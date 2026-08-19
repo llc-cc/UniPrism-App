@@ -2197,7 +2197,7 @@ RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
     materials: base.materials,
     summary: base.summary,
     learningGraph: base.learningGraph,
-    // 线上已有会话可能只保留 EXTRA_SUPPORT 阶段，不带新动作名和补救字段；UI 仍须给出明确的继续入口。
+    // 线上已有会话可能只剩纠错消息，不带补救阶段、动作名或作答关联；UI 仍须给出明确的继续入口。
     teachingFlow: _guidedTeachingFlow(RemoteTeachingStage.dialogue),
     processSchedulerState: RemoteProcessSchedulerState(
       schemaVersion: process.schemaVersion,
@@ -2216,7 +2216,49 @@ RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
     teacherDecision: base.teacherDecision,
     capabilities: base.capabilities,
     allowedActions: base.allowedActions,
-    teachingArchitecture: base.teachingArchitecture,
+    teachingArchitecture: RemoteTeachingArchitectureSnapshot(
+      chapterId: 'bnu-math-ch1-set-concept',
+      atomId: 'bnu-set-concept-representation',
+      activeBoardId: 'board-check',
+      boards: [
+        RemoteTeachingBoardSnapshot(
+          id: 'board-check',
+          kind: 'CHECK',
+          label: '练习：无序性判断',
+          goalId: 'G1',
+          goalIndex: 0,
+          beatKind: 'CHECK',
+          knowledgeNodeIds: const ['set-unordered'],
+          knowledgeNodeNames: const ['无序性'],
+          nodeIds: const ['sign-node'],
+          materialUsageIds: const [],
+          practiceAttemptIds: const [],
+          practiceId: 'active-negative-sign-prediction',
+          branchId: 'branch-support',
+          parentBoardId: null,
+          isActive: true,
+          openedAt: '2026-08-19T00:59:00.000Z',
+        ),
+      ],
+      branches: [
+        RemoteTeachingBranchRecord(
+          id: 'branch-support',
+          goalId: 'G1',
+          goalIndex: 0,
+          branchKind: 'REMEDIATION',
+          targetKnowledgeNodeIds: const ['set-unordered'],
+          triggerPracticeAttemptId: null,
+          triggerStudentText: '不是同一个集合',
+          feedback: '回答还不完整，需要说明集合的无序性。',
+          repairFocus: '元素完全相同，排列顺序不影响集合。',
+          practiceVerdict: 'NEEDS_SUPPORT',
+          openedAt: '2026-08-19T01:00:00.000Z',
+          closedAt: null,
+          result: null,
+          boardId: 'board-check',
+        ),
+      ],
+    ),
   );
 }
 
