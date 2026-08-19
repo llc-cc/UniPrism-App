@@ -93,6 +93,9 @@ class UniPrismApp extends StatelessWidget {
         '/help-feedback': (_) => const HelpAndFeedbackPage(),
         '/about': (_) => const AboutAndFilingPage(),
         '/account-security': (_) => const AccountSecurityPage(),
+        if (!AppConfig.isProduction && !kReleaseMode)
+          '/dialogue-exploration-lab': (_) =>
+              _buildDialogueExplorationLabPage(),
         if (AppConfig.developerToolsEnabled) ...{
           '/content-source-test': (_) => const ZhihuContentTestPage(),
           '/github-content-source-test': (_) => const GitHubContentTestPage(),

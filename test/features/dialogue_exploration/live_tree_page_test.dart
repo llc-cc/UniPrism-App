@@ -316,10 +316,7 @@ void main() {
       find.byKey(const ValueKey('prestudy-read-only-banner')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const ValueKey('prestudy-question-composer')),
-      findsNothing,
-    );
+    expect(find.byKey(const ValueKey('classroom-bottom-bar')), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('open-concept-map')));
     await tester.pumpAndSettle();
@@ -1050,7 +1047,7 @@ void main() {
       expect(find.text('AI 老师回应'), findsWidgets);
       expect(find.text('一起验证'), findsNothing);
       expect(
-        find.byKey(const ValueKey('guided-start-micro-check-button')),
+        find.byKey(const ValueKey('classroom-complete-step-button')),
         findsNothing,
       );
     },
@@ -1113,6 +1110,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('换个情况试试'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('stale-session-restart-panel')),
+      findsNothing,
+    );
 
     expect(
       tester
@@ -1131,7 +1132,7 @@ void main() {
       isNull,
     );
 
-    await _tapVisible(tester, 'guided-start-micro-check-button');
+    await _tapVisible(tester, 'classroom-complete-step-button');
     await tester.pump();
     await tester.tapAt(const Offset(4, 4));
     await tester.pump();
@@ -1181,6 +1182,292 @@ void main() {
   });
 
   testWidgets(
+    'next goal renders its diagnostic instead of determine direction',
+    (tester) async {
+      final base = _signFlipSnapshot();
+      final flow = _guidedTeachingFlow(RemoteTeachingStage.dialogue);
+      final snapshot = RemoteLearningSessionSnapshot(
+        session: base.session,
+        currentNodeId: base.currentNodeId,
+        activeStrategy: base.activeStrategy,
+        nodes: base.nodes,
+        conceptNodes: base.conceptNodes,
+        materials: const [],
+        summary: null,
+        learningGraph: base.learningGraph,
+        teachingFlow: flow,
+        processSchedulerState: RemoteProcessSchedulerState(
+          schemaVersion: 2,
+          lessonPlanId: 'chemical-reaction-conservation-plan-v1',
+          currentGoalIndex: 1,
+          currentPhase: RemoteTeachingPhase.conceptIntroduction,
+          goalStatuses: const [
+            RemoteLessonGoalStatus.mastered,
+            RemoteLessonGoalStatus.inProgress,
+          ],
+          modeMenuOptions: null,
+          selectedSkill: null,
+          extraSupportCount: 0,
+          completedAt: null,
+          updatedAt: '2026-08-18T07:00:00.000Z',
+        ),
+        studentGuidance: const RemoteStudentGuidance(
+          stageLabel: '先说说你的理解',
+          actionHint: '当反应中出现多原子基团（如 SO4）时，应该如何保持配平？',
+          materialReady: false,
+          materialInteractable: false,
+          canSubmitText: true,
+          showMaterialArea: false,
+          showPracticeArea: false,
+        ),
+        capabilities: const RemoteCourseCapabilities(
+          canSubmitText: true,
+          canSelectMode: false,
+          canSubmitMaterial: false,
+          canSkipMaterial: false,
+          canSwitchMaterial: false,
+          canSubmitPractice: false,
+          canComplete: false,
+        ),
+      );
+      final api = _UiFakeApi(sessionSnapshot: snapshot);
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadEntry('quadratic-function');
+      await controller.start();
+
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pump();
+
+      expect(find.text('先说说你的理解'), findsOneWidget);
+      expect(find.text('当反应中出现多原子基团（如 SO4）时，应该如何保持配平？'), findsOneWidget);
+      expect(find.text('确定方向'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('stale-session-restart-panel')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('ready-for-check focus is not mistaken for mode selection', (
+    tester,
+  ) async {
+    final base = _signFlipSnapshot();
+    final snapshot = RemoteLearningSessionSnapshot(
+      session: base.session,
+      currentNodeId: base.currentNodeId,
+      activeStrategy: base.activeStrategy,
+      nodes: base.nodes,
+      conceptNodes: base.conceptNodes,
+      materials: const [],
+      summary: null,
+      learningGraph: base.learningGraph,
+      teachingFlow: _guidedTeachingFlow(
+        RemoteTeachingStage.focus,
+        explorationAct: RemoteGuidedExplorationAct.readyForCheck,
+      ),
+      processSchedulerState: RemoteProcessSchedulerState(
+        schemaVersion: 2,
+        lessonPlanId: 'chemical-reaction-conservation-plan-v1',
+        currentGoalIndex: 0,
+        currentPhase: RemoteTeachingPhase.understandingCheck,
+        goalStatuses: const [RemoteLessonGoalStatus.inProgress],
+        modeMenuOptions: null,
+        selectedSkill: 'INTERACTIVE_EXPLORATION',
+        extraSupportCount: 0,
+        completedAt: null,
+        updatedAt: '2026-08-18T07:00:00.000Z',
+      ),
+      capabilities: const RemoteCourseCapabilities(
+        canSubmitText: false,
+        canSelectMode: false,
+        canSubmitMaterial: false,
+        canSkipMaterial: false,
+        canSwitchMaterial: false,
+        canSubmitPractice: true,
+        canComplete: false,
+      ),
+    );
+    final api = _UiFakeApi(sessionSnapshot: snapshot);
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+
+    await tester.pumpWidget(
+      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('stale-session-restart-panel')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('classroom-complete-step-button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('teacher-agent page completes diagnosis to second goal', (
+    tester,
+  ) async {
+    final initial = _contractSnapshot(
+      phase: RemoteTeachingPhase.conceptIntroduction,
+      stage: RemoteTeachingStage.dialogue,
+      stageLabel: '先说说你的理解',
+      actionHint: '为什么只能调整系数？',
+      canSubmitText: true,
+    );
+    final modeG1 = _contractSnapshot(
+      phase: RemoteTeachingPhase.modeSelection,
+      stage: RemoteTeachingStage.dialogue,
+      stageLabel: '选择学习方式',
+      actionHint: '请选择一种学习方式继续。',
+      options: _testModeOptions,
+      canSelectMode: true,
+    );
+    final assetG1 = _contractSnapshot(
+      phase: RemoteTeachingPhase.example,
+      stage: RemoteTeachingStage.asset,
+      stageLabel: '互动探索',
+      actionHint: '完成互动并观察结果。',
+      canSubmitMaterial: true,
+    );
+    final focusG1 = _contractSnapshot(
+      phase: RemoteTeachingPhase.understandingCheck,
+      stage: RemoteTeachingStage.focus,
+      stageLabel: '独立验证',
+      actionHint: '换个情况独立试一次。',
+      canSubmitPractice: true,
+    );
+    final support = _contractSnapshot(
+      phase: RemoteTeachingPhase.extraSupport,
+      stage: RemoteTeachingStage.asset,
+      stageLabel: '换个方法再理解一次',
+      actionHint: '完成辅导素材后再试。',
+      canSubmitMaterial: true,
+    );
+    final focusRetry = _contractSnapshot(
+      phase: RemoteTeachingPhase.understandingCheck,
+      stage: RemoteTeachingStage.focus,
+      stageLabel: '独立验证',
+      actionHint: '现在重新试一次。',
+      canSubmitPractice: true,
+    );
+    final g2Diagnostic = _contractSnapshot(
+      phase: RemoteTeachingPhase.conceptIntroduction,
+      stage: RemoteTeachingStage.dialogue,
+      goalIndex: 1,
+      stageLabel: '先说说你的理解',
+      actionHint: '当出现多原子基团时，应该如何保持配平？',
+      canSubmitText: true,
+    );
+    final modeG2 = _contractSnapshot(
+      phase: RemoteTeachingPhase.modeSelection,
+      stage: RemoteTeachingStage.dialogue,
+      goalIndex: 1,
+      stageLabel: '选择学习方式',
+      actionHint: '请选择一种学习方式继续。',
+      options: _testModeOptions,
+      canSelectMode: true,
+    );
+    final assetG2 = _contractSnapshot(
+      phase: RemoteTeachingPhase.example,
+      stage: RemoteTeachingStage.asset,
+      goalIndex: 1,
+      stageLabel: '互动探索',
+      actionHint: '完成进阶素材。',
+      canSubmitMaterial: true,
+    );
+    final focusG2 = _contractSnapshot(
+      phase: RemoteTeachingPhase.understandingCheck,
+      stage: RemoteTeachingStage.focus,
+      goalIndex: 1,
+      stageLabel: '独立验证',
+      actionHint: '完成最后一次验证。',
+      canSubmitPractice: true,
+    );
+    final completed = _contractSnapshot(
+      phase: RemoteTeachingPhase.goalComplete,
+      stage: RemoteTeachingStage.reflect,
+      goalIndex: 1,
+      stageLabel: '本章学习完成',
+      actionHint: '两个学习目标均已完成。',
+      canComplete: true,
+    );
+    final api = _UiFakeApi(
+      sessionSnapshot: initial,
+      turnSnapshots: [modeG1, modeG2],
+      modeSnapshots: [assetG1, assetG2],
+      materialSnapshots: [focusG1, focusRetry, focusG2],
+      practiceSnapshots: [support, g2Diagnostic, completed],
+    );
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+    await tester.pumpWidget(
+      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('先说说你的理解'), findsOneWidget);
+    await controller.submitQuestion('诊断答案');
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('teaching-mode-selection-stage')),
+      findsOneWidget,
+    );
+
+    await controller.selectTeachingMode('INTERACTIVE_EXPLORATION');
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('guided-asset-complete-button')),
+      findsOneWidget,
+    );
+
+    await controller.submitMaterialEvent(
+      materialUsageId: 'sign-material',
+      eventType: 'SIGN_FLIPPED',
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('classroom-complete-step-button')),
+      findsOneWidget,
+    );
+
+    await controller.submitGuidedPractice(reasoning: '错误思路', answer: '错误答案');
+    await tester.pump();
+    expect(find.textContaining('换个方法再理解一次'), findsOneWidget);
+
+    await controller.submitMaterialEvent(
+      materialUsageId: 'sign-material',
+      eventType: 'SIGN_FLIPPED',
+    );
+    await controller.submitGuidedPractice(reasoning: '正确思路', answer: '正确答案');
+    await tester.pump();
+    expect(find.text('当出现多原子基团时，应该如何保持配平？'), findsOneWidget);
+    expect(find.text('确定方向'), findsNothing);
+
+    await controller.submitQuestion('G2 诊断答案');
+    await controller.selectTeachingMode('INTERACTIVE_EXPLORATION');
+    await controller.submitMaterialEvent(
+      materialUsageId: 'sign-material',
+      eventType: 'SIGN_FLIPPED',
+    );
+    await controller.submitGuidedPractice(
+      reasoning: 'G2 正确思路',
+      answer: 'G2 正确答案',
+    );
+    await tester.pump();
+
+    expect(find.textContaining('本章学习完成'), findsOneWidget);
+    expect(api.turnCalls, 2);
+    expect(api.materialEventCalls, 3);
+    expect(api.practiceCalls, 3);
+  });
+
+  testWidgets(
     'guided practice failure preserves its draft and retries the same request',
     (tester) async {
       final api = _UiFakeApi(
@@ -1197,7 +1484,7 @@ void main() {
       );
       await tester.pump();
 
-      await _tapVisible(tester, 'guided-start-micro-check-button');
+      await _tapVisible(tester, 'classroom-complete-step-button');
       await tester.pump();
       await tester.enterText(
         find.byKey(const ValueKey('guided-practice-reasoning-input')),
@@ -1247,7 +1534,7 @@ void main() {
     );
     await tester.pump();
 
-    await _tapVisible(tester, 'guided-start-micro-check-button');
+    await _tapVisible(tester, 'classroom-complete-step-button');
     await tester.pump();
     expect(
       find.byKey(const ValueKey('guided-practice-close-button')),
@@ -1277,10 +1564,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('服务端独立验证题'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('prestudy-question-composer')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('classroom-bottom-bar')), findsOneWidget);
     expect(find.text('练习提交失败'), findsOneWidget);
     expect(controller.state.status, RemoteExplorationStatus.failed);
     expect(api.practiceCalls, 1);
@@ -1306,7 +1590,7 @@ void main() {
       );
       await tester.pump();
 
-      await _tapVisible(tester, 'guided-start-micro-check-button');
+      await _tapVisible(tester, 'classroom-complete-step-button');
       await tester.pump();
       expect(find.text('暂时无法打开新情境'), findsOneWidget);
       expect(
@@ -1516,6 +1800,54 @@ void main() {
     expect(api.createIdempotencyKeys.skip(1).toSet(), hasLength(1));
     expect(api.lastCreateAtomId, 'integer-division');
   });
+
+  testWidgets(
+    'history boards restore dialogue material practice and return to current',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final snapshot = _historicalBoardSnapshot();
+      final api = _UiFakeApi(sessionSnapshot: snapshot);
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadEntry('quadratic-function');
+      await controller.start();
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pump();
+
+      await tester.tap(find.text('例子：班集体与个体'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('history-review-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('学生先提出的例子问题'), findsOneWidget);
+      expect(find.text('老师当时给出的完整解释'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('historical-material-material-example')),
+        findsOneWidget,
+      );
+      expect(find.text('班集体中的每位同学都是集合元素'), findsOneWidget);
+
+      await tester.tap(find.text('练习：无序性判断'));
+      await tester.pump();
+
+      expect(find.text('判断 {1,2,3} 与 {3,2,1} 是否相同。'), findsOneWidget);
+      expect(find.text('元素相同且集合没有顺序。'), findsWidgets);
+      expect(find.textContaining('还需要明确说明无序性'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey('return-to-current-board')));
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('history-review-banner')), findsNothing);
+      expect(find.text('当前学习问题'), findsOneWidget);
+    },
+  );
 }
 
 Future<void> _pumpChapterWorkspace(WidgetTester tester, _UiFakeApi api) async {
@@ -1546,6 +1878,336 @@ const _defaultCatalog = <LearningChapterCatalogItem>[
   ),
 ];
 
+RemoteLearningSessionSnapshot _historicalBoardSnapshot() {
+  return RemoteLearningSessionSnapshot.fromJson({
+    'session': {
+      'id': 'learning-history-board',
+      'exploreSessionId': 'explore-1',
+      'topic': '集合的概念与表示',
+      'scenarioId': 'prestudy',
+      'atomId': 'bnu-set-concept-representation',
+      'status': 'ACTIVE',
+      'revision': 4,
+      'nodeCount': 4,
+      'startedAt': '2026-08-19T01:00:00.000Z',
+      'expiresAt': '2099-08-19T01:30:00.000Z',
+      'completedAt': null,
+    },
+    'currentNodeId': 'node-current',
+    'activeStrategy': 'SOCRATIC',
+    'nodes': [
+      {
+        'id': 'node-opening',
+        'parentId': null,
+        'status': 'VALIDATED',
+        'question': '',
+        'answer': '欢迎来到集合课堂。',
+        'followUpQuestion': '',
+        'strategy': 'QUESTION_CHAIN',
+        'depth': 0,
+        'isSideBranch': false,
+        'backtrackTargetId': null,
+        'createdAt': '2026-08-19T01:00:00.000Z',
+      },
+      {
+        'id': 'node-example',
+        'parentId': 'node-opening',
+        'status': 'VALIDATED',
+        'question': '学生先提出的例子问题',
+        'answer': '老师当时给出的完整解释',
+        'followUpQuestion': '这个例子中的成员是谁？',
+        'strategy': 'EXAMPLE',
+        'depth': 1,
+        'isSideBranch': false,
+        'backtrackTargetId': null,
+        'createdAt': '2026-08-19T01:01:00.000Z',
+      },
+      {
+        'id': 'node-practice',
+        'parentId': 'node-example',
+        'status': 'VALIDATED',
+        'question': '元素相同且集合没有顺序。',
+        'answer': '还需要明确说明无序性。',
+        'followUpQuestion': '',
+        'strategy': 'CHECK',
+        'depth': 2,
+        'isSideBranch': false,
+        'backtrackTargetId': null,
+        'createdAt': '2026-08-19T01:02:00.000Z',
+      },
+      {
+        'id': 'node-current',
+        'parentId': 'node-practice',
+        'status': 'VALIDATED',
+        'question': '当前学习问题',
+        'answer': '继续完成当前概念学习。',
+        'followUpQuestion': '',
+        'strategy': 'SOCRATIC',
+        'depth': 3,
+        'isSideBranch': false,
+        'backtrackTargetId': null,
+        'createdAt': '2026-08-19T01:03:00.000Z',
+      },
+    ],
+    'conceptNodes': [],
+    'materials': [
+      {
+        'id': 'material-example',
+        'nodeId': 'node-example',
+        'materialId': 'class-collection-example',
+        'type': 'FORMULA',
+        'title': '班集体与个体关系图',
+        'componentKey': null,
+        'payload': {'description': '班集体中的每位同学都是集合元素'},
+      },
+    ],
+    'summary': null,
+    'learningGraph': {
+      'concept': {'title': '集合的概念与表示'},
+      'exploration': {'question': '什么是集合？'},
+      'practice': [
+        {
+          'id': 'practice-unordered',
+          'title': '无序性判断',
+          'prompt': '判断 {1,2,3} 与 {3,2,1} 是否相同。',
+          'purpose': '验证集合无序性',
+          'status': 'NEEDS_REVIEW',
+          'latestReasoning': '元素相同且集合没有顺序。',
+          'latestAnswer': '是同一个集合',
+          'feedback': '还需要明确说明无序性。',
+        },
+      ],
+      'solutionPaths': [],
+      'mastery': [],
+      'diagnostics': [],
+      'nextChallenges': [],
+    },
+    'teachingFlow': {
+      'schemaVersion': 2,
+      'mode': 'GUIDED_LESSON',
+      'stage': 'DIALOGUE',
+      'lessonPlanId': 'set-plan',
+      'atomId': 'bnu-set-concept-representation',
+      'goal': '理解集合与元素',
+      'practiceId': 'practice-unordered',
+      'currentAction': {
+        'schemaVersion': 1,
+        'type': 'ASK_QUESTION',
+        'prompt': '继续当前学习。',
+        'pedagogicalIntent': 'DEEPEN_REASONING',
+        'reasonCode': 'CURRENT_CONCEPT',
+      },
+      'evidence': {
+        'schemaVersion': 1,
+        'requiredCodes': [],
+        'items': [],
+        'missingCodes': [],
+        'isReadyForMicroCheck': false,
+      },
+      'hintLevel': 0,
+      'updatedAt': '2026-08-19T01:03:00.000Z',
+    },
+    'processSchedulerState': {
+      'schemaVersion': 2,
+      'lessonPlanId': 'set-plan',
+      'currentGoalIndex': 0,
+      'currentPhase': 'CONCEPT_INTRODUCTION',
+      'goalStatuses': ['IN_PROGRESS'],
+      'modeMenuOptions': null,
+      'selectedSkill': 'MORE_EXAMPLES',
+      'extraSupportCount': 0,
+      'completedAt': null,
+      'updatedAt': '2026-08-19T01:03:00.000Z',
+    },
+    'studentGuidance': {
+      'stageLabel': '先说说你的理解',
+      'actionHint': '继续当前学习。',
+      'materialReady': false,
+      'materialInteractable': false,
+      'canSubmitText': true,
+      'showMaterialArea': false,
+      'showPracticeArea': false,
+    },
+    'capabilities': {
+      'canSubmitText': true,
+      'canSelectMode': false,
+      'canSubmitMaterial': false,
+      'canSkipMaterial': false,
+      'canSwitchMaterial': false,
+      'canSubmitPractice': false,
+      'canComplete': false,
+    },
+    'teachingArchitecture': {
+      'chapterId': 'bnu-math-ch1-set-concept',
+      'atomId': 'bnu-set-concept-representation',
+      'activeBoardId': 'board-current',
+      'boards': [
+        {
+          'id': 'board-opening',
+          'kind': 'OPENING',
+          'label': '和老师打招呼',
+          'goalId': null,
+          'goalIndex': null,
+          'knowledgeNodeIds': [],
+          'knowledgeNodeNames': [],
+          'nodeIds': ['node-opening'],
+          'materialUsageIds': [],
+          'practiceAttemptIds': [],
+          'practiceId': null,
+          'branchId': null,
+          'parentBoardId': null,
+          'isActive': false,
+          'openedAt': '2026-08-19T01:00:00.000Z',
+        },
+        {
+          'id': 'board-example',
+          'kind': 'EXAMPLE',
+          'label': '班集体与个体',
+          'goalId': 'G1',
+          'goalIndex': 0,
+          'knowledgeNodeIds': ['set-elements'],
+          'knowledgeNodeNames': ['集合与元素'],
+          'nodeIds': [],
+          'materialUsageIds': ['material-example'],
+          'practiceAttemptIds': [],
+          'practiceId': null,
+          'branchId': null,
+          'parentBoardId': 'board-opening',
+          'isActive': false,
+          'openedAt': '2026-08-19T01:01:00.000Z',
+        },
+        {
+          'id': 'board-check',
+          'kind': 'CHECK',
+          'label': '练习：无序性判断',
+          'goalId': 'G1',
+          'goalIndex': 0,
+          'knowledgeNodeIds': ['set-unordered'],
+          'knowledgeNodeNames': ['无序性'],
+          'nodeIds': [],
+          'materialUsageIds': [],
+          'practiceAttemptIds': ['attempt-1'],
+          'practiceId': 'practice-unordered',
+          'branchId': null,
+          'parentBoardId': 'board-example',
+          'isActive': false,
+          'openedAt': '2026-08-19T01:02:00.000Z',
+        },
+        {
+          'id': 'board-current',
+          'kind': 'CONCEPT',
+          'label': '当前概念',
+          'goalId': 'G1',
+          'goalIndex': 0,
+          'knowledgeNodeIds': ['set-current'],
+          'knowledgeNodeNames': ['当前概念'],
+          'nodeIds': ['node-current'],
+          'materialUsageIds': [],
+          'practiceAttemptIds': [],
+          'practiceId': null,
+          'branchId': null,
+          'parentBoardId': 'board-check',
+          'isActive': true,
+          'openedAt': '2026-08-19T01:03:00.000Z',
+        },
+      ],
+      'branches': [],
+    },
+  });
+}
+
+const _testModeOptions = <RemoteTeachingModeOption>[
+  RemoteTeachingModeOption(
+    skill: 'INTERACTIVE_EXPLORATION',
+    label: '玩一个小实验',
+    icon: '🎮',
+    description: '通过互动观察规律',
+  ),
+  RemoteTeachingModeOption(
+    skill: 'MORE_EXAMPLES',
+    label: '多看几个例子',
+    icon: '📚',
+    description: '通过例子理解规律',
+  ),
+];
+
+RemoteLearningSessionSnapshot _contractSnapshot({
+  required RemoteTeachingPhase phase,
+  required RemoteTeachingStage stage,
+  required String stageLabel,
+  required String actionHint,
+  int goalIndex = 0,
+  List<RemoteTeachingModeOption>? options,
+  bool canSubmitText = false,
+  bool canSelectMode = false,
+  bool canSubmitMaterial = false,
+  bool canSubmitPractice = false,
+  bool canComplete = false,
+}) {
+  final base = _signFlipSnapshot();
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: null,
+    learningGraph: base.learningGraph,
+    teachingFlow: _guidedTeachingFlow(
+      stage,
+      explorationAct: stage == RemoteTeachingStage.focus
+          ? RemoteGuidedExplorationAct.readyForCheck
+          : RemoteGuidedExplorationAct.clarifyScope,
+    ),
+    processSchedulerState: RemoteProcessSchedulerState(
+      schemaVersion: 2,
+      lessonPlanId: 'teacher-agent-full-flow',
+      currentGoalIndex: goalIndex,
+      currentPhase: phase,
+      goalStatuses: goalIndex == 0
+          ? const [
+              RemoteLessonGoalStatus.inProgress,
+              RemoteLessonGoalStatus.notStarted,
+            ]
+          : const [
+              RemoteLessonGoalStatus.mastered,
+              RemoteLessonGoalStatus.inProgress,
+            ],
+      modeMenuOptions: options,
+      selectedSkill:
+          phase == RemoteTeachingPhase.example ||
+              phase == RemoteTeachingPhase.understandingCheck ||
+              phase == RemoteTeachingPhase.extraSupport
+          ? 'INTERACTIVE_EXPLORATION'
+          : null,
+      extraSupportCount: phase == RemoteTeachingPhase.extraSupport ? 1 : 0,
+      completedAt: phase == RemoteTeachingPhase.goalComplete
+          ? '2026-08-18T07:00:00.000Z'
+          : null,
+      updatedAt: '2026-08-18T07:00:00.000Z',
+    ),
+    studentGuidance: RemoteStudentGuidance(
+      stageLabel: stageLabel,
+      actionHint: actionHint,
+      materialReady: stage == RemoteTeachingStage.asset,
+      materialInteractable: stage == RemoteTeachingStage.asset,
+      canSubmitText: canSubmitText,
+      showMaterialArea: stage == RemoteTeachingStage.asset,
+      showPracticeArea: stage == RemoteTeachingStage.focus,
+    ),
+    capabilities: RemoteCourseCapabilities(
+      canSubmitText: canSubmitText,
+      canSelectMode: canSelectMode,
+      canSubmitMaterial: canSubmitMaterial,
+      canSkipMaterial: canSubmitMaterial,
+      canSwitchMaterial: false,
+      canSubmitPractice: canSubmitPractice,
+      canComplete: canComplete,
+    ),
+  );
+}
+
 final class _UiFakeApi implements RemoteExplorationGateway {
   _UiFakeApi({
     this._sessionSnapshot,
@@ -1556,7 +2218,14 @@ final class _UiFakeApi implements RemoteExplorationGateway {
     this.catalog = _defaultCatalog,
     this.failCatalog = false,
     this.historyCompleter,
-  });
+    List<RemoteLearningSessionSnapshot> turnSnapshots = const [],
+    List<RemoteLearningSessionSnapshot> modeSnapshots = const [],
+    List<RemoteLearningSessionSnapshot> materialSnapshots = const [],
+    List<RemoteLearningSessionSnapshot> practiceSnapshots = const [],
+  }) : turnSnapshots = List.of(turnSnapshots),
+       modeSnapshots = List.of(modeSnapshots),
+       materialSnapshots = List.of(materialSnapshots),
+       practiceSnapshots = List.of(practiceSnapshots);
 
   final RemoteLearningSessionSnapshot? _sessionSnapshot;
   final RemoteLearningSessionSnapshot? completeSnapshot;
@@ -1566,6 +2235,10 @@ final class _UiFakeApi implements RemoteExplorationGateway {
   final List<LearningChapterCatalogItem> catalog;
   bool failCatalog;
   final Completer<List<RemoteLearningSessionSummary>>? historyCompleter;
+  final List<RemoteLearningSessionSnapshot> turnSnapshots;
+  final List<RemoteLearningSessionSnapshot> modeSnapshots;
+  final List<RemoteLearningSessionSnapshot> materialSnapshots;
+  final List<RemoteLearningSessionSnapshot> practiceSnapshots;
   int listCalls = 0;
   int catalogCalls = 0;
   int turnCalls = 0;
@@ -1745,6 +2418,7 @@ final class _UiFakeApi implements RemoteExplorationGateway {
     String? question,
     String? idempotencyKey,
     RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
+    RemoteSessionEntryMode? entryMode,
   }) async {
     createCalls += 1;
     createIdempotencyKeys.add(idempotencyKey);
@@ -1795,7 +2469,7 @@ final class _UiFakeApi implements RemoteExplorationGateway {
     String? idempotencyKey,
   }) async {
     turnCalls += 1;
-    return snapshot;
+    return turnSnapshots.isEmpty ? snapshot : turnSnapshots.removeAt(0);
   }
 
   @override
@@ -1848,7 +2522,7 @@ final class _UiFakeApi implements RemoteExplorationGateway {
       throw const RemoteExplorationException('练习提交失败');
     }
     lastPracticeId = practiceId;
-    return snapshot;
+    return practiceSnapshots.isEmpty ? snapshot : practiceSnapshots.removeAt(0);
   }
 
   @override
@@ -1860,11 +2534,33 @@ final class _UiFakeApi implements RemoteExplorationGateway {
   }) async {
     materialEventCalls += 1;
     lastMaterialEventType = event.eventType;
-    return snapshot;
+    return materialSnapshots.isEmpty ? snapshot : materialSnapshots.removeAt(0);
   }
 
   @override
   Future<String> exportTree(String sessionId) async => '{"schemaVersion":1}';
+
+  @override
+  Future<RemoteTeachingModeOptionsSnapshot> getTeachingModeOptions({
+    required String sessionId,
+  }) async {
+    return RemoteTeachingModeOptionsSnapshot(
+      phase: RemoteTeachingPhase.unknown,
+      currentGoalIndex: 0,
+      options: null,
+    );
+  }
+
+  @override
+  Future<RemoteLearningSessionSnapshot> selectTeachingMode({
+    required String sessionId,
+    required String skill,
+    String? idempotencyKey,
+  }) async {
+    return modeSnapshots.isEmpty
+        ? _sessionSnapshot!
+        : modeSnapshots.removeAt(0);
+  }
 }
 
 RemoteLearningSessionSnapshot _withTeachingFlow(
