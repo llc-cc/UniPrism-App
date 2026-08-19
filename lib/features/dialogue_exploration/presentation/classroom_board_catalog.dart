@@ -30,10 +30,10 @@ abstract final class ClassroomBoardCatalog {
     final entries = <TeachingModeHistoryEntry>[];
     int? lastGoalIndex;
     final repairCountByGoal = <int, int>{};
+    final activeBoardId = _resolvedActiveBoardId(architecture);
     final activeBoardIndex = architecture.boards.indexWhere(
-      (board) => board.isActive,
+      (board) => board.id == activeBoardId,
     );
-    var conceptSequence = 0;
 
     for (final (index, board) in architecture.boards.indexed) {
       final isSessionLevel =
@@ -52,7 +52,6 @@ abstract final class ClassroomBoardCatalog {
           ),
         );
         lastGoalIndex = goalIndex;
-        conceptSequence = 0;
       }
 
       final repairIndex =
@@ -64,22 +63,18 @@ abstract final class ClassroomBoardCatalog {
               return repairCountByGoal[goalIdx];
             }()
           : null;
-      if (board.kind == 'CONCEPT') {
-        conceptSequence += 1;
-      }
-
       final displayLabel = _studentBoardLabel(
         board,
         repairIndex: repairIndex,
-        conceptSequence: board.kind == 'CONCEPT' ? conceptSequence : null,
-        isModeSelectionIntro: isModeSelectionIntro && board.isActive,
+        isModeSelectionIntro:
+            isModeSelectionIntro && board.id == activeBoardId,
       );
       entries.add(
         TeachingModeHistoryEntry(
           label: displayLabel,
           boardId: board.id,
           nodeId: board.nodeIds.isNotEmpty ? board.nodeIds.first : null,
-          isActive: board.isActive,
+          isActive: board.id == activeBoardId,
           isCompleted: _isBoardCompleted(
             architecture,
             board,
@@ -118,11 +113,10 @@ abstract final class ClassroomBoardCatalog {
         .where((board) => board.goalIndex == goalIndex)
         .toList(growable: false);
     if (boardsForGoal.isEmpty) return 'pending';
-    if (boardsForGoal.any((board) => board.isActive)) return 'ongoing';
-    final activeGoalIndex = architecture.boards
-        .where((board) => board.isActive)
-        .map((board) => board.goalIndex)
-        .firstOrNull;
+    final activeGoalIndex = architecture
+        .boardById(_resolvedActiveBoardId(architecture))
+        ?.goalIndex;
+    if (activeGoalIndex == goalIndex) return 'ongoing';
     if (activeGoalIndex != null && goalIndex < activeGoalIndex) {
       return 'completed';
     }
@@ -141,7 +135,7 @@ abstract final class ClassroomBoardCatalog {
     required int boardIndex,
     required int activeBoardIndex,
   }) {
-    if (board.isActive) return false;
+    if (board.id == _resolvedActiveBoardId(architecture)) return false;
     if (board.kind == 'CHECK' && board.practiceAttemptIds.isNotEmpty) {
       final openedRepair = architecture.branches.any(
         (branch) =>
@@ -161,6 +155,20 @@ abstract final class ClassroomBoardCatalog {
     return false;
   }
 
+  static String? _resolvedActiveBoardId(
+    RemoteTeachingArchitectureSnapshot architecture,
+  ) {
+    final declaredId = architecture.activeBoardId;
+    if (declaredId != null && architecture.boardById(declaredId) != null) {
+      return declaredId;
+    }
+    // 兼容旧快照：新协议以 activeBoardId 为准，缺失时才回退到画板自身的活动标记。
+    return architecture.boards
+        .where((board) => board.isActive)
+        .map((board) => board.id)
+        .firstOrNull;
+  }
+
   static List<TeachingModeHistoryEntry> _synthesizedFallbackEntries(
     RemoteLearningSessionSnapshot snapshot,
   ) {
@@ -168,7 +176,7 @@ abstract final class ClassroomBoardCatalog {
     final goalIndex = proc?.currentGoalIndex ?? 0;
     final entries = <TeachingModeHistoryEntry>[
       const TeachingModeHistoryEntry(
-        label: '和老师打招呼',
+        label: '寒暄 · 了解基础',
         depth: 0,
         kind: 'OPENING',
       ),
@@ -177,7 +185,7 @@ abstract final class ClassroomBoardCatalog {
     if (snapshot.nodes.length > 1) {
       entries.add(
         const TeachingModeHistoryEntry(
-          label: '选择学习方式',
+          label: '学习方式',
           depth: 0,
           kind: 'MODE_SELECTION',
         ),
@@ -242,7 +250,6 @@ abstract final class ClassroomBoardCatalog {
   static String _studentBoardLabel(
     RemoteTeachingBoardSnapshot board, {
     int? repairIndex,
-    int? conceptSequence,
     bool isModeSelectionIntro = false,
   }) {
     final normalized = _sanitizeLabel(board.label);
@@ -251,28 +258,27 @@ abstract final class ClassroomBoardCatalog {
         : _fallbackBoardLabel(board);
 
     return switch (board.kind) {
-      'MODE_SELECTION' when isModeSelectionIntro => '课前交流',
-      'CONCEPT' =>
-        conceptSequence != null
-            ? '${_circledNumber(conceptSequence)} $coreLabel'
-            : coreLabel,
+      'OPENING' => '寒暄 · 了解基础',
+      'MODE_SELECTION' when isModeSelectionIntro => '寒暄 · 了解基础',
+      'MODE_SELECTION' => '学习方式',
+      'CONCEPT' => coreLabel.startsWith('概念') ? coreLabel : '概念：$coreLabel',
       'INTERACTION' => coreLabel.startsWith('互动') ? coreLabel : '互动：$coreLabel',
       'EXAMPLE' => coreLabel.startsWith('例子') ? coreLabel : '例子：$coreLabel',
       'CHECK' => coreLabel.startsWith('练习') ? coreLabel : '练习：$coreLabel',
       'SUPPORT_BRANCH' =>
         repairIndex != null
-            ? '补救 #$repairIndex'
+            ? '老师帮助 #$repairIndex'
             : (board.knowledgeNodeNames.isNotEmpty
-                  ? '补救 · ${board.knowledgeNodeNames.first}'
-                  : '老师辅导'),
+                  ? '老师帮助 · ${board.knowledgeNodeNames.first}'
+                  : '老师帮助'),
       _ => coreLabel,
     };
   }
 
   static String _fallbackBoardLabel(RemoteTeachingBoardSnapshot board) {
     return switch (board.kind) {
-      'OPENING' => '和老师打招呼',
-      'MODE_SELECTION' => '选择学习方式',
+      'OPENING' => '寒暄 · 了解基础',
+      'MODE_SELECTION' => '学习方式',
       'CONCEPT' => '概念梳理',
       'INTERACTION' =>
         board.knowledgeNodeNames.isNotEmpty
@@ -292,12 +298,6 @@ abstract final class ClassroomBoardCatalog {
             : '老师辅导',
       _ => '学习',
     };
-  }
-
-  static String _circledNumber(int value) {
-    const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨'];
-    if (value >= 1 && value <= circled.length) return circled[value - 1];
-    return '$value.';
   }
 
   static String _sanitizeLabel(String label) {
@@ -331,7 +331,7 @@ abstract final class ClassroomBoardCatalog {
   static int _boardDepth(RemoteTeachingBoardSnapshot board) {
     return switch (board.kind) {
       'OPENING' || 'MODE_SELECTION' => 0,
-      'SUPPORT_BRANCH' => 2,
+      'EXAMPLE' || 'SUPPORT_BRANCH' => 2,
       _ => 1,
     };
   }

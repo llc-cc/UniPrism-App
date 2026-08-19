@@ -1880,7 +1880,7 @@ void main() {
     );
     expect(find.byKey(const ValueKey('remediation-quick-yes')), findsNothing);
 
-    await tester.tap(find.text('补救 #1'));
+    await tester.tap(find.text('老师帮助 #1'));
     await tester.enterText(
       find.byKey(const ValueKey('inline-practice-reasoning-input')),
       '补救理由',
