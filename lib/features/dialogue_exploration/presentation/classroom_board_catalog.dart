@@ -16,6 +16,7 @@ abstract final class ClassroomBoardCatalog {
               RemoteTeachingPhase.modeSelection &&
           snapshot.studentGuidance?.showModeSelection == false;
       return _hierarchicalBoardEntries(
+        snapshot,
         architecture,
         isModeSelectionIntro: isModeSelectionIntro,
       );
@@ -24,6 +25,7 @@ abstract final class ClassroomBoardCatalog {
   }
 
   static List<TeachingModeHistoryEntry> _hierarchicalBoardEntries(
+    RemoteLearningSessionSnapshot snapshot,
     RemoteTeachingArchitectureSnapshot architecture, {
     required bool isModeSelectionIntro,
   }) {
@@ -36,6 +38,7 @@ abstract final class ClassroomBoardCatalog {
     );
 
     for (final (index, board) in architecture.boards.indexed) {
+      if (!_isStudentVisibleBoard(snapshot, board, activeBoardId)) continue;
       final isSessionLevel =
           board.kind == 'OPENING' || board.kind == 'MODE_SELECTION';
       if (!isSessionLevel &&
@@ -66,8 +69,7 @@ abstract final class ClassroomBoardCatalog {
       final displayLabel = _studentBoardLabel(
         board,
         repairIndex: repairIndex,
-        isModeSelectionIntro:
-            isModeSelectionIntro && board.id == activeBoardId,
+        isModeSelectionIntro: isModeSelectionIntro && board.id == activeBoardId,
       );
       entries.add(
         TeachingModeHistoryEntry(
@@ -88,6 +90,20 @@ abstract final class ClassroomBoardCatalog {
     }
 
     return List.unmodifiable(entries);
+  }
+
+  static bool _isStudentVisibleBoard(
+    RemoteLearningSessionSnapshot snapshot,
+    RemoteTeachingBoardSnapshot board,
+    String? activeBoardId,
+  ) {
+    if (board.kind != 'EXAMPLE' && board.kind != 'INTERACTION') return true;
+    if (board.id == activeBoardId) return true;
+    // 素材可能已被教师调度器预生成；没有任何事件时不代表学生真正看到或完成过。
+    return materialsForBoard(
+      snapshot,
+      board,
+    ).any((material) => material.hasRecordedInteraction);
   }
 
   static String _goalHeaderLabel(String? goalId, int goalIndex) {
@@ -404,6 +420,11 @@ abstract final class ClassroomBoardCatalog {
                   board.practiceAttemptIds.first,
             )
             .firstOrNull;
+        final practiceNode = board.practiceId == null
+            ? null
+            : snapshot.learningGraph?.practice
+                  .where((item) => item.id == board.practiceId)
+                  .firstOrNull;
         final triggerText = branch?.triggerStudentText?.trim();
         if (triggerText != null && triggerText.isNotEmpty) {
           for (final line
@@ -413,26 +434,25 @@ abstract final class ClassroomBoardCatalog {
                   .where((item) => item.isNotEmpty)) {
             messages.add(IntroChatMessage.student(line));
           }
-        } else if (board.practiceId != null) {
-          final practiceNode = snapshot.learningGraph?.practice
-              .where((item) => item.id == board.practiceId)
-              .firstOrNull;
-          if (practiceNode != null) {
-            final reasoning = practiceNode.latestReasoning?.trim();
-            final answer = practiceNode.latestAnswer?.trim();
-            if (reasoning != null && reasoning.isNotEmpty) {
-              messages.add(IntroChatMessage.student(reasoning));
-            }
-            if (answer != null && answer.isNotEmpty && answer != reasoning) {
-              messages.add(IntroChatMessage.student('结论：$answer'));
-            }
-            final feedback = practiceNode.feedback?.trim();
-            if (feedback != null &&
-                feedback.isNotEmpty &&
-                board.kind == 'CHECK') {
-              messages.add(IntroChatMessage.teacherCorrection(feedback));
-            }
+        } else if (practiceNode != null) {
+          final reasoning = practiceNode.latestReasoning?.trim();
+          final answer = practiceNode.latestAnswer?.trim();
+          if (reasoning != null && reasoning.isNotEmpty) {
+            messages.add(IntroChatMessage.student(reasoning));
           }
+          if (answer != null && answer.isNotEmpty && answer != reasoning) {
+            messages.add(IntroChatMessage.student('结论：$answer'));
+          }
+        }
+        final practiceFeedback = practiceNode?.feedback?.trim();
+        final feedback = practiceFeedback?.isNotEmpty == true
+            ? practiceFeedback
+            : branch?.feedback.trim();
+        if (feedback != null &&
+            feedback.isNotEmpty &&
+            board.kind == 'CHECK' &&
+            !messages.any((line) => line.isTeacher && line.text == feedback)) {
+          messages.add(IntroChatMessage.teacherCorrection(feedback));
         }
       }
     }

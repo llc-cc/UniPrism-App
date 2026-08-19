@@ -7,6 +7,7 @@ import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_explo
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/teaching_architecture_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/core/remote_exploration_session_controller.dart';
+import 'package:uniprism_app/features/dialogue_exploration/presentation/classroom_board_catalog.dart';
 import 'package:uniprism_app/features/dialogue_exploration/presentation/remote_exploration_page.dart';
 
 void main() {
@@ -1820,6 +1821,7 @@ void main() {
       );
       await tester.pump();
 
+      expect(find.text('例子：从未展示的候选素材'), findsNothing);
       await tester.tap(find.text('例子：班集体与个体'));
       await tester.pump();
 
@@ -1905,6 +1907,27 @@ void main() {
       findsOneWidget,
     );
   });
+
+  test('check history restores teacher feedback after branch trigger text', () {
+    final messages = ClassroomBoardCatalog.messagesForBoard(
+      _supportFocusSnapshot(),
+      'board-check',
+    );
+
+    expect(
+      messages.any((line) => !line.isTeacher && line.text == '不是同一个集合'),
+      isTrue,
+    );
+    expect(
+      messages.any(
+        (line) =>
+            line.isTeacher &&
+            line.isCorrectionFeedback &&
+            line.text == '需要补充无序性的判断依据。',
+      ),
+      isTrue,
+    );
+  });
 }
 
 Future<void> _pumpChapterWorkspace(WidgetTester tester, _UiFakeApi api) async {
@@ -1964,6 +1987,24 @@ RemoteLearningSessionSnapshot _supportFocusSnapshot() {
       atomId: 'bnu-set-concept-representation',
       activeBoardId: 'board-support',
       boards: [
+        RemoteTeachingBoardSnapshot(
+          id: 'board-check',
+          kind: 'CHECK',
+          label: '练习：无序性判断',
+          goalId: 'G1',
+          goalIndex: 0,
+          beatKind: 'CHECK',
+          knowledgeNodeIds: const ['set-unordered'],
+          knowledgeNodeNames: const ['无序性'],
+          nodeIds: const [],
+          materialUsageIds: const [],
+          practiceAttemptIds: const ['attempt-failed'],
+          practiceId: 'active-negative-sign-prediction',
+          branchId: null,
+          parentBoardId: null,
+          isActive: false,
+          openedAt: '2026-08-19T00:59:00.000Z',
+        ),
         RemoteTeachingBoardSnapshot(
           id: 'board-support',
           kind: 'SUPPORT_BRANCH',
@@ -2158,6 +2199,19 @@ RemoteLearningSessionSnapshot _historicalBoardSnapshot() {
         'title': '班集体与个体关系图',
         'componentKey': null,
         'payload': {'description': '班集体中的每位同学都是集合元素'},
+        'interactionEvents': [
+          {'type': 'MATERIAL_COMPLETED'},
+        ],
+      },
+      {
+        'id': 'material-unseen',
+        'nodeId': 'node-example',
+        'materialId': 'unseen-candidate',
+        'type': 'VIDEO',
+        'title': '从未展示的候选素材',
+        'componentKey': null,
+        'payload': {'description': '仅被预生成，但学生没有操作'},
+        'interactionEvents': [],
       },
     ],
     'summary': null,
@@ -2274,6 +2328,23 @@ RemoteLearningSessionSnapshot _historicalBoardSnapshot() {
           'parentBoardId': 'board-opening',
           'isActive': false,
           'openedAt': '2026-08-19T01:01:00.000Z',
+        },
+        {
+          'id': 'board-unseen',
+          'kind': 'EXAMPLE',
+          'label': '从未展示的候选素材',
+          'goalId': 'G1',
+          'goalIndex': 0,
+          'knowledgeNodeIds': ['set-elements'],
+          'knowledgeNodeNames': ['集合与元素'],
+          'nodeIds': [],
+          'materialUsageIds': ['material-unseen'],
+          'practiceAttemptIds': [],
+          'practiceId': null,
+          'branchId': null,
+          'parentBoardId': 'board-example',
+          'isActive': false,
+          'openedAt': '2026-08-19T01:01:30.000Z',
         },
         {
           'id': 'board-check',

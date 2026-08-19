@@ -4,6 +4,7 @@ import 'package:uniprism_app/features/dialogue_exploration/adapters/guided_teach
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/core/remote_exploration_session_controller.dart';
+import 'package:uniprism_app/features/dialogue_exploration/presentation/intro_chat_messages.dart';
 import 'package:uniprism_app/features/dialogue_exploration/presentation/teaching_mode_selection_stage.dart';
 
 void main() {
@@ -391,6 +392,61 @@ void main() {
     expect(find.text('老师帮助 #1'), findsOneWidget);
     expect(find.text('练习：列举法'), findsNothing);
     expect(find.text('当前学习'), findsOneWidget);
+  });
+
+  testWidgets('switching historical boards resets conversation to the top', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 620);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    var boardId = 'old-board';
+    var messages = List<IntroChatMessage>.generate(
+      18,
+      (index) => IntroChatMessage.teacher('旧画板消息 ${index + 1}'),
+    );
+    late StateSetter refresh;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            refresh = setState;
+            return TeachingModeSelectionStage(
+              topicLabel: '集合',
+              options: const [],
+              submitting: false,
+              onSelect: (_) {},
+              mobile: false,
+              messages: messages,
+              selectedHistoryBoardId: boardId,
+              boardPanelTitle: '历史画板',
+              isReviewingHistory: true,
+              showReplyBar: false,
+            );
+          },
+        ),
+      ),
+    );
+
+    final chatList = find.byType(ListView).last;
+    await tester.drag(chatList, const Offset(0, -900));
+    await tester.pump();
+
+    refresh(() {
+      boardId = 'new-board';
+      messages = [
+        IntroChatMessage.teacher('新画板第一句'),
+        IntroChatMessage.student('新画板第二句'),
+        IntroChatMessage.teacher('新画板第三句'),
+      ];
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('新画板第一句'), findsOneWidget);
+    expect(find.text('新画板第二句'), findsOneWidget);
   });
 }
 

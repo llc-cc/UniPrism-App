@@ -2261,7 +2261,7 @@ final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
     }
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 360),
+      constraints: const BoxConstraints(maxHeight: 300),
       child: SingleChildScrollView(
         key: const ValueKey('historical-board-snapshot-panel'),
         child: Column(
