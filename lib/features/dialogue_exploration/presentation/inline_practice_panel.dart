@@ -31,19 +31,18 @@ final class InlinePracticeAnswerPanel extends StatefulWidget {
 final class _InlinePracticeAnswerPanelState
     extends State<InlinePracticeAnswerPanel> {
   final _reasoningController = TextEditingController();
+  final _answerController = TextEditingController();
   String? _selectedChoice;
   var _isSubmitting = false;
 
   static const _choiceOptions = {
-    'set-same-collection-v1': [
-      ('是同一个集合', '是同一个集合'),
-      ('不是同一个集合', '不是同一个集合'),
-    ],
+    'set-same-collection-v1': [('是同一个集合', '是同一个集合'), ('不是同一个集合', '不是同一个集合')],
   };
 
   @override
   void dispose() {
     _reasoningController.dispose();
+    _answerController.dispose();
     super.dispose();
   }
 
@@ -54,10 +53,10 @@ final class _InlinePracticeAnswerPanelState
     final reasoning = _reasoningController.text.trim();
     if (reasoning.isEmpty) return false;
     if (_choices != null) return _selectedChoice != null;
-    return true;
+    return _answerController.text.trim().isNotEmpty;
   }
 
-  String get _answerValue => _selectedChoice ?? _reasoningController.text.trim();
+  String get _answerValue => _selectedChoice ?? _answerController.text.trim();
 
   Future<void> _submit() async {
     if (widget.readOnly || _isSubmitting || !_hasCompleteDraft) return;
@@ -77,7 +76,10 @@ final class _InlinePracticeAnswerPanelState
   @override
   Widget build(BuildContext context) {
     final disabled =
-        widget.readOnly || _isSubmitting || widget.submitting || !_hasCompleteDraft;
+        widget.readOnly ||
+        _isSubmitting ||
+        widget.submitting ||
+        !_hasCompleteDraft;
     final title = widget.isConsolidation ? '巩固作答区域' : '作答区域';
     final reasoningLength = _reasoningController.text.length;
 
@@ -171,6 +173,7 @@ final class _InlinePracticeAnswerPanelState
           else
             TextField(
               key: const ValueKey('inline-practice-answer-input'),
+              controller: _answerController,
               readOnly: widget.readOnly,
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/guided_teaching_flow_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_dto.dart';
+import 'package:uniprism_app/features/dialogue_exploration/adapters/teaching_architecture_dto.dart';
 import 'package:uniprism_app/features/dialogue_exploration/core/remote_exploration_session_controller.dart';
 import 'package:uniprism_app/features/dialogue_exploration/presentation/remote_exploration_page.dart';
 
@@ -1848,6 +1849,34 @@ void main() {
       expect(find.text('当前学习问题'), findsOneWidget);
     },
   );
+
+  testWidgets('active support focus shows formal reasoning and answer inputs', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final api = _UiFakeApi(sessionSnapshot: _supportFocusSnapshot());
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+    await tester.pumpWidget(
+      MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('inline-practice-reasoning-input')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('inline-practice-answer-input')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('remediation-quick-yes')), findsNothing);
+  });
 }
 
 Future<void> _pumpChapterWorkspace(WidgetTester tester, _UiFakeApi api) async {
@@ -1877,6 +1906,76 @@ const _defaultCatalog = <LearningChapterCatalogItem>[
     availableNodeCount: 2,
   ),
 ];
+
+RemoteLearningSessionSnapshot _supportFocusSnapshot() {
+  final base = _contractSnapshot(
+    phase: RemoteTeachingPhase.extraSupport,
+    stage: RemoteTeachingStage.focus,
+    stageLabel: '巩固练习',
+    actionHint: '请完成补救后的独立验证。',
+    canSubmitPractice: true,
+  );
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: base.summary,
+    learningGraph: base.learningGraph,
+    teachingFlow: base.teachingFlow,
+    processSchedulerState: base.processSchedulerState,
+    studentGuidance: base.studentGuidance,
+    courseState: base.courseState,
+    teacherDecision: base.teacherDecision,
+    capabilities: base.capabilities,
+    allowedActions: base.allowedActions,
+    teachingArchitecture: RemoteTeachingArchitectureSnapshot(
+      chapterId: 'bnu-math-ch1-set-concept',
+      atomId: 'bnu-set-concept-representation',
+      activeBoardId: 'board-support',
+      boards: [
+        RemoteTeachingBoardSnapshot(
+          id: 'board-support',
+          kind: 'SUPPORT_BRANCH',
+          label: '补救 #1',
+          goalId: 'G1',
+          goalIndex: 0,
+          beatKind: 'CHECK',
+          knowledgeNodeIds: const ['set-unordered'],
+          knowledgeNodeNames: const ['无序性'],
+          nodeIds: const ['sign-node'],
+          materialUsageIds: const [],
+          practiceAttemptIds: const ['attempt-failed'],
+          practiceId: 'active-negative-sign-prediction',
+          branchId: 'branch-support',
+          parentBoardId: 'board-check',
+          isActive: true,
+          openedAt: '2026-08-19T01:00:00.000Z',
+        ),
+      ],
+      branches: [
+        RemoteTeachingBranchRecord(
+          id: 'branch-support',
+          goalId: 'G1',
+          goalIndex: 0,
+          branchKind: 'REMEDIATION',
+          targetKnowledgeNodeIds: const ['set-unordered'],
+          triggerPracticeAttemptId: 'attempt-failed',
+          triggerStudentText: '不是同一个集合',
+          feedback: '需要补充无序性的判断依据。',
+          repairFocus: '元素完全相同，排列顺序不影响集合。',
+          practiceVerdict: 'NEEDS_SUPPORT',
+          openedAt: '2026-08-19T01:00:00.000Z',
+          closedAt: null,
+          result: null,
+          boardId: 'board-support',
+        ),
+      ],
+    ),
+  );
+}
 
 RemoteLearningSessionSnapshot _historicalBoardSnapshot() {
   return RemoteLearningSessionSnapshot.fromJson({
