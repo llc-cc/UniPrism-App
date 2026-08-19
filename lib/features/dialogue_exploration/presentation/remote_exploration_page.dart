@@ -777,12 +777,19 @@ final class _RemoteLearningSessionPageState
         isCurrentBoard &&
         focusBoard?.kind == 'SUPPORT_BRANCH' &&
         teachingFlow?.stage == RemoteTeachingStage.dialogue;
+    final isRepairRevisitDialogue =
+        isCurrentBoard &&
+        teachingFlow?.stage == RemoteTeachingStage.dialogue &&
+        teachingFlow?.explorationAct ==
+            RemoteGuidedExplorationAct.transferRevisit &&
+        teachingFlow?.repairFocus?.trim().isNotEmpty == true;
     final showReplyBar =
         isCurrentBoard &&
         !state.isReadOnly &&
         !showModeOptions &&
         !showClassroomBottom &&
         !isSupportDialogue &&
+        !isRepairRevisitDialogue &&
         widget.controller.canSubmitEntryDialogue(snapshot);
 
     void inspectBoard(String boardId) {
@@ -895,7 +902,9 @@ final class _RemoteLearningSessionPageState
                         payload: const {'reason': 'student_requested'},
                       ),
                 onSubmitPractice: _submitGuidedPractice,
-                onSendMessage: (text) => widget.controller.submitQuestion(text),
+                onSendMessage: (text) => isRepairRevisitDialogue
+                    ? widget.controller.submitQuestion(text, force: true)
+                    : widget.controller.submitQuestion(text),
                 onStartReflection: _complete,
               ),
             )
@@ -2652,7 +2661,11 @@ final class _GuidedTeachingActionPanelState
     final practice = flow.activePractice;
     final showRepairDialogue =
         flow.stage == RemoteTeachingStage.dialogue &&
-        flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair;
+        (flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
+            flow.explorationAct ==
+                RemoteGuidedExplorationAct.transferRevisit) &&
+        (flow.feedback?.trim().isNotEmpty == true ||
+            flow.repairFocus?.trim().isNotEmpty == true);
 
     return Column(
       key: const ValueKey('guided-teaching-action-panel'),
@@ -2665,6 +2678,7 @@ final class _GuidedTeachingActionPanelState
                 : '薄弱知识点',
             feedback: flow.feedback?.trim() ?? '',
             repairFocus: flow.repairFocus,
+            nextAction: flow.currentAction.prompt,
             onContinue: () => widget.onSendMessage!('继续'),
           ),
         if (showMaterial && widget.material == null)

@@ -1929,7 +1929,7 @@ void main() {
 
       final focusSnapshot = _supportFocusSnapshot();
       final api = _UiFakeApi(
-        sessionSnapshot: _supportDialogueSnapshot(),
+        sessionSnapshot: _checkTransferRevisitSnapshot(),
         turnSnapshots: [focusSnapshot],
       );
       final controller = RemoteExplorationSessionController(api: api);
@@ -2135,6 +2135,53 @@ RemoteLearningSessionSnapshot _supportDialogueSnapshot() {
     ),
     allowedActions: base.allowedActions,
     teachingArchitecture: base.teachingArchitecture,
+  );
+}
+
+RemoteLearningSessionSnapshot _checkTransferRevisitSnapshot() {
+  final base = _supportDialogueSnapshot();
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: base.summary,
+    learningGraph: base.learningGraph,
+    teachingFlow: base.teachingFlow,
+    processSchedulerState: base.processSchedulerState,
+    studentGuidance: base.studentGuidance,
+    courseState: base.courseState,
+    teacherDecision: base.teacherDecision,
+    capabilities: base.capabilities,
+    allowedActions: base.allowedActions,
+    teachingArchitecture: RemoteTeachingArchitectureSnapshot(
+      chapterId: 'bnu-math-ch1-set-concept',
+      atomId: 'bnu-set-concept-representation',
+      activeBoardId: 'board-check',
+      boards: [
+        RemoteTeachingBoardSnapshot(
+          id: 'board-check',
+          kind: 'CHECK',
+          label: '练习：无序性判断',
+          goalId: 'G1',
+          goalIndex: 0,
+          beatKind: 'CHECK',
+          knowledgeNodeIds: const ['set-unordered'],
+          knowledgeNodeNames: const ['无序性'],
+          nodeIds: const ['sign-node'],
+          materialUsageIds: const [],
+          practiceAttemptIds: const ['attempt-failed'],
+          practiceId: 'active-negative-sign-prediction',
+          branchId: null,
+          parentBoardId: null,
+          isActive: true,
+          openedAt: '2026-08-19T00:59:00.000Z',
+        ),
+      ],
+      branches: const [],
+    ),
   );
 }
 
