@@ -933,7 +933,8 @@ final class _RemoteLearningSessionPageState
                         eventType: 'MATERIAL_SKIPPED',
                         payload: const {'reason': 'student_requested'},
                       ),
-                onSubmitPractice: _submitGuidedPractice,
+                onSubmitPractice: (draft) =>
+                    _submitGuidedPractice(draft, force: isRemediationDialogue),
                 onSendMessage: (text) => isRemediationDialogue
                     ? widget.controller.submitQuestion(text, force: true)
                     : widget.controller.submitQuestion(text),
@@ -1192,10 +1193,14 @@ final class _RemoteLearningSessionPageState
     );
   }
 
-  Future<bool> _submitGuidedPractice(GuidedPracticeDraft draft) async {
+  Future<bool> _submitGuidedPractice(
+    GuidedPracticeDraft draft, {
+    bool force = false,
+  }) async {
     await widget.controller.submitGuidedPractice(
       reasoning: draft.reasoning,
       answer: draft.answer,
+      force: force,
     );
     if (widget.controller.state.status == RemoteExplorationStatus.failed) {
       return false;
@@ -2594,14 +2599,17 @@ final class _GuidedTeachingActionPanel extends StatefulWidget {
 final class _GuidedTeachingActionPanelState
     extends State<_GuidedTeachingActionPanel> {
   bool _isAssetReady = false;
+  bool _showRecoveredPractice = false;
   Map<String, Object?> _assetPayload = const {};
 
   @override
   void didUpdateWidget(covariant _GuidedTeachingActionPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.flow.stage != widget.flow.stage ||
-        oldWidget.material?.id != widget.material?.id) {
+        oldWidget.material?.id != widget.material?.id ||
+        oldWidget.flow.updatedAt != widget.flow.updatedAt) {
       _isAssetReady = false;
+      _showRecoveredPractice = false;
       _assetPayload = const {};
     }
   }
@@ -2627,6 +2635,22 @@ final class _GuidedTeachingActionPanelState
   Future<void> requestHelp() async {
     if (widget.onSkipMaterial != null) {
       await widget.onSkipMaterial!();
+    }
+  }
+
+  Future<void> _continueRemediation(RemoteGuidedPractice? practice) async {
+    final canRevealExistingPractice =
+        widget.flow.stage == RemoteTeachingStage.focus &&
+        practice != null &&
+        widget.onSubmitPractice != null;
+    if (canRevealExistingPractice) {
+      if (!mounted) return;
+      // 服务端实际已在 FOCUS 时无需再发送“继续”，直接展开同一题的正式作答区。
+      setState(() => _showRecoveredPractice = true);
+      return;
+    }
+    if (widget.onSendMessage != null) {
+      await widget.onSendMessage!('继续');
     }
   }
 
@@ -2707,22 +2731,28 @@ final class _GuidedTeachingActionPanelState
         guidance?.showMaterialArea ??
         (flow.stage == RemoteTeachingStage.asset &&
             widget.material?.componentKey != null);
-    final showPractice =
+    final baseShowPractice =
         widget.capabilities?.canSubmitPractice ??
         guidance?.showPracticeArea ??
         flow.stage == RemoteTeachingStage.focus;
     final isConsolidation =
         flow.currentAction.reasonCode == 'GUIDED_CONSOLIDATION_CHECK_READY' ||
         guidance?.stageLabel == '巩固练习';
-    final practice = flow.activePractice;
+    final practice =
+        flow.activePractice ??
+        (focusBoard?.kind == 'CHECK'
+            ? _practiceForBoard(focusBoard!, flow)
+            : null);
     final repairBranch = _repairBranchForBoard(focusBoard);
-    final showRepairDialogue = _isActiveRemediationDialogue(
+    final isRemediationDialogue = _isActiveRemediationDialogue(
       isCurrentBoard: isCurrentBoard,
       flow: flow,
       board: focusBoard,
       phase: widget.snapshot?.processSchedulerState?.currentPhase,
       correctionFeedback: widget.correctionFeedback,
     );
+    final showRepairDialogue = isRemediationDialogue && !_showRecoveredPractice;
+    final showPractice = baseShowPractice || _showRecoveredPractice;
     final effectiveFeedback = flow.feedback?.trim().isNotEmpty == true
         ? flow.feedback!.trim()
         : widget.correctionFeedback?.trim().isNotEmpty == true
@@ -2744,7 +2774,7 @@ final class _GuidedTeachingActionPanelState
             feedback: effectiveFeedback,
             repairFocus: effectiveRepairFocus,
             nextAction: flow.currentAction.prompt,
-            onContinue: () => widget.onSendMessage!('继续'),
+            onContinue: () => _continueRemediation(practice),
           ),
         if (showMaterial && widget.material == null)
           _GuidedMaterialPlaceholder(goal: flow.goal, stage: flow.stage),
