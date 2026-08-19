@@ -777,19 +777,28 @@ final class _RemoteLearningSessionPageState
         isCurrentBoard &&
         focusBoard?.kind == 'SUPPORT_BRANCH' &&
         teachingFlow?.stage == RemoteTeachingStage.dialogue;
+    final isExtraSupportDialogue =
+        isCurrentBoard &&
+        teachingFlow?.stage == RemoteTeachingStage.dialogue &&
+        snapshot.processSchedulerState?.currentPhase ==
+            RemoteTeachingPhase.extraSupport;
     final isRepairRevisitDialogue =
         isCurrentBoard &&
         teachingFlow?.stage == RemoteTeachingStage.dialogue &&
-        teachingFlow?.explorationAct ==
-            RemoteGuidedExplorationAct.transferRevisit &&
-        teachingFlow?.repairFocus?.trim().isNotEmpty == true;
+        (teachingFlow?.explorationAct ==
+                RemoteGuidedExplorationAct.practiceRepair ||
+            teachingFlow?.explorationAct ==
+                RemoteGuidedExplorationAct.transferRevisit);
+    // 老版本快照可能不带 TRANSFER_REVISIT/repairFocus，但调度阶段仍明确是额外辅导；此时必须保留操作卡，不能退回普通聊天框。
+    final isRemediationDialogue =
+        isExtraSupportDialogue || isRepairRevisitDialogue;
     final showReplyBar =
         isCurrentBoard &&
         !state.isReadOnly &&
         !showModeOptions &&
         !showClassroomBottom &&
         !isSupportDialogue &&
-        !isRepairRevisitDialogue &&
+        !isRemediationDialogue &&
         widget.controller.canSubmitEntryDialogue(snapshot);
 
     void inspectBoard(String boardId) {
@@ -902,7 +911,7 @@ final class _RemoteLearningSessionPageState
                         payload: const {'reason': 'student_requested'},
                       ),
                 onSubmitPractice: _submitGuidedPractice,
-                onSendMessage: (text) => isRepairRevisitDialogue
+                onSendMessage: (text) => isRemediationDialogue
                     ? widget.controller.submitQuestion(text, force: true)
                     : widget.controller.submitQuestion(text),
                 onStartReflection: _complete,
@@ -2596,6 +2605,27 @@ final class _GuidedTeachingActionPanelState
     }
   }
 
+  RemoteTeachingBranchRecord? _repairBranchForBoard(
+    RemoteTeachingBoardSnapshot? board,
+  ) {
+    final branches = widget.snapshot?.teachingArchitecture?.branches ??
+        const <RemoteTeachingBranchRecord>[];
+    if (branches.isEmpty) return null;
+
+    // 合并后的练习页使用 CHECK 画板，分支记录仍可能指向旧 SUPPORT_BRANCH；用失败作答关联两者，兼容已存在的会话快照。
+    for (final branch in branches.reversed) {
+      if (board?.branchId == branch.id || board?.id == branch.boardId) {
+        return branch;
+      }
+      final attemptId = branch.triggerPracticeAttemptId;
+      if (attemptId != null &&
+          board?.practiceAttemptIds.contains(attemptId) == true) {
+        return branch;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final flow = widget.flow;
@@ -2659,13 +2689,23 @@ final class _GuidedTeachingActionPanelState
         flow.currentAction.reasonCode == 'GUIDED_CONSOLIDATION_CHECK_READY' ||
         guidance?.stageLabel == '巩固练习';
     final practice = flow.activePractice;
+    final repairBranch = _repairBranchForBoard(focusBoard);
+    final isExtraSupportDialogue =
+        flow.stage == RemoteTeachingStage.dialogue &&
+        widget.snapshot?.processSchedulerState?.currentPhase ==
+            RemoteTeachingPhase.extraSupport;
     final showRepairDialogue =
         flow.stage == RemoteTeachingStage.dialogue &&
-        (flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
+        (isExtraSupportDialogue ||
+            flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
             flow.explorationAct ==
-                RemoteGuidedExplorationAct.transferRevisit) &&
-        (flow.feedback?.trim().isNotEmpty == true ||
-            flow.repairFocus?.trim().isNotEmpty == true);
+                RemoteGuidedExplorationAct.transferRevisit);
+    final effectiveFeedback = flow.feedback?.trim().isNotEmpty == true
+        ? flow.feedback!.trim()
+        : repairBranch?.feedback.trim() ?? '';
+    final effectiveRepairFocus = flow.repairFocus?.trim().isNotEmpty == true
+        ? flow.repairFocus!.trim()
+        : repairBranch?.repairFocus?.trim();
 
     return Column(
       key: const ValueKey('guided-teaching-action-panel'),
@@ -2676,8 +2716,8 @@ final class _GuidedTeachingActionPanelState
             topic: focusBoard?.knowledgeNodeNames.isNotEmpty == true
                 ? focusBoard!.knowledgeNodeNames.first
                 : '薄弱知识点',
-            feedback: flow.feedback?.trim() ?? '',
-            repairFocus: flow.repairFocus,
+            feedback: effectiveFeedback,
+            repairFocus: effectiveRepairFocus,
             nextAction: flow.currentAction.prompt,
             onContinue: () => widget.onSendMessage!('继续'),
           ),

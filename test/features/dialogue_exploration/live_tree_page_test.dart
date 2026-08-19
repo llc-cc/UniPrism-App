@@ -1920,7 +1920,7 @@ void main() {
   });
 
   testWidgets(
-    'support explanation continues into consolidation on the same practice page',
+    'legacy extra support dialogue keeps remediation actions on the same practice page',
     (tester) async {
       tester.view.physicalSize = const Size(1440, 1000);
       tester.view.devicePixelRatio = 1;
@@ -1929,7 +1929,7 @@ void main() {
 
       final focusSnapshot = _supportFocusSnapshot();
       final api = _UiFakeApi(
-        sessionSnapshot: _checkTransferRevisitSnapshot(),
+        sessionSnapshot: _legacyCheckExtraSupportSnapshot(),
         turnSnapshots: [focusSnapshot],
       );
       final controller = RemoteExplorationSessionController(api: api);
@@ -2182,6 +2182,29 @@ RemoteLearningSessionSnapshot _checkTransferRevisitSnapshot() {
       ],
       branches: const [],
     ),
+  );
+}
+
+RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
+  final base = _checkTransferRevisitSnapshot();
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: base.summary,
+    learningGraph: base.learningGraph,
+    // 线上已有会话可能只保留 EXTRA_SUPPORT 阶段，不带新动作名和补救字段；UI 仍须给出明确的继续入口。
+    teachingFlow: _guidedTeachingFlow(RemoteTeachingStage.dialogue),
+    processSchedulerState: base.processSchedulerState,
+    studentGuidance: base.studentGuidance,
+    courseState: base.courseState,
+    teacherDecision: base.teacherDecision,
+    capabilities: base.capabilities,
+    allowedActions: base.allowedActions,
+    teachingArchitecture: base.teachingArchitecture,
   );
 }
 
