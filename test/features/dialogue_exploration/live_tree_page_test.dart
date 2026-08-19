@@ -1986,6 +1986,74 @@ void main() {
     },
   );
 
+  testWidgets(
+    'stale dialogue repair waits for click then opens consolidation practice',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final api = _UiFakeApi(
+        sessionSnapshot: _supportDialogueSnapshot(),
+        turnSnapshots: [_supportFocusSnapshot()],
+        practiceSnapshots: [_g2AssetAfterSupportSnapshot()],
+      );
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadEntry('quadratic-function');
+      await controller.start();
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('remediation-start-consolidation')),
+        findsOneWidget,
+      );
+      // 补救讲解不应用定时器自动跳过，否则容易与学生点击产生并发请求。
+      await tester.pump(const Duration(seconds: 3));
+      expect(api.turnCalls, 0);
+
+      await tester.tap(
+        find.byKey(const ValueKey('remediation-start-consolidation')),
+      );
+      await tester.pump();
+
+      expect(api.turnCalls, 1);
+      expect(
+        find.byKey(const ValueKey('inline-practice-reasoning-input')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('inline-practice-answer-input')),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.byKey(const ValueKey('inline-practice-reasoning-input')),
+        '元素完全相同，且集合中元素的排列顺序不影响集合。',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('inline-practice-answer-input')),
+        '是同一个集合',
+      );
+      final submit = find.byKey(
+        const ValueKey('inline-practice-submit-button'),
+      );
+      await tester.ensureVisible(submit);
+      await tester.pump();
+      await tester.tap(submit);
+      await tester.pump();
+
+      expect(api.practiceCalls, 1);
+      expect(
+        find.byKey(const ValueKey('guided-asset-complete-button')),
+        findsOneWidget,
+      );
+    },
+  );
+
   test('check history restores teacher feedback after branch trigger text', () {
     final messages = ClassroomBoardCatalog.messagesForBoard(
       _supportFocusSnapshot(),
