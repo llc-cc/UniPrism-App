@@ -2187,6 +2187,7 @@ RemoteLearningSessionSnapshot _checkTransferRevisitSnapshot() {
 
 RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
   final base = _checkTransferRevisitSnapshot();
+  final process = base.processSchedulerState!;
   return RemoteLearningSessionSnapshot(
     session: base.session,
     currentNodeId: base.currentNodeId,
@@ -2198,7 +2199,18 @@ RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
     learningGraph: base.learningGraph,
     // 线上已有会话可能只保留 EXTRA_SUPPORT 阶段，不带新动作名和补救字段；UI 仍须给出明确的继续入口。
     teachingFlow: _guidedTeachingFlow(RemoteTeachingStage.dialogue),
-    processSchedulerState: base.processSchedulerState,
+    processSchedulerState: RemoteProcessSchedulerState(
+      schemaVersion: process.schemaVersion,
+      lessonPlanId: process.lessonPlanId,
+      currentGoalIndex: process.currentGoalIndex,
+      currentPhase: RemoteTeachingPhase.understandingCheck,
+      goalStatuses: process.goalStatuses,
+      modeMenuOptions: process.modeMenuOptions,
+      selectedSkill: process.selectedSkill,
+      extraSupportCount: process.extraSupportCount,
+      completedAt: process.completedAt,
+      updatedAt: process.updatedAt,
+    ),
     studentGuidance: base.studentGuidance,
     courseState: base.courseState,
     teacherDecision: base.teacherDecision,
