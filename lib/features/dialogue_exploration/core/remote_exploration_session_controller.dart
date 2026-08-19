@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -118,9 +119,102 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   final RemoteExplorationGateway api;
   RemoteExplorationState _state = const RemoteExplorationState.idle();
   Future<void> Function()? _retryOperation;
+  Timer? _submitWatchdog;
+  String? _pendingTeachingModeSkill;
+  List<RemoteTeachingModeOption>? _modeMenuOptionsOverride;
   var _isDisposed = false;
 
   RemoteExplorationState get state => _state;
+
+  bool shouldShowModeSelection(RemoteLearningSessionSnapshot snapshot) {
+    final guidance = snapshot.studentGuidance;
+    return snapshot.capabilities?.canSelectMode == true ||
+        snapshot.processSchedulerState?.isAwaitingModeSelection == true ||
+        guidance?.stageLabel == '选择学习方式' ||
+        guidance?.stageLabel == 'AI 老师开场' ||
+        (guidance?.showModeSelection == false &&
+            snapshot.courseState?.currentStage == 'MODE_SELECTION') ||
+        snapshot.allows('SELECT_MODE') ||
+        snapshot.courseState?.currentStage == 'MODE_SELECTION' ||
+        (_modeMenuOptionsOverride?.isNotEmpty ?? false);
+  }
+
+  bool isModeSelectionIntro(RemoteLearningSessionSnapshot snapshot) {
+    final guidance = snapshot.studentGuidance;
+    return guidance?.stageLabel == 'AI 老师开场' ||
+        (guidance?.showModeSelection == false &&
+            snapshot.courseState?.currentStage == 'MODE_SELECTION');
+  }
+
+  /// 引导式课堂全程使用带历史记录的侧边栏布局（图二），不再切换到全宽聊天（图一）。
+  bool shouldUseSidebarClassroom(RemoteLearningSessionSnapshot snapshot) {
+    return snapshot.teachingFlow?.mode == RemoteFlowMode.guidedLesson;
+  }
+
+  /// 概念诊断前的真实寒暄，以及选路前的引导对话，都走同一聊天面板。
+  bool shouldShowEntryDialogue(RemoteLearningSessionSnapshot snapshot) {
+    if (shouldUseSidebarClassroom(snapshot)) return true;
+    if (snapshot.processSchedulerState?.currentPhase ==
+        RemoteTeachingPhase.conceptIntroduction) {
+      return true;
+    }
+    return shouldShowModeSelection(snapshot);
+  }
+
+  bool canSubmitEntryDialogue(RemoteLearningSessionSnapshot snapshot) {
+    final capabilities = snapshot.capabilities;
+    if (capabilities != null) {
+      return capabilities.canSubmitText;
+    }
+    return snapshot.studentGuidance?.canSubmitText ?? true;
+  }
+
+  List<RemoteTeachingModeOption> resolvedModeMenuOptions(
+    RemoteLearningSessionSnapshot snapshot,
+  ) {
+    final fromSnapshot = snapshot.processSchedulerState?.modeMenuOptions;
+    if (fromSnapshot != null && fromSnapshot.isNotEmpty) return fromSnapshot;
+    return _modeMenuOptionsOverride ?? const [];
+  }
+
+  /// 旧版内存会话缺少 processSchedulerState，诊断后会误进入自由对话。
+  bool isLegacyBrokenSession(RemoteLearningSessionSnapshot snapshot) {
+    return snapshot.processSchedulerState == null &&
+        snapshot.teachingFlow?.mode == RemoteFlowMode.guidedLesson &&
+        snapshot.nodes.length >= 2 &&
+        snapshot.studentGuidance?.stageLabel == '确定方向';
+  }
+
+  /// 旧会话或字段缺失时，通过 teaching-mode 接口补拉模式菜单。
+  Future<void> syncModeSelectionIfNeeded() => _syncTeachingModeIfNeeded();
+
+  Future<void> _syncTeachingModeIfNeeded() async {
+    final snapshot = _state.snapshot;
+    if (snapshot == null) {
+      _modeMenuOptionsOverride = null;
+      return;
+    }
+    if (!shouldShowModeSelection(snapshot)) {
+      _modeMenuOptionsOverride = null;
+      return;
+    }
+    if (snapshot.processSchedulerState?.modeMenuOptions?.isNotEmpty == true) {
+      _modeMenuOptionsOverride = null;
+      return;
+    }
+    try {
+      final mode = await api.getTeachingModeOptions(
+        sessionId: snapshot.session.id,
+      );
+      if (mode.phase == RemoteTeachingPhase.modeSelection &&
+          (mode.options?.isNotEmpty ?? false)) {
+        _modeMenuOptionsOverride = mode.options;
+        if (!_isDisposed) notifyListeners();
+      }
+    } catch (_) {
+      // 拉取失败时保留当前快照，由页面提示用户重新开始。
+    }
+  }
 
   /// 目录加载与详情加载分离，目录失败可重试且不清除用户已打开的会话快照。
   Future<void> loadChapterCatalog() async {
@@ -148,8 +242,45 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     }
   }
 
-  /// 章节选择复用已有详情加载链路，不在目录选择阶段创建或修改学习会话。
-  Future<void> selectChapter(String chapterId) => loadChapter(chapterId);
+  /// 章节选择后加载概览，并由 AI 老师先发起寒暄会话。
+  Future<void> selectChapter(String chapterId) async {
+    await loadChapter(chapterId);
+    await startChapterGreetingSession();
+  }
+
+  /// 进入章节时创建「老师先开口」的寒暄会话，不预填 hook 问题。
+  Future<void> startChapterGreetingSession() async {
+    if (_state.snapshot != null) return;
+    final chapter = _state.chapter;
+    if (chapter == null) return;
+    final nodeId = _state.selectedChapterNodeId ?? chapter.recommendedNodeId;
+    final node = chapter.nodeById(nodeId);
+    if (node == null) return;
+
+    selectChapterNode(nodeId);
+    final key = _traceId('create-greeting');
+    Future<void> operation() async {
+      _submitting();
+      try {
+        final entry = _state.entry?.atomId == node.atomId
+            ? _state.entry!
+            : await api.getEntry(node.atomId);
+        final snapshot = await api.createSession(
+          atomId: node.atomId,
+          scenarioId: _preStudyScenarioId,
+          idempotencyKey: key,
+          flowMode: RemoteFlowMode.guidedLesson,
+          entryMode: RemoteSessionEntryMode.chapterGreeting,
+        );
+        _replace(_state.copyWith(entry: entry));
+        await _acceptSnapshot(snapshot);
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
 
   Future<void> loadChapter(String chapterId) async {
     _replace(
@@ -182,6 +313,16 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   Future<void> startFromChapterNode(String nodeId, {String? question}) async {
     final node = _state.chapter?.nodeById(nodeId);
     if (node == null) throw StateError('章节知识节点不存在');
+    final normalizedQuestion = (question ?? '').trim();
+    if (normalizedQuestion.isEmpty) {
+      _replace(
+        _state.copyWith(
+          status: RemoteExplorationStatus.ready,
+          errorMessage: '先写下你想和 AI 老师讨论的内容',
+        ),
+      );
+      return;
+    }
     selectChapterNode(nodeId);
     final key = _traceId('create');
     Future<void> operation() async {
@@ -194,20 +335,37 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
           atomId: node.atomId,
           // 章节的学习/练习/复习只是全章导航；1.2 创建的始终是预习探索会话。
           scenarioId: _preStudyScenarioId,
-          question: (question ?? '').trim().isEmpty
-              ? node.hookQuestion
-              : question!.trim(),
+          question: normalizedQuestion,
           idempotencyKey: key,
           flowMode: RemoteFlowMode.guidedLesson,
         );
         _replace(_state.copyWith(entry: entry));
-        _acceptSnapshot(snapshot);
+        await _acceptSnapshot(snapshot);
       } catch (error) {
         _fail(error, operation);
       }
     }
 
     await operation();
+  }
+
+  /// 章节入口只记录学生选择并创建会话；诊断答案必须由学生自己提交。
+  ///
+  /// 后端进入 MODE_SELECTION 后，才应用学生在入口已经选过的模式。
+  Future<void> startFromChapterNodeWithTeachingMode(
+    String nodeId,
+    String skill, {
+    String? question,
+  }) async {
+    final node = _state.chapter?.nodeById(nodeId);
+    if (node == null) throw StateError('章节知识节点不存在');
+    final normalizedSkill = skill.trim();
+    if (normalizedSkill.isEmpty) {
+      throw ArgumentError('教学模式技能不能为空');
+    }
+
+    _pendingTeachingModeSkill = normalizedSkill;
+    await startFromChapterNode(nodeId, question: question);
   }
 
   /// 前置条件未满足时只在本地阻断，避免为不可进入的知识点创建无效会话。
@@ -226,7 +384,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
           flowMode: RemoteFlowMode.guidedLesson,
         );
         _replace(_state.copyWith(entry: entry));
-        _acceptSnapshot(snapshot);
+        await _acceptSnapshot(snapshot);
       } catch (error) {
         _fail(error, operation);
       }
@@ -271,7 +429,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
           idempotencyKey: key,
           flowMode: RemoteFlowMode.openExploration,
         );
-        _acceptSnapshot(snapshot);
+        await _acceptSnapshot(snapshot);
       } catch (error) {
         _fail(error, operation);
       }
@@ -312,7 +470,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
           idempotencyKey: key,
           flowMode: RemoteFlowMode.guidedLesson,
         );
-        _acceptSnapshot(snapshot);
+        await _acceptSnapshot(snapshot);
       } catch (error) {
         _fail(error, operation);
       }
@@ -324,7 +482,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   Future<void> restoreLatest() async {
     try {
       final snapshot = await api.restoreLatest();
-      if (snapshot != null) _acceptSnapshot(snapshot);
+      if (snapshot != null) await _acceptSnapshot(snapshot);
     } catch (error) {
       _fail(error, restoreLatest);
     }
@@ -352,7 +510,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
       // 服务端已经按最近活动时间排序；这里只恢复首个仍可继续的记录。
       for (final summary in history) {
         if (!summary.canContinue) continue;
-        _acceptSnapshot(await api.restoreSession(summary));
+        await _acceptSnapshot(await api.restoreSession(summary));
         return;
       }
     } catch (error) {
@@ -369,7 +527,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        _acceptSnapshot(await api.restoreSession(summary));
+        await _acceptSnapshot(await api.restoreSession(summary));
       } catch (error) {
         _fail(error, operation);
       }
@@ -381,6 +539,8 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   /// 返回预习总览时仅清除当前视图，不删除服务端会话或历史记录。
   void leaveSession() {
     _retryOperation = null;
+    _modeMenuOptionsOverride = null;
+    _pendingTeachingModeSkill = null;
     _replace(
       _state.copyWith(
         status: _state.chapter == null
@@ -425,10 +585,15 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     _replace(_state.copyWith(composerMode: RemoteComposerMode.currentPath));
   }
 
-  Future<void> submitQuestion(String question) async {
+  Future<void> submitQuestion(String question, {bool force = false}) async {
     final normalized = question.trim();
     if (normalized.isEmpty) return;
     final snapshot = _requireMutableSnapshot();
+    if (!force &&
+        snapshot.capabilities != null &&
+        !snapshot.capabilities!.canSubmitText) {
+      throw StateError('服务端当前不允许提交文字');
+    }
     final mode = _state.composerMode;
     final parentId = mode == RemoteComposerMode.currentPath
         ? null
@@ -452,13 +617,36 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
                 parentNodeId: parentId,
                 idempotencyKey: key,
               );
-        _acceptSnapshot(updated);
+        await _acceptSnapshot(updated);
+        await _applyPendingTeachingModeIfReady(_state.snapshot!);
       } catch (error) {
         _fail(error, operation);
       }
     }
 
     await operation();
+  }
+
+  Future<void> _applyPendingTeachingModeIfReady(
+    RemoteLearningSessionSnapshot snapshot,
+  ) async {
+    final pendingSkill = _pendingTeachingModeSkill;
+    final procState = snapshot.processSchedulerState;
+    if (pendingSkill == null ||
+        procState?.currentPhase != RemoteTeachingPhase.modeSelection) {
+      return;
+    }
+    final offered =
+        procState?.modeMenuOptions?.any(
+          (option) => option.skill == pendingSkill,
+        ) ??
+        false;
+    if (!offered) {
+      _pendingTeachingModeSkill = null;
+      return;
+    }
+    await selectTeachingMode(pendingSkill);
+    _pendingTeachingModeSkill = null;
   }
 
   /// 素材事件的事件 ID 与发生时间在首次提交前生成，网络重试复用同一事件，
@@ -474,6 +662,12 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     if (normalizedMaterialId.isEmpty || normalizedEventType.isEmpty) {
       throw ArgumentError('素材 ID 与事件类型不能为空');
     }
+    final canSubmit = normalizedEventType == 'MATERIAL_SKIPPED'
+        ? snapshot.capabilities?.canSkipMaterial
+        : snapshot.capabilities?.canSubmitMaterial;
+    if (snapshot.capabilities != null && canSubmit != true) {
+      throw StateError('服务端当前不允许该素材操作');
+    }
     final eventId = _traceId('asset-event');
     final key = _traceId('material-event');
     final event = RemoteAssetEvent(
@@ -487,11 +681,58 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        _acceptSnapshot(
+        await _acceptSnapshot(
           await api.submitMaterialEvent(
             sessionId: snapshot.session.id,
             materialUsageId: normalizedMaterialId,
             event: event,
+            idempotencyKey: key,
+          ),
+        );
+      } catch (error) {
+        _fail(error, operation);
+      }
+    }
+
+    await operation();
+  }
+
+  /// 学生在模式菜单选择教学技能；只校验该技能仍在当前快照允许的选项内，
+  /// 避免用户在服务端刷新阶段后误提交过期选项。真正的白名单以服务端返回为准。
+  Future<void> selectTeachingMode(String skillWireCode) async {
+    final snapshot = _requireMutableSnapshot();
+    if (snapshot.capabilities != null &&
+        !snapshot.capabilities!.canSelectMode &&
+        !shouldShowModeSelection(snapshot)) {
+      throw StateError('服务端当前不允许选择教学模式');
+    }
+    final options = resolvedModeMenuOptions(snapshot);
+    if (options.isEmpty) {
+      throw StateError('服务端尚未提供可选教学模式');
+    }
+    final procState = snapshot.processSchedulerState;
+    if (procState != null &&
+        procState.currentPhase != RemoteTeachingPhase.modeSelection &&
+        !shouldShowModeSelection(snapshot)) {
+      throw StateError('当前教学阶段不接受模式选择');
+    }
+    final normalized = skillWireCode.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('教学模式技能不能为空');
+    }
+    final offered = options.any((option) => option.skill == normalized);
+    if (!offered) {
+      throw ArgumentError('该模式不在当前目标的可选范围内');
+    }
+    final key = _traceId('teaching-mode');
+
+    Future<void> operation() async {
+      _submitting();
+      try {
+        await _acceptSnapshot(
+          await api.selectTeachingMode(
+            sessionId: snapshot.session.id,
+            skill: normalized,
             idempotencyKey: key,
           ),
         );
@@ -511,6 +752,10 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }) async {
     final snapshot = _requireMutableSnapshot();
     final flow = snapshot.teachingFlow;
+    if (snapshot.capabilities != null &&
+        !snapshot.capabilities!.canSubmitPractice) {
+      throw StateError('服务端当前不允许提交练习');
+    }
     // V2 的题目可能在补救后轮换；只能使用当前快照，避免旧 action 指向过期题目。
     final practiceId = flow?.activePractice?.id.trim() ?? '';
     if (flow?.stage != RemoteTeachingStage.focus || practiceId.isEmpty) {
@@ -526,7 +771,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        _acceptSnapshot(
+        await _acceptSnapshot(
           await api.submitPracticeAttempt(
             sessionId: snapshot.session.id,
             practiceId: practiceId,
@@ -550,7 +795,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        _acceptSnapshot(
+        await _acceptSnapshot(
           await api.backtrack(
             sessionId: snapshot.session.id,
             targetNodeId: target.id,
@@ -604,7 +849,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        _acceptSnapshot(
+        await _acceptSnapshot(
           await api.complete(
             sessionId: snapshot.session.id,
             reflection: normalized,
@@ -644,6 +889,19 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }
 
   void _submitting() {
+    _submitWatchdog?.cancel();
+    _submitWatchdog = Timer(const Duration(seconds: 75), () {
+      if (_isDisposed || _state.status != RemoteExplorationStatus.submitting) {
+        return;
+      }
+      _replace(
+        _state.copyWith(
+          status: RemoteExplorationStatus.failed,
+          errorMessage: '请求等待时间过长，请刷新课堂后重试。',
+          canRetry: _retryOperation != null,
+        ),
+      );
+    });
     _replace(
       _state.copyWith(
         status: RemoteExplorationStatus.submitting,
@@ -652,7 +910,8 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     );
   }
 
-  void _acceptSnapshot(RemoteLearningSessionSnapshot snapshot) {
+  Future<void> _acceptSnapshot(RemoteLearningSessionSnapshot snapshot) async {
+    _submitWatchdog?.cancel();
     _retryOperation = null;
     _replace(
       _state.copyWith(
@@ -666,9 +925,11 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
         canRetry: false,
       ),
     );
+    await _syncTeachingModeIfNeeded();
   }
 
   void _fail(Object error, Future<void> Function() retryOperation) {
+    _submitWatchdog?.cancel();
     _retryOperation = retryOperation;
     _replace(
       _state.copyWith(
@@ -695,6 +956,7 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _submitWatchdog?.cancel();
     _isDisposed = true;
     super.dispose();
   }

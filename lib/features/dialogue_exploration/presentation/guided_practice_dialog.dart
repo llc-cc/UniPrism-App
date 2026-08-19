@@ -32,6 +32,7 @@ final class _GuidedPracticeDialogState extends State<GuidedPracticeDialog> {
   final _answerController = TextEditingController();
   var _isSubmitting = false;
   var _canRetry = false;
+  String? _submitError;
 
   @override
   void initState() {
@@ -60,13 +61,20 @@ final class _GuidedPracticeDialogState extends State<GuidedPracticeDialog> {
     setState(() {
       _isSubmitting = true;
       _canRetry = false;
+      _submitError = null;
     });
-    final accepted = await widget.onSubmit(
-      GuidedPracticeDraft(
-        reasoning: _reasoningController.text,
-        answer: _answerController.text,
-      ),
-    );
+    var accepted = false;
+    try {
+      accepted = await widget.onSubmit(
+        GuidedPracticeDraft(
+          reasoning: _reasoningController.text,
+          answer: _answerController.text,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _submitError = '提交失败，请重试或关闭后刷新课堂。');
+    }
     if (!mounted) return;
     if (accepted) {
       Navigator.pop(context);
@@ -76,39 +84,47 @@ final class _GuidedPracticeDialogState extends State<GuidedPracticeDialog> {
     setState(() {
       _isSubmitting = false;
       _canRetry = true;
+      _submitError ??= '提交暂未完成，已保留你的作答。';
     });
   }
 
   Future<void> _retry() async {
     if (_isSubmitting || !_canRetry) return;
     setState(() => _isSubmitting = true);
-    final accepted = await widget.onRetry();
+    var accepted = false;
+    try {
+      accepted = await widget.onRetry();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _submitError = '重试失败，请关闭后刷新课堂。');
+    }
     if (!mounted) return;
     if (accepted) {
       Navigator.pop(context);
       return;
     }
-    setState(() => _isSubmitting = false);
+    setState(() {
+      _isSubmitting = false;
+      _canRetry = true;
+      _submitError ??= '重试暂未完成。';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final disabled = _isSubmitting || !_hasCompleteDraft;
     return PopScope(
-      canPop: _canRetry && !_isSubmitting,
+      canPop: !_isSubmitting,
       child: AlertDialog(
         title: Row(
           children: [
             Expanded(child: Text(widget.practice.title)),
-            if (_canRetry)
-              IconButton(
-                key: const ValueKey('guided-practice-close-button'),
-                tooltip: '关闭练习',
-                onPressed: _isSubmitting
-                    ? null
-                    : () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.close_rounded),
-              ),
+            IconButton(
+              key: const ValueKey('guided-practice-close-button'),
+              tooltip: '稍后再做',
+              onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.close_rounded),
+            ),
           ],
         ),
         content: SizedBox(
@@ -140,13 +156,18 @@ final class _GuidedPracticeDialogState extends State<GuidedPracticeDialog> {
                 ),
                 if (_canRetry) ...[
                   const SizedBox(height: 12),
-                  const Text('提交暂未完成，已保留你的作答，可以重试。'),
+                  Text(_submitError ?? '提交暂未完成，已保留你的作答，可以重试。'),
                 ],
               ],
             ),
           ),
         ),
         actions: [
+          TextButton(
+            key: const ValueKey('guided-practice-later-button'),
+            onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(),
+            child: const Text('稍后再做'),
+          ),
           if (_canRetry)
             FilledButton(
               key: const ValueKey('guided-practice-retry-button'),

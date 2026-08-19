@@ -1,4 +1,5 @@
 import 'guided_teaching_flow_dto.dart';
+import 'teaching_architecture_dto.dart';
 
 /// Learning Entry 中单个可探索方向，内容由 1.1 Provider 提供而非页面硬编码。
 final class LearningDirectionSnapshot {
@@ -56,7 +57,48 @@ final class LearningEntrySnapshot {
   final List<LearningDirectionSnapshot> directions;
 }
 
-/// 章节阶段只描述学习路径状态；练习和复习的具体流程由各自模块继续承载。
+/// 章节入口寒暄与 DesignArena 选项，由知识库或服务端 entryGuidance 提供。
+final class ChapterEntryGuidanceSnapshot {
+  ChapterEntryGuidanceSnapshot({
+    required List<String> welcomeMessages,
+    required this.designArenaPromptTemplate,
+    required List<RemoteTeachingModeOption> designArenaOptions,
+  }) : welcomeMessages = List.unmodifiable(welcomeMessages),
+       designArenaOptions = List.unmodifiable(designArenaOptions);
+
+  factory ChapterEntryGuidanceSnapshot.fromJson(Map<String, dynamic> json) {
+    return ChapterEntryGuidanceSnapshot(
+      welcomeMessages: _strings(json['welcomeMessages']),
+      designArenaPromptTemplate:
+          _requiredString(json, 'designArenaPromptTemplate'),
+      designArenaOptions: _list(json['designArenaOptions'])
+          .map(RemoteTeachingModeOption.tryFromJson)
+          .whereType<RemoteTeachingModeOption>()
+          .toList(growable: false),
+    );
+  }
+
+  static ChapterEntryGuidanceSnapshot? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    try {
+      return ChapterEntryGuidanceSnapshot.fromJson(
+        value.map((key, item) => MapEntry('$key', item)),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  final List<String> welcomeMessages;
+  final String designArenaPromptTemplate;
+  final List<RemoteTeachingModeOption> designArenaOptions;
+
+  String modePromptFor(String topic) {
+    final label = topic.trim().isEmpty ? '本节课内容' : topic.trim();
+    return designArenaPromptTemplate.replaceAll('{topic}', label);
+  }
+}
+
 final class LearningChapterPhaseSnapshot {
   const LearningChapterPhaseSnapshot({
     required this.kind,
@@ -133,6 +175,7 @@ final class LearningChapterOverviewSnapshot {
     required this.recommendedNodeId,
     required List<LearningChapterPhaseSnapshot> phases,
     required List<LearningChapterNodeSnapshot> nodes,
+    this.entryGuidance,
   }) : phases = List.unmodifiable(phases),
        nodes = List.unmodifiable(nodes);
 
@@ -150,6 +193,9 @@ final class LearningChapterOverviewSnapshot {
       nodes: _list(json['nodes'])
           .map((item) => LearningChapterNodeSnapshot.fromJson(_map(item)))
           .toList(growable: false),
+      entryGuidance: ChapterEntryGuidanceSnapshot.tryFromJson(
+        json['entryGuidance'],
+      ),
     );
   }
 
@@ -161,6 +207,7 @@ final class LearningChapterOverviewSnapshot {
   final String recommendedNodeId;
   final List<LearningChapterPhaseSnapshot> phases;
   final List<LearningChapterNodeSnapshot> nodes;
+  final ChapterEntryGuidanceSnapshot? entryGuidance;
 
   LearningChapterNodeSnapshot? nodeById(String? id) {
     if (id == null) return null;
@@ -663,6 +710,198 @@ final class RemoteLearningNextChallenge {
   final String question;
 }
 
+/// 服务端面向学生视角的精简引导，避免前端解析 teachingFlow 内部状态。
+final class RemoteStudentGuidance {
+  const RemoteStudentGuidance({
+    required this.stageLabel,
+    required this.actionHint,
+    required this.materialReady,
+    required this.materialInteractable,
+    required this.canSubmitText,
+    required this.showMaterialArea,
+    required this.showPracticeArea,
+    this.showModeSelection,
+    this.teacherIntroMessages,
+    this.modeSelectionPrompt,
+  });
+
+  factory RemoteStudentGuidance.fromJson(Map<String, dynamic> json) {
+    final intro = json['teacherIntroMessages'];
+    return RemoteStudentGuidance(
+      stageLabel: _nullableString(json['stageLabel']) ?? '继续学习',
+      actionHint: _nullableString(json['actionHint']) ?? '',
+      materialReady: json['materialReady'] == true,
+      materialInteractable: json['materialInteractable'] == true,
+      canSubmitText: json['canSubmitText'] == true,
+      showMaterialArea: json['showMaterialArea'] == true,
+      showPracticeArea: json['showPracticeArea'] == true,
+      showModeSelection: json['showModeSelection'] as bool?,
+      teacherIntroMessages: intro is List
+          ? _strings(intro)
+          : null,
+      modeSelectionPrompt: _nullableString(json['modeSelectionPrompt']),
+    );
+  }
+
+  static RemoteStudentGuidance? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    return RemoteStudentGuidance.fromJson(
+      value.map((k, v) => MapEntry('$k', v)),
+    );
+  }
+
+  final String stageLabel;
+  final String actionHint;
+  final bool materialReady;
+  final bool materialInteractable;
+  final bool canSubmitText;
+  final bool showMaterialArea;
+  final bool showPracticeArea;
+  final bool? showModeSelection;
+  final List<String>? teacherIntroMessages;
+  final String? modeSelectionPrompt;
+}
+
+final class RemoteCourseTimeBudget {
+  const RemoteCourseTimeBudget({
+    required this.totalMinutes,
+    required this.elapsedMinutes,
+    required this.remainingMinutes,
+    required this.policy,
+  });
+
+  static RemoteCourseTimeBudget? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.map((key, item) => MapEntry('$key', item));
+    return RemoteCourseTimeBudget(
+      totalMinutes: _int(json['totalMinutes']),
+      elapsedMinutes: _int(json['elapsedMinutes']),
+      remainingMinutes: _int(json['remainingMinutes']),
+      policy: _nullableString(json['policy']) ?? 'NORMAL',
+    );
+  }
+
+  final int totalMinutes;
+  final int elapsedMinutes;
+  final int remainingMinutes;
+  final String policy;
+}
+
+final class RemoteTeacherDecision {
+  const RemoteTeacherDecision({
+    required this.action,
+    required this.reasonCode,
+    required this.reason,
+    this.skill,
+    required this.decidedAt,
+  });
+
+  static RemoteTeacherDecision? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.map((key, item) => MapEntry('$key', item));
+    final action = _nullableString(json['action']);
+    if (action == null) return null;
+    return RemoteTeacherDecision(
+      action: action,
+      reasonCode: _nullableString(json['reasonCode']) ?? '',
+      reason: _nullableString(json['reason']) ?? '',
+      skill: _nullableString(json['skill']),
+      decidedAt: _nullableString(json['decidedAt']) ?? '',
+    );
+  }
+
+  final String action;
+  final String reasonCode;
+  final String reason;
+  final String? skill;
+  final String decidedAt;
+}
+
+final class RemoteCourseCapabilities {
+  const RemoteCourseCapabilities({
+    required this.canSubmitText,
+    required this.canSelectMode,
+    required this.canSubmitMaterial,
+    required this.canSkipMaterial,
+    required this.canSwitchMaterial,
+    required this.canSubmitPractice,
+    required this.canComplete,
+  });
+
+  static RemoteCourseCapabilities? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.map((key, item) => MapEntry('$key', item));
+    return RemoteCourseCapabilities(
+      canSubmitText: json['canSubmitText'] == true,
+      canSelectMode: json['canSelectMode'] == true,
+      canSubmitMaterial: json['canSubmitMaterial'] == true,
+      canSkipMaterial: json['canSkipMaterial'] == true,
+      canSwitchMaterial: json['canSwitchMaterial'] == true,
+      canSubmitPractice: json['canSubmitPractice'] == true,
+      canComplete: json['canComplete'] == true,
+    );
+  }
+
+  final bool canSubmitText;
+  final bool canSelectMode;
+  final bool canSubmitMaterial;
+  final bool canSkipMaterial;
+  final bool canSwitchMaterial;
+  final bool canSubmitPractice;
+  final bool canComplete;
+}
+
+final class RemoteCourseState {
+  const RemoteCourseState({
+    required this.currentStage,
+    required this.currentGoal,
+    required this.currentGoalIndex,
+    required this.supportCount,
+    required this.completionStatus,
+    this.selectedMode,
+    this.currentMaterial,
+    this.practiceResult,
+    this.timeBudget,
+  });
+
+  static RemoteCourseState? tryFromJson(Object? value) {
+    if (value is! Map) return null;
+    final json = value.map((key, item) => MapEntry('$key', item));
+    final currentStage =
+        _nullableString(json['currentStage']) ??
+        _nullableString(json['currentPhase']);
+    if (currentStage == null) return null;
+    return RemoteCourseState(
+      currentStage: currentStage,
+      currentGoal:
+          _nullableString(json['currentGoal']) ??
+          'G${_int(json['currentGoalIndex']) + 1}',
+      currentGoalIndex: _int(json['currentGoalIndex']),
+      supportCount: json.containsKey('supportCount')
+          ? _int(json['supportCount'])
+          : _int(json['extraSupportCount']),
+      completionStatus:
+          _nullableString(json['completionStatus']) ?? 'IN_PROGRESS',
+      selectedMode:
+          _nullableString(json['selectedMode']) ??
+          _nullableString(json['selectedSkill']),
+      currentMaterial: _nullableString(json['currentMaterial']),
+      practiceResult: _nullableString(json['practiceResult']),
+      timeBudget: RemoteCourseTimeBudget.tryFromJson(json['timeBudget']),
+    );
+  }
+
+  final String currentStage;
+  final String currentGoal;
+  final int currentGoalIndex;
+  final int supportCount;
+  final String completionStatus;
+  final String? selectedMode;
+  final String? currentMaterial;
+  final String? practiceResult;
+  final RemoteCourseTimeBudget? timeBudget;
+}
+
 /// 客户端每次原子替换的完整服务端快照，避免本地猜测树合并结果。
 final class RemoteLearningSessionSnapshot {
   RemoteLearningSessionSnapshot({
@@ -675,9 +914,17 @@ final class RemoteLearningSessionSnapshot {
     required this.summary,
     this.learningGraph,
     this.teachingFlow,
+    this.processSchedulerState,
+    this.studentGuidance,
+    this.courseState,
+    this.teacherDecision,
+    this.capabilities,
+    List<String> allowedActions = const [],
+    this.teachingArchitecture,
   }) : nodes = List.unmodifiable(nodes),
        conceptNodes = List.unmodifiable(conceptNodes),
-       materials = List.unmodifiable(materials);
+       materials = List.unmodifiable(materials),
+       allowedActions = List.unmodifiable(allowedActions);
 
   factory RemoteLearningSessionSnapshot.fromJson(Map<String, dynamic> json) {
     final summaryJson = json['summary'];
@@ -705,6 +952,22 @@ final class RemoteLearningSessionSnapshot {
       teachingFlow: teachingFlowJson == null
           ? null
           : RemoteTeachingFlow.fromJson(_map(teachingFlowJson)),
+      // 旧后端快照没有该字段；tryFromJson 返回 null，让 UI 继续按 TeachingFlow 渲染。
+      processSchedulerState: RemoteProcessSchedulerState.tryFromJson(
+        json['processSchedulerState'],
+      ),
+      studentGuidance: RemoteStudentGuidance.tryFromJson(
+        json['studentGuidance'],
+      ),
+      courseState: RemoteCourseState.tryFromJson(json['courseState']),
+      teacherDecision: RemoteTeacherDecision.tryFromJson(
+        json['teacherDecision'],
+      ),
+      capabilities: RemoteCourseCapabilities.tryFromJson(json['capabilities']),
+      allowedActions: _strings(json['allowedActions']),
+      teachingArchitecture: RemoteTeachingArchitectureSnapshot.tryFromJson(
+        json['teachingArchitecture'],
+      ),
     );
   }
 
@@ -717,6 +980,15 @@ final class RemoteLearningSessionSnapshot {
   final RemoteLearningSummary? summary;
   final RemoteLearningGraph? learningGraph;
   final RemoteTeachingFlow? teachingFlow;
+  final RemoteProcessSchedulerState? processSchedulerState;
+  final RemoteStudentGuidance? studentGuidance;
+  final RemoteCourseState? courseState;
+  final RemoteTeacherDecision? teacherDecision;
+  final RemoteCourseCapabilities? capabilities;
+  final List<String> allowedActions;
+  final RemoteTeachingArchitectureSnapshot? teachingArchitecture;
+
+  bool allows(String action) => allowedActions.contains(action);
 
   RemoteLearningNode? nodeById(String? id) {
     if (id == null) return null;

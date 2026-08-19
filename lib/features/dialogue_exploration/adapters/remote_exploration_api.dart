@@ -22,6 +22,7 @@ abstract interface class RemoteExplorationGateway {
     String? question,
     String? idempotencyKey,
     RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
+    RemoteSessionEntryMode? entryMode,
   });
 
   Future<RemoteLearningSessionSnapshot?> restoreLatest();
@@ -76,6 +77,18 @@ abstract interface class RemoteExplorationGateway {
     required String sessionId,
     required String materialUsageId,
     required RemoteAssetEvent event,
+    String? idempotencyKey,
+  });
+
+  /// 拉取当前教学阶段允许的模式菜单；服务端在非 MODE_SELECTION 阶段会返回 options=null。
+  Future<RemoteTeachingModeOptionsSnapshot> getTeachingModeOptions({
+    required String sessionId,
+  });
+
+  /// 提交学生选择的教学模式；skill 必须来自服务端返回的 modeMenuOptions。
+  Future<RemoteLearningSessionSnapshot> selectTeachingMode({
+    required String sessionId,
+    required String skill,
     String? idempotencyKey,
   });
 
@@ -176,6 +189,7 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
     String? question,
     String? idempotencyKey,
     RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
+    RemoteSessionEntryMode? entryMode,
   }) async {
     final exploreSessionId = await _ensureExploreSession();
     final data = await _request(
@@ -188,6 +202,7 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
         'flowMode': flowMode.wireValue,
         if ((directionId ?? '').isNotEmpty) 'directionId': directionId,
         if ((question ?? '').trim().isNotEmpty) 'question': question!.trim(),
+        if (entryMode != null) 'entryMode': entryMode.wireValue,
       },
       idempotencyKey: idempotencyKey,
     );
@@ -334,6 +349,31 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
       idempotencyKey: idempotencyKey,
     );
     return RemoteLearningSessionSnapshot.fromJson(data);
+  }
+
+  @override
+  Future<RemoteTeachingModeOptionsSnapshot> getTeachingModeOptions({
+    required String sessionId,
+  }) async {
+    final exploreSessionId = await _ensureExploreSession();
+    final data = await _request(
+      'GET',
+      '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/teaching-mode'
+          '?exploreSessionId=${Uri.encodeQueryComponent(exploreSessionId)}',
+    );
+    return RemoteTeachingModeOptionsSnapshot.fromJson(data);
+  }
+
+  @override
+  Future<RemoteLearningSessionSnapshot> selectTeachingMode({
+    required String sessionId,
+    required String skill,
+    String? idempotencyKey,
+  }) {
+    // 客户端不做技能白名单校验，交由服务端拒绝非法值，避免两端规则漂移。
+    return _mutateSnapshot(sessionId, 'teaching-mode', {
+      'skill': skill,
+    }, idempotencyKey);
   }
 
   @override

@@ -12,6 +12,15 @@ enum RemoteFlowMode {
   }
 }
 
+/// 章节入口创建模式；`chapterGreeting` 表示 AI 老师先开口寒暄。
+enum RemoteSessionEntryMode {
+  chapterGreeting('CHAPTER_GREETING');
+
+  const RemoteSessionEntryMode(this.wireValue);
+
+  final String wireValue;
+}
+
 /// 引导课堂阶段只用于展示和约束交互；阶段推进始终由服务端快照决定。
 enum RemoteTeachingStage {
   dialogue,
@@ -383,6 +392,175 @@ final class RemoteTeachingFlow {
   final String? feedback;
   final String? repairFocus;
   final List<RemoteNextLearningOption> nextLearningOptions;
+}
+
+/// 课程目标级教学阶段；由服务端持久化，客户端只据此决定当前允许的交互入口。
+enum RemoteTeachingPhase {
+  conceptIntroduction('CONCEPT_INTRODUCTION'),
+  example('EXAMPLE'),
+  understandingCheck('UNDERSTANDING_CHECK'),
+  modeSelection('MODE_SELECTION'),
+  extraSupport('EXTRA_SUPPORT'),
+  goalComplete('GOAL_COMPLETE'),
+  unknown('UNKNOWN');
+
+  const RemoteTeachingPhase(this.wireValue);
+
+  final String wireValue;
+
+  static RemoteTeachingPhase fromWire(Object? value) {
+    final normalized = value?.toString().trim().toUpperCase();
+    for (final phase in RemoteTeachingPhase.values) {
+      if (phase.wireValue == normalized) return phase;
+    }
+    return RemoteTeachingPhase.unknown;
+  }
+}
+
+/// 单个学习目标的掌握状态；由服务端在 UNDERSTANDING_CHECK 判定后写入。
+enum RemoteLessonGoalStatus {
+  notStarted('NOT_STARTED'),
+  inProgress('IN_PROGRESS'),
+  mastered('MASTERED'),
+  needsReview('NEEDS_REVIEW'),
+  unknown('UNKNOWN');
+
+  const RemoteLessonGoalStatus(this.wireValue);
+
+  final String wireValue;
+
+  static RemoteLessonGoalStatus fromWire(Object? value) {
+    final normalized = value?.toString().trim().toUpperCase();
+    for (final status in RemoteLessonGoalStatus.values) {
+      if (status.wireValue == normalized) return status;
+    }
+    return RemoteLessonGoalStatus.unknown;
+  }
+}
+
+/// 教学模式菜单里的单个技能选项；label/icon/description 由服务端提供，客户端不改写。
+final class RemoteTeachingModeOption {
+  const RemoteTeachingModeOption({
+    required this.skill,
+    required this.label,
+    required this.icon,
+    required this.description,
+  });
+
+  static RemoteTeachingModeOption? tryFromJson(Object? value) {
+    final json = _map(value);
+    final skill = _nullableString(json['skill']);
+    final label = _nullableString(json['label']);
+    final icon = _nullableString(json['icon']);
+    final description = _nullableString(json['description']);
+    if (skill == null || label == null || icon == null || description == null) {
+      return null;
+    }
+    return RemoteTeachingModeOption(
+      skill: skill,
+      label: label,
+      icon: icon,
+      description: description,
+    );
+  }
+
+  /// 教学技能 wire code（例如 MORE_EXAMPLES、VIDEO），提交选择时原样回传服务端。
+  final String skill;
+  final String label;
+  final String icon;
+  final String description;
+}
+
+/// 课程目标级进程调度快照；每次会话状态刷新会覆盖旧值，客户端不能自行推进阶段。
+final class RemoteProcessSchedulerState {
+  RemoteProcessSchedulerState({
+    required this.schemaVersion,
+    required this.lessonPlanId,
+    required this.currentGoalIndex,
+    required this.currentPhase,
+    required List<RemoteLessonGoalStatus> goalStatuses,
+    List<RemoteTeachingModeOption>? modeMenuOptions,
+    this.selectedSkill,
+    required this.extraSupportCount,
+    this.completedAt,
+    required this.updatedAt,
+  }) : goalStatuses = List.unmodifiable(goalStatuses),
+       modeMenuOptions = modeMenuOptions == null
+           ? null
+           : List.unmodifiable(modeMenuOptions);
+
+  static RemoteProcessSchedulerState? tryFromJson(Object? value) {
+    if (value == null) return null;
+    final json = _map(value);
+    if (json.isEmpty) return null;
+    final lessonPlanId = _nullableString(json['lessonPlanId']);
+    if (lessonPlanId == null) return null;
+
+    final modeMenuRaw = json['modeMenuOptions'];
+    final modeMenuOptions = modeMenuRaw == null
+        ? null
+        : _list(modeMenuRaw)
+              .map(RemoteTeachingModeOption.tryFromJson)
+              .whereType<RemoteTeachingModeOption>()
+              .toList(growable: false);
+
+    return RemoteProcessSchedulerState(
+      schemaVersion: _int(json['schemaVersion'], fallback: 1),
+      lessonPlanId: lessonPlanId,
+      currentGoalIndex: _int(json['currentGoalIndex']),
+      currentPhase: RemoteTeachingPhase.fromWire(json['currentPhase']),
+      goalStatuses: _list(json['goalStatuses'])
+          .map(RemoteLessonGoalStatus.fromWire)
+          .toList(growable: false),
+      modeMenuOptions: modeMenuOptions,
+      selectedSkill: _nullableString(json['selectedSkill']),
+      extraSupportCount: _int(json['extraSupportCount']),
+      completedAt: _nullableString(json['completedAt']),
+      updatedAt: _nullableString(json['updatedAt']) ?? '',
+    );
+  }
+
+  final int schemaVersion;
+  final String lessonPlanId;
+  final int currentGoalIndex;
+  final RemoteTeachingPhase currentPhase;
+  final List<RemoteLessonGoalStatus> goalStatuses;
+  final List<RemoteTeachingModeOption>? modeMenuOptions;
+  final String? selectedSkill;
+  final int extraSupportCount;
+  final String? completedAt;
+  final String updatedAt;
+
+  bool get isAwaitingModeSelection =>
+      currentPhase == RemoteTeachingPhase.modeSelection &&
+      (modeMenuOptions?.isNotEmpty ?? false);
+}
+
+/// GET /teaching-mode 返回的轻量快照；仅供 UI 独立拉取当前可选模式时使用。
+final class RemoteTeachingModeOptionsSnapshot {
+  RemoteTeachingModeOptionsSnapshot({
+    required this.phase,
+    required this.currentGoalIndex,
+    List<RemoteTeachingModeOption>? options,
+  }) : options = options == null ? null : List.unmodifiable(options);
+
+  factory RemoteTeachingModeOptionsSnapshot.fromJson(Map<String, dynamic> json) {
+    final rawOptions = json['options'];
+    return RemoteTeachingModeOptionsSnapshot(
+      phase: RemoteTeachingPhase.fromWire(json['phase']),
+      currentGoalIndex: _int(json['currentGoalIndex']),
+      options: rawOptions == null
+          ? null
+          : _list(rawOptions)
+                .map(RemoteTeachingModeOption.tryFromJson)
+                .whereType<RemoteTeachingModeOption>()
+                .toList(growable: false),
+    );
+  }
+
+  final RemoteTeachingPhase phase;
+  final int currentGoalIndex;
+  final List<RemoteTeachingModeOption>? options;
 }
 
 /// 素材组件只上报事实事件；事件 ID 在重试时保持不变，由服务端幂等去重。

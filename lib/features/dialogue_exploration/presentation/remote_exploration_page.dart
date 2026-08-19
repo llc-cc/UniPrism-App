@@ -12,17 +12,159 @@ import '../materials/mock_whiteboard_launcher.dart';
 import '../materials/parabola_painter.dart';
 import 'chapter_catalog_picker.dart';
 import 'chapter_workspace_components.dart';
+import '../core/teacher_agent_test_seed.dart';
 import 'exploration_node_map.dart';
 import 'guided_practice_dialog.dart';
 import 'next_learning_options_sheet.dart';
 import 'student_learning_narrative.dart';
 import 'technical_trace.dart';
 import 'technical_trace_drawer.dart';
+import 'classroom_board_catalog.dart';
+import 'classroom_remediation_panel.dart';
+import 'inline_practice_panel.dart';
+import '../adapters/teaching_architecture_dto.dart';
+import 'intro_chat_messages.dart';
+import 'teaching_mode_selection_stage.dart';
 
 const _brand = Color(0xFF6B23FF);
 const _ink = Color(0xFF27222D);
 const _muted = Color(0xFF6F6977);
 const _surface = Color(0xFFF7F5FA);
+const _studentBubbleFill = Color(0xFFDBEAFE);
+const _studentBubbleBorder = Color(0xFF2563EB);
+const _studentBubbleInk = Color(0xFF1E3A8A);
+const _teacherBubbleFill = Color(0xFFFFFBF5);
+const _teacherBubbleBorder = Color(0xFFE8DFD0);
+
+String _studentFriendlyRepairFocus(String value) {
+  if (value.contains('系数') ||
+      value.contains('下标') ||
+      value.contains('原子') ||
+      value.contains('守恒')) {
+    return '右下角的小数字决定它是什么物质，不能修改；前面的数字表示有几份，可以调整。';
+  }
+  return value;
+}
+
+String _studentMaterialCaption(RemoteLearningMaterial material) {
+  final raw =
+      material.payload['description']?.toString().trim() ?? material.title;
+  if (raw.contains('Mock') || raw.contains('教研素材')) {
+    return _defaultMaterialCaption(material);
+  }
+  return raw;
+}
+
+String _defaultMaterialCaption(RemoteLearningMaterial material) {
+  return switch (material.materialId) {
+    'chemistry-particle-figure' => '反应前 H、O 原子分开存在；反应后重新组合成 H₂O，原子种类和数量不变。',
+    'chemistry-conservation-formula' => '对每种元素分别统计：反应前原子总数 = 反应后原子总数。',
+    'chemistry-reaction-video' => '比较密闭与敞口容器中，反应前后称量结果有何不同。',
+    _ => material.title,
+  };
+}
+
+List<RemoteLearningMaterial> _dialogueTimelineMaterials(
+  List<RemoteLearningMaterial> materials,
+  RemoteTeachingFlow? teachingFlow,
+  bool isCurrent,
+) {
+  if (teachingFlow == null) return const [];
+  if (teachingFlow.stage == RemoteTeachingStage.asset && isCurrent) {
+    return materials;
+  }
+  return materials
+      .where((material) => material.type == 'INTERACTIVE')
+      .toList(growable: false);
+}
+
+String _studentFriendlyFollowUp(String value) {
+  if (value.contains('系数') && (value.contains('原子') || value.contains('配平'))) {
+    return '看看箭头两边：哪一种原子的数量不同？先从它开始调整。';
+  }
+  return value;
+}
+
+typedef _LessonProgressInfo = ({
+  String title,
+  int currentStep,
+  int totalSteps,
+  String stepLabel,
+});
+
+_LessonProgressInfo _lessonProgressInfo(
+  RemoteLearningSessionSnapshot snapshot,
+) {
+  final flow = snapshot.teachingFlow;
+  final proc = snapshot.processSchedulerState?.currentPhase;
+  final guidanceLabel = snapshot.studentGuidance?.stageLabel.trim();
+  final practiceTitle = flow?.activePractice?.title.trim();
+  final title = (practiceTitle != null && practiceTitle.isNotEmpty)
+      ? practiceTitle
+      : (flow != null && flow.goal.trim().isNotEmpty
+            ? flow.goal
+            : snapshot.session.topic);
+  const totalSteps = 4;
+  var step = 1;
+  var stepLabel = '说说你的理解';
+  switch (proc) {
+    case RemoteTeachingPhase.modeSelection:
+    case RemoteTeachingPhase.conceptIntroduction:
+      step = 1;
+      stepLabel = '说说你的理解';
+    case RemoteTeachingPhase.example:
+      step = 2;
+      stepLabel = '动手试一试';
+    case RemoteTeachingPhase.extraSupport:
+      step = flow?.stage == RemoteTeachingStage.focus ? 3 : 2;
+      stepLabel = step == 3 ? '独立验证' : '换个方法理解';
+    case RemoteTeachingPhase.understandingCheck:
+      step = 3;
+      stepLabel = '独立验证';
+    case RemoteTeachingPhase.goalComplete:
+      step = 4;
+      stepLabel = '本章完成';
+    default:
+      step = switch (flow?.stage) {
+        RemoteTeachingStage.asset => 2,
+        RemoteTeachingStage.focus => 3,
+        RemoteTeachingStage.reflect => 4,
+        _ => 1,
+      };
+      stepLabel = switch (flow?.stage) {
+        RemoteTeachingStage.asset => '动手试一试',
+        RemoteTeachingStage.focus => '独立验证',
+        RemoteTeachingStage.reflect => '总结发现',
+        _ => '说说你的理解',
+      };
+  }
+  if (guidanceLabel != null && guidanceLabel.isNotEmpty) {
+    stepLabel = guidanceLabel;
+  }
+  return (
+    title: title,
+    currentStep: step,
+    totalSteps: totalSteps,
+    stepLabel: stepLabel,
+  );
+}
+
+String _classroomTaskTitle(
+  RemoteLearningMaterial? material,
+  RemoteTeachingFlow flow,
+) {
+  if (material?.componentKey == 'reaction_balance_widget') {
+    return '配平 H₂ + O₂ → H₂O';
+  }
+  if (material?.componentKey == 'set_membership_widget') {
+    return '判断元素 ∈ / ∉ 集合';
+  }
+  final materialTitle = material?.title.trim();
+  if (materialTitle != null && materialTitle.isNotEmpty) {
+    return materialTitle;
+  }
+  return flow.goal.trim().isNotEmpty ? flow.goal : '课堂任务';
+}
 
 /// 1.2 正式纵向切片入口：先给学习地图，再进入由学生问题驱动的远程 AI Session。
 final class RemoteExplorationLabPage extends StatefulWidget {
@@ -53,7 +195,7 @@ final class _RemoteExplorationLabPageState
   }
 
   Future<void> _initialize() async {
-    await _controller.loadHistory(restoreLatestActive: true);
+    await _controller.loadHistory(restoreLatestActive: false);
     if (!mounted) return;
     // 账号历史是恢复会话的事实来源；加载失败时必须停留在错误态，不能继续创建空白入口。
     if (_controller.state.status == RemoteExplorationStatus.failed) {
@@ -61,9 +203,12 @@ final class _RemoteExplorationLabPageState
       return;
     }
     if (_controller.state.snapshot == null) {
-      // 只有确认不存在可恢复会话时才请求目录，避免目录短暂覆盖恢复结果。
       _catalogRequested = true;
       await _controller.loadChapterCatalog();
+      if (TeacherAgentTestSeed.shouldAutoLoadChapter) {
+        await _controller.loadChapter(TeacherAgentTestSeed.chapterId);
+        await _controller.startChapterGreetingSession();
+      }
     }
     if (!mounted) return;
     setState(() => _initializing = false);
@@ -95,7 +240,7 @@ final class _RemoteExplorationLabPageState
     return Scaffold(
       backgroundColor: _surface,
       appBar: AppBar(
-        title: const Text('1.2 AI 探索课堂'),
+        title: Text(state.chapter?.title ?? '1.2 AI 探索课堂'),
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
       ),
@@ -115,22 +260,16 @@ final class _RemoteExplorationLabPageState
                   child: state.chapter == null
                       ? _catalogOrError(state)
                       : ChapterOverviewPanel(
-                          chapter: state.chapter!,
-                          selectedNodeId: state.selectedChapterNodeId,
-                          questionController: _questionController,
-                          directTeacherQuestionController:
-                              _directTeacherQuestionController,
                           busy:
                               state.status ==
-                              RemoteExplorationStatus.submitting,
+                                  RemoteExplorationStatus.submitting ||
+                              state.status ==
+                                  RemoteExplorationStatus.loadingEntry,
                           errorMessage:
                               state.status == RemoteExplorationStatus.failed
                               ? state.errorMessage
                               : null,
                           onRetry: _controller.retry,
-                          onSelectNode: _controller.selectChapterNode,
-                          onStartNode: _startChapterNode,
-                          onStartDirectQuestion: _startDirectQuestion,
                         ),
                 ),
               ],
@@ -313,21 +452,81 @@ final class _RemoteLearningSessionPageState
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final _whiteboardLauncher = const MockExplorationWhiteboardLauncher();
+  final _guidedActionPanelKey = GlobalKey<_GuidedTeachingActionPanelState>();
   Timer? _timingTicker;
+  Timer? _extraSupportAutoAdvanceTimer;
+  String? _extraSupportAutoAdvanceKey;
+  String? _inspectedBoardId;
+
+  bool _needsExtraSupportRepairAck(RemoteLearningSessionSnapshot? snapshot) {
+    final flow = snapshot?.teachingFlow;
+    if (flow?.explorationAct != RemoteGuidedExplorationAct.practiceRepair) {
+      return false;
+    }
+    return flow?.stage == RemoteTeachingStage.dialogue ||
+        flow?.stage == RemoteTeachingStage.focus;
+  }
+
+  void _maybeScheduleExtraSupportAutoAdvance() {
+    final snapshot = widget.controller.state.snapshot;
+    if (!_needsExtraSupportRepairAck(snapshot)) {
+      _extraSupportAutoAdvanceKey = null;
+      return;
+    }
+    final flow = snapshot?.teachingFlow;
+    final key =
+        '${snapshot?.session.id}:${flow?.updatedAt}:${flow?.stage.name}';
+    if (_extraSupportAutoAdvanceKey == key) return;
+    _extraSupportAutoAdvanceKey = key;
+    _scheduleExtraSupportAutoAdvance();
+  }
+
+  void _scheduleExtraSupportAutoAdvance() {
+    _extraSupportAutoAdvanceTimer?.cancel();
+    _extraSupportAutoAdvanceTimer = Timer(
+      const Duration(milliseconds: 2800),
+      () {
+        if (!mounted) return;
+        if (!_needsExtraSupportRepairAck(widget.controller.state.snapshot)) {
+          return;
+        }
+        unawaited(_acknowledgeExtraSupportRepair(autoOpenPractice: false));
+      },
+    );
+  }
+
+  Future<void> _acknowledgeExtraSupportRepair({
+    bool autoOpenPractice = false,
+  }) async {
+    _extraSupportAutoAdvanceTimer?.cancel();
+    _extraSupportAutoAdvanceKey = null;
+    await widget.controller.submitQuestion('继续', force: true);
+    if (!mounted || !autoOpenPractice) return;
+    if (widget.controller.state.status == RemoteExplorationStatus.failed) {
+      return;
+    }
+    final snapshot = widget.controller.state.snapshot;
+    if (snapshot?.capabilities?.canSubmitPractice == true) {
+      await _showGuidedPractice();
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_refresh);
-    // 只为切换软引导文案刷新页面；不提交请求，也不改变会话状态。
     _timingTicker = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(widget.controller.syncModeSelectionIfNeeded());
     });
   }
 
   void _refresh() {
     if (!mounted) return;
     setState(() {});
+    _maybeScheduleExtraSupportAutoAdvance();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
       _scrollController.animateTo(
@@ -350,6 +549,7 @@ final class _RemoteLearningSessionPageState
   @override
   void dispose() {
     _timingTicker?.cancel();
+    _extraSupportAutoAdvanceTimer?.cancel();
     widget.controller.removeListener(_refresh);
     _inputController.dispose();
     _scrollController.dispose();
@@ -373,14 +573,12 @@ final class _RemoteLearningSessionPageState
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         titleSpacing: 20,
-        leading: state.history.isEmpty
-            ? null
-            : IconButton(
-                key: const ValueKey('prestudy-back-to-overview'),
-                tooltip: '返回预习总览',
-                onPressed: () => unawaited(_backToOverview()),
-                icon: const Icon(Icons.arrow_back_rounded),
-              ),
+        leading: IconButton(
+          key: const ValueKey('prestudy-back-to-overview'),
+          tooltip: '返回章节目录',
+          onPressed: () => unawaited(_backToOverview()),
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
         title: Text(
           snapshot.session.topic,
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
@@ -388,29 +586,22 @@ final class _RemoteLearningSessionPageState
         actions: [
           Builder(
             builder: (scaffoldContext) {
-              final compact = MediaQuery.sizeOf(context).width < 900;
-              void openTrace() => Scaffold.of(scaffoldContext).openEndDrawer();
-              if (compact) {
-                return IconButton(
-                  key: const ValueKey('open-technical-trace'),
-                  tooltip: '查看技术轨迹 · Mock',
-                  onPressed: openTrace,
-                  icon: const Icon(Icons.schema_outlined),
-                );
-              }
-              return TextButton.icon(
-                key: const ValueKey('open-technical-trace'),
-                onPressed: openTrace,
-                icon: const Icon(Icons.schema_outlined, size: 18),
-                label: const Text('技术轨迹 · Mock'),
+              return PopupMenuButton<String>(
+                tooltip: '更多',
+                icon: const Icon(Icons.more_horiz_rounded),
+                onSelected: (value) {
+                  if (value == 'trace') {
+                    Scaffold.of(scaffoldContext).openEndDrawer();
+                  } else if (value == 'export') {
+                    unawaited(_exportTree());
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'trace', child: Text('查看课堂记录')),
+                  PopupMenuItem(value: 'export', child: Text('导出学习记录')),
+                ],
               );
             },
-          ),
-          const SizedBox(width: 6),
-          TextButton.icon(
-            onPressed: _exportTree,
-            icon: const Icon(Icons.download_rounded, size: 18),
-            label: const Text('导出探索地图'),
           ),
           const SizedBox(width: 6),
           FilledButton.icon(
@@ -444,10 +635,11 @@ final class _RemoteLearningSessionPageState
                       style: TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
-                _ConceptPathStrip(
-                  snapshot: snapshot,
-                  onOpenMap: () => _showTree(snapshot),
-                ),
+                if (snapshot.teachingFlow == null)
+                  _ConceptPathStrip(
+                    snapshot: snapshot,
+                    onOpenMap: () => _showTree(snapshot),
+                  ),
                 Expanded(
                   child: _classroomStage(
                     snapshot,
@@ -475,6 +667,230 @@ final class _RemoteLearningSessionPageState
     RemoteLearningSessionSnapshot snapshot, {
     required bool mobile,
   }) {
+    if (widget.controller.shouldUseSidebarClassroom(snapshot)) {
+      return _sidebarClassroomStage(snapshot, mobile: mobile);
+    }
+    return _legacyClassroomStage(snapshot, mobile: mobile);
+  }
+
+  Widget _sidebarClassroomStage(
+    RemoteLearningSessionSnapshot snapshot, {
+    required bool mobile,
+  }) {
+    final state = widget.controller.state;
+    final focusBoardId = ClassroomBoardCatalog.resolveFocusBoardId(
+      snapshot,
+      _inspectedBoardId,
+    );
+    final focusBoard = focusBoardId == null
+        ? null
+        : snapshot.teachingArchitecture?.boardById(focusBoardId);
+    final focusNodeId = state.inspectedNodeId ?? snapshot.currentNodeId!;
+    final isCurrentBoard =
+        focusBoard?.isActive ??
+        (focusBoardId == null && focusNodeId == snapshot.currentNodeId);
+    final isReviewingHistory = focusBoard != null && !isCurrentBoard;
+    final guidance = snapshot.studentGuidance;
+    final teachingFlow = snapshot.teachingFlow;
+    final guidedMaterial = teachingFlow == null
+        ? null
+        : _materialByUsageId(
+            snapshot.materials,
+            teachingFlow.currentAction.materialUsageId,
+          );
+    final guidedEventType = _completionEventType(guidedMaterial?.componentKey);
+    final awaitingModeSelection = widget.controller.shouldShowModeSelection(
+      snapshot,
+    );
+    final showModeOptions =
+        isCurrentBoard && (guidance?.showModeSelection ?? false);
+    final inIntro = widget.controller.isModeSelectionIntro(snapshot);
+    final modeOptions = widget.controller.resolvedModeMenuOptions(snapshot);
+    if (modeOptions.isEmpty &&
+        !inIntro &&
+        awaitingModeSelection &&
+        isCurrentBoard) {
+      return _StaleSessionRestartPanel(
+        onRestart: () => unawaited(_backToOverview()),
+      );
+    }
+    final topic = snapshot.session.topic.trim();
+    final topicLabel = topic.isEmpty ? '本节课内容' : topic;
+    final resolvedOptions = modeOptions.isNotEmpty
+        ? modeOptions
+        : TeachingModeOptionCatalog.forTopic(topicLabel);
+    final flow = teachingFlow;
+    final introPrompt = inIntro ? flow?.currentAction.prompt.trim() : null;
+    final actionHint = guidance?.actionHint.trim();
+    final trailingPrompt = (introPrompt != null && introPrompt.isNotEmpty)
+        ? introPrompt
+        : (actionHint != null && actionHint.isNotEmpty ? actionHint : null);
+    final messages = focusBoardId != null
+        ? ClassroomBoardCatalog.messagesForBoard(
+            snapshot,
+            focusBoardId,
+            trailingTeacherPrompt: isCurrentBoard ? trailingPrompt : null,
+            modeSelectionPrompt: guidance?.modeSelectionPrompt,
+            appendModePrompt: showModeOptions,
+            liveTeachingFlow: isCurrentBoard ? teachingFlow : null,
+          )
+        : ClassroomBoardCatalog.messagesForNode(
+            snapshot,
+            focusNodeId,
+            trailingTeacherPrompt: isCurrentBoard ? trailingPrompt : null,
+            modeSelectionPrompt: guidance?.modeSelectionPrompt,
+            appendModePrompt: showModeOptions,
+            liveTeachingFlow: isCurrentBoard ? teachingFlow : null,
+          );
+    final submitting = state.status == RemoteExplorationStatus.submitting;
+    final needsRepairAck = _needsExtraSupportRepairAck(snapshot);
+    final showClassroomBottom =
+        isCurrentBoard &&
+        !state.isReadOnly &&
+        !showModeOptions &&
+        !(guidance?.showPracticeArea == true &&
+            teachingFlow?.stage == RemoteTeachingStage.focus) &&
+        (needsRepairAck ||
+            guidance?.showMaterialArea == true ||
+            snapshot.capabilities?.canSubmitMaterial == true ||
+            snapshot.capabilities?.canComplete == true);
+    final showReplyBar =
+        isCurrentBoard &&
+        !state.isReadOnly &&
+        !showModeOptions &&
+        !showClassroomBottom &&
+        widget.controller.canSubmitEntryDialogue(snapshot);
+
+    return TeachingModeSelectionStage(
+      topicLabel: topicLabel,
+      historyEntries: ClassroomBoardCatalog.historyEntries(snapshot),
+      selectedHistoryNodeId: focusNodeId,
+      selectedHistoryBoardId: focusBoardId,
+      boardPanelTitle: focusBoard == null
+          ? null
+          : ClassroomBoardCatalog.boardPanelTitle(
+              focusBoard,
+              isModeSelectionIntro: inIntro && isCurrentBoard,
+            ),
+      onBoardTap: (boardId) => setState(() => _inspectedBoardId = boardId),
+      isReviewingHistory: isReviewingHistory,
+      onReturnToCurrent: isReviewingHistory
+          ? () {
+              setState(() => _inspectedBoardId = null);
+              final currentNodeId = snapshot.currentNodeId;
+              if (currentNodeId != null) {
+                widget.controller.inspectNode(currentNodeId);
+              }
+            }
+          : null,
+      options: resolvedOptions,
+      messages: messages,
+      showOptions: showModeOptions,
+      submitting: submitting,
+      teacherTyping: submitting,
+      showReplyBar: showReplyBar,
+      onSendMessage: (text) => widget.controller.submitQuestion(text),
+      onSelect: (skill) =>
+          unawaited(widget.controller.selectTeachingMode(skill)),
+      onHistoryTap: (nodeId) {
+        final boardId = ClassroomBoardCatalog.boardIdForNode(snapshot, nodeId);
+        if (boardId != null) {
+          setState(() => _inspectedBoardId = boardId);
+        } else {
+          setState(() => _inspectedBoardId = null);
+          widget.controller.inspectNode(nodeId);
+        }
+      },
+      mobile: mobile,
+      guidedPanel: isReviewingHistory
+          ? Padding(
+              padding: EdgeInsets.fromLTRB(
+                mobile ? 12 : 20,
+                0,
+                mobile ? 12 : 20,
+                8,
+              ),
+              child: _HistoricalBoardSnapshotPanel(
+                snapshot: snapshot,
+                board: focusBoard,
+              ),
+            )
+          : teachingFlow != null
+          ? Padding(
+              padding: EdgeInsets.fromLTRB(
+                mobile ? 12 : 20,
+                0,
+                mobile ? 12 : 20,
+                8,
+              ),
+              child: _GuidedTeachingActionPanel(
+                key: _guidedActionPanelKey,
+                snapshot: snapshot,
+                focusBoard: focusBoard,
+                isCurrentBoard: isCurrentBoard,
+                flow: teachingFlow,
+                guidance: guidance,
+                capabilities: snapshot.capabilities,
+                material: guidedMaterial,
+                assetEventType: guidedEventType,
+                onAssetComplete:
+                    guidedMaterial == null || guidedEventType == null
+                    ? null
+                    : (interactionPayload) =>
+                          widget.controller.submitMaterialEvent(
+                            materialUsageId: guidedMaterial.id,
+                            eventType: guidedEventType,
+                            payload: {
+                              'componentKey': guidedMaterial.componentKey,
+                              'completionConfirmed': true,
+                              ...interactionPayload,
+                            },
+                          ),
+                onSkipMaterial:
+                    guidedMaterial == null ||
+                        snapshot.capabilities?.canSkipMaterial != true
+                    ? null
+                    : () => widget.controller.submitMaterialEvent(
+                        materialUsageId: guidedMaterial.id,
+                        eventType: 'MATERIAL_SKIPPED',
+                        payload: const {'reason': 'student_requested'},
+                      ),
+                onSubmitPractice: _submitGuidedPractice,
+                onSendMessage: (text) => widget.controller.submitQuestion(text),
+                onStartReflection: _complete,
+              ),
+            )
+          : null,
+      classroomBottomBar: showClassroomBottom
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (state.status == RemoteExplorationStatus.failed)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: _ErrorPanel(
+                      message: state.errorMessage ?? '发送失败',
+                      onRetry: widget.controller.retry,
+                    ),
+                  ),
+                _ClassroomBottomBar(
+                  snapshot: snapshot,
+                  controller: widget.controller,
+                  inputController: _inputController,
+                  onSend: _send,
+                  onAskHelp: _askTeacherForHelp,
+                  onComplete: _completeCurrentStep,
+                ),
+              ],
+            )
+          : null,
+    );
+  }
+
+  Widget _legacyClassroomStage(
+    RemoteLearningSessionSnapshot snapshot, {
+    required bool mobile,
+  }) {
     final state = widget.controller.state;
     final node = snapshot.nodeById(
       state.inspectedNodeId ?? snapshot.currentNodeId,
@@ -493,6 +909,55 @@ final class _RemoteLearningSessionPageState
         teachingFlow?.stage == RemoteTeachingStage.asset
         ? guidedMaterial?.id
         : null;
+    final awaitingModeSelection = widget.controller.shouldShowModeSelection(
+      snapshot,
+    );
+    final showEntryDialogue = widget.controller.shouldShowEntryDialogue(
+      snapshot,
+    );
+    final modeOptions = widget.controller.resolvedModeMenuOptions(snapshot);
+    if (showEntryDialogue) {
+      final guidance = snapshot.studentGuidance;
+      final inIntro = widget.controller.isModeSelectionIntro(snapshot);
+      if (modeOptions.isEmpty && !inIntro && awaitingModeSelection) {
+        return _StaleSessionRestartPanel(
+          onRestart: () => unawaited(_backToOverview()),
+        );
+      }
+      final topic = snapshot.session.topic.trim();
+      final topicLabel = topic.isEmpty ? '本节课内容' : topic;
+      final resolvedOptions = modeOptions.isNotEmpty
+          ? modeOptions
+          : TeachingModeOptionCatalog.forTopic(topicLabel);
+      final actionHint = guidance?.actionHint.trim();
+      final flow = snapshot.teachingFlow;
+      final introPrompt = inIntro ? flow?.currentAction.prompt.trim() : null;
+      final trailingPrompt = (introPrompt != null && introPrompt.isNotEmpty)
+          ? introPrompt
+          : (actionHint != null && actionHint.isNotEmpty ? actionHint : null);
+      final messages = IntroChatMessage.fromSessionPath(
+        path,
+        trailingTeacherPrompt: trailingPrompt,
+        modeSelectionPrompt: guidance?.modeSelectionPrompt,
+        appendModePrompt: guidance?.showModeSelection ?? false,
+      );
+      final submitting = state.status == RemoteExplorationStatus.submitting;
+      return TeachingModeSelectionStage(
+        topicLabel: topicLabel,
+        historyEntries: TeachingModeOptionCatalog.fromSessionPath(path),
+        options: resolvedOptions,
+        messages: messages,
+        showOptions: guidance?.showModeSelection ?? false,
+        submitting: submitting,
+        teacherTyping: submitting,
+        showReplyBar: widget.controller.canSubmitEntryDialogue(snapshot),
+        onSendMessage: (text) => widget.controller.submitQuestion(text),
+        onSelect: (skill) =>
+            unawaited(widget.controller.selectTeachingMode(skill)),
+        onHistoryTap: widget.controller.inspectNode,
+        mobile: mobile,
+      );
+    }
     return Column(
       key: const ValueKey('exploration-classroom-stage'),
       children: [
@@ -506,13 +971,24 @@ final class _RemoteLearningSessionPageState
               20,
             ),
             children: [
-              _ClassroomGuideHeader(
-                topic: snapshot.session.topic,
-                currentQuestion: node.question,
-              ),
+              if (teachingFlow != null)
+                _LessonProgressHeader(snapshot: snapshot)
+              else
+                _ClassroomGuideHeader(
+                  topic: snapshot.session.topic,
+                  hookQuestion: path.isNotEmpty
+                      ? path.first.question
+                      : node.question,
+                ),
               const SizedBox(height: 14),
-              if (guidance != null) ...[
+              if (teachingFlow == null && guidance != null) ...[
                 _PreStudyTimingCue(guidance: guidance),
+                const SizedBox(height: 14),
+              ],
+              if (widget.controller.isLegacyBrokenSession(snapshot)) ...[
+                _StaleSessionRestartPanel(
+                  onRestart: () => unawaited(_backToOverview()),
+                ),
                 const SizedBox(height: 14),
               ],
               _StudentLearningTimeline(
@@ -521,19 +997,32 @@ final class _RemoteLearningSessionPageState
                     (entry) => _ExplorationTurnCard(
                       node: entry.$2,
                       isCurrent: entry.$2.id == node.id,
+                      teachingFlow: teachingFlow,
                       materials: snapshot.materials
-                          .where(
-                            (item) =>
-                                item.nodeId == entry.$2.id &&
-                                item.id != activeGuidedMaterialId,
-                          )
+                          .where((item) {
+                            if (item.nodeId != entry.$2.id) return false;
+                            if (item.id == activeGuidedMaterialId) {
+                              return false;
+                            }
+                            // 当前节点离开 ASSET 后，素材改由下方引导面板展示，避免与对话提示叠在一起。
+                            if (entry.$2.id == snapshot.currentNodeId &&
+                                teachingFlow != null &&
+                                teachingFlow.stage !=
+                                    RemoteTeachingStage.asset) {
+                              return false;
+                            }
+                            return true;
+                          })
                           .toList(growable: false),
                       onOpenWhiteboard: () => _openWhiteboard(entry.$2),
                     ),
                   ),
                   if (teachingFlow != null)
                     _GuidedTeachingActionPanel(
+                      key: _guidedActionPanelKey,
                       flow: teachingFlow,
+                      guidance: snapshot.studentGuidance,
+                      capabilities: snapshot.capabilities,
                       material: guidedMaterial,
                       assetEventType: guidedEventType,
                       onAssetComplete:
@@ -549,6 +1038,15 @@ final class _RemoteLearningSessionPageState
                                     ...interactionPayload,
                                   },
                                 ),
+                      onSkipMaterial:
+                          guidedMaterial == null ||
+                              snapshot.capabilities?.canSkipMaterial != true
+                          ? null
+                          : () => widget.controller.submitMaterialEvent(
+                              materialUsageId: guidedMaterial.id,
+                              eventType: 'MATERIAL_SKIPPED',
+                              payload: const {'reason': 'student_requested'},
+                            ),
                       onStartMicroCheck: _showGuidedPractice,
                       onStartReflection: _complete,
                     ),
@@ -567,7 +1065,17 @@ final class _RemoteLearningSessionPageState
               onRetry: widget.controller.retry,
             ),
           ),
-        if (!state.isReadOnly) _composer(),
+        if (!state.isReadOnly &&
+            !awaitingModeSelection &&
+            !(snapshot.studentGuidance?.showModeSelection ?? false))
+          _ClassroomBottomBar(
+            snapshot: snapshot,
+            controller: widget.controller,
+            inputController: _inputController,
+            onSend: _send,
+            onAskHelp: _askTeacherForHelp,
+            onComplete: _completeCurrentStep,
+          ),
       ],
     );
   }
@@ -609,7 +1117,31 @@ final class _RemoteLearningSessionPageState
       reasoning: draft.reasoning,
       answer: draft.answer,
     );
-    return widget.controller.state.status != RemoteExplorationStatus.failed;
+    if (widget.controller.state.status == RemoteExplorationStatus.failed) {
+      return false;
+    }
+    final snapshot = widget.controller.state.snapshot;
+    final proc = snapshot?.processSchedulerState;
+    final flow = snapshot?.teachingFlow;
+    final course = snapshot?.courseState;
+    final mastered =
+        course?.practiceResult == 'MASTERED' ||
+        proc?.currentPhase == RemoteTeachingPhase.conceptIntroduction ||
+        proc?.currentPhase == RemoteTeachingPhase.goalComplete;
+    if (!mastered && _needsExtraSupportRepairAck(snapshot)) {
+      _scheduleExtraSupportAutoAdvance();
+    } else if (!mastered &&
+        flow?.feedback?.trim().isNotEmpty == true &&
+        mounted) {
+      final feedback = flow!.feedback!.trim();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('AI 老师：$feedback'),
+          duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+    return true;
   }
 
   Future<bool> _retryGuidedPractice() async {
@@ -683,78 +1215,40 @@ final class _RemoteLearningSessionPageState
     );
   }
 
-  Widget _composer() {
-    final state = widget.controller.state;
-    final busy =
-        state.status == RemoteExplorationStatus.submitting ||
-        state.snapshot?.teachingFlow?.stage == RemoteTeachingStage.focus;
-    final modeText = switch (state.composerMode) {
-      RemoteComposerMode.currentPath => null,
-      RemoteComposerMode.continueFromNode => '下一问将从所选节点继续',
-      RemoteComposerMode.branchFromNode => '下一问将从所选节点新开支线',
-    };
-    return Material(
-      key: const ValueKey('prestudy-question-composer'),
-      elevation: 8,
-      color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (modeText != null)
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      modeText,
-                      style: const TextStyle(
-                        color: _brand,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: widget.controller.cancelPreparedAction,
-                    child: const Text('取消'),
-                  ),
-                ],
-              ),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    key: const ValueKey('remote-question-input'),
-                    controller: _inputController,
-                    minLines: 1,
-                    maxLines: 4,
-                    onSubmitted: busy ? null : (_) => _send(),
-                    decoration: const InputDecoration(
-                      hintText: '写下你的发现、疑问或一个反例…',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  key: const ValueKey('remote-send-question'),
-                  onPressed: busy ? null : _send,
-                  icon: busy
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.arrow_upward_rounded),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
+  Future<void> _askTeacherForHelp() async {
+    final snapshot = widget.controller.state.snapshot;
+    final caps = snapshot?.capabilities;
+    if (caps?.canSkipMaterial == true) {
+      _guidedActionPanelKey.currentState?.requestHelp();
+      return;
+    }
+    _inputController.text = '我有疑问，请再解释一下';
+    await _send();
+  }
+
+  Future<void> _completeCurrentStep() async {
+    final snapshot = widget.controller.state.snapshot;
+    final caps = snapshot?.capabilities;
+    if (_needsExtraSupportRepairAck(snapshot)) {
+      await _acknowledgeExtraSupportRepair(autoOpenPractice: false);
+      return;
+    }
+    if (caps?.canSubmitMaterial == true) {
+      await _guidedActionPanelKey.currentState?.submitAssetIfReady();
+      return;
+    }
+    if (caps?.canSubmitPractice == true) {
+      await _showGuidedPractice();
+      return;
+    }
+    if (caps?.canComplete == true) {
+      await _complete();
+      return;
+    }
+    if (caps?.canSubmitText == true) {
+      _inputController.text = '我完成了，可以继续';
+      await _send();
+    }
   }
 
   Future<void> _send() async {
@@ -1052,6 +1546,21 @@ String _explorationConceptLabel(RemoteLearningNode node) {
 String? _answerSourceLabel(RemoteLearningNode node) =>
     StudentLearningNarrative.answerContextLabel(node.answerSource);
 
+String _teacherMessageForNode(
+  RemoteLearningNode node, {
+  RemoteTeachingFlow? flow,
+  required bool isCurrent,
+}) {
+  final answer = node.answer.trim();
+  if (answer.isNotEmpty) {
+    return answer;
+  }
+  if (!isCurrent || flow == null) return '';
+  final feedback = flow.feedback?.trim();
+  if (feedback != null && feedback.isNotEmpty) return feedback;
+  return flow.currentAction.prompt.trim();
+}
+
 /// 课堂顶部只呈现最近的有效认知路径，完整结构按需展开，不持续挤压教学空间。
 final class _ConceptPathStrip extends StatelessWidget {
   const _ConceptPathStrip({required this.snapshot, required this.onOpenMap});
@@ -1345,16 +1854,313 @@ final class _PreStudyTimingCue extends StatelessWidget {
   }
 }
 
+/// 顶部进度条：课程标题 + 当前步骤 / 总步骤。
+final class _LessonProgressHeader extends StatelessWidget {
+  const _LessonProgressHeader({required this.snapshot});
+
+  final RemoteLearningSessionSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final info = _lessonProgressInfo(snapshot);
+    final progress = info.currentStep / info.totalSteps;
+    return Container(
+      key: const ValueKey('lesson-progress-header'),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5DFEA)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  info.title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: _ink,
+                  ),
+                ),
+              ),
+              Text(
+                '进度 ${info.currentStep}/${info.totalSteps} 步',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: _brand,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 6,
+              backgroundColor: const Color(0xFFEDE8F5),
+              color: _brand,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '当前：${info.stepLabel}',
+            style: const TextStyle(fontSize: 12, color: _muted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// AI 老师左对齐气泡，与任务卡片分离。
+final class _TeacherChatBubble extends StatelessWidget {
+  const _TeacherChatBubble({required this.message, this.compact = false});
+
+  final String message;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    if (message.trim().isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12, right: 48),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const CircleAvatar(
+            radius: 18,
+            backgroundColor: _brand,
+            child: Icon(Icons.school_outlined, color: Colors.white, size: 20),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Container(
+              padding: EdgeInsets.fromLTRB(
+                compact ? 12 : 16,
+                compact ? 10 : 14,
+                compact ? 12 : 16,
+                compact ? 10 : 14,
+              ),
+              decoration: BoxDecoration(
+                color: _teacherBubbleFill,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(6),
+                  topRight: Radius.circular(18),
+                  bottomLeft: Radius.circular(18),
+                  bottomRight: Radius.circular(18),
+                ),
+                border: Border.all(color: _teacherBubbleBorder),
+                boxShadow: const [
+                  BoxShadow(color: _brand, offset: Offset(-3, 0)),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'AI 老师',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      color: _brand,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    message.trim(),
+                    style: TextStyle(
+                      height: 1.55,
+                      fontSize: compact ? 14 : 16,
+                      color: _ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _classroomInputHint(
+  RemoteLearningSessionSnapshot snapshot, {
+  required bool canType,
+}) {
+  if (canType) return '写下你的想法或疑问…';
+  final stage = snapshot.teachingFlow?.stage;
+  if (stage == RemoteTeachingStage.asset) {
+    return '请先完成上方课堂任务，再回来继续对话';
+  }
+  if (stage == RemoteTeachingStage.focus) {
+    return '请先点击「开始验证」完成独立练习';
+  }
+  return '当前阶段请使用页面上方的操作按钮继续';
+}
+
+String _classroomInputBlockedReason(RemoteLearningSessionSnapshot snapshot) {
+  final stage = snapshot.teachingFlow?.stage;
+  if (stage == RemoteTeachingStage.asset) {
+    return '互动探索阶段：先完成上方 ∈/∉ 判断任务，再提交并继续。';
+  }
+  if (stage == RemoteTeachingStage.focus) {
+    return '独立验证阶段：请点击上方「开始作答」或底部「开始验证」。';
+  }
+  return '当前请先完成页面上方的课堂任务。';
+}
+
+/// 底部固定输入区：文本 + 「我有疑问」「我完成了」快捷按钮。
+final class _ClassroomBottomBar extends StatelessWidget {
+  const _ClassroomBottomBar({
+    required this.snapshot,
+    required this.controller,
+    required this.inputController,
+    required this.onSend,
+    required this.onAskHelp,
+    required this.onComplete,
+  });
+
+  final RemoteLearningSessionSnapshot snapshot;
+  final RemoteExplorationSessionController controller;
+  final TextEditingController inputController;
+  final Future<void> Function() onSend;
+  final Future<void> Function() onAskHelp;
+  final Future<void> Function() onComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = controller.state;
+    final busy = state.status == RemoteExplorationStatus.submitting;
+    final caps = snapshot.capabilities;
+    final canType = caps?.canSubmitText ?? true;
+    final inputHint = _classroomInputHint(snapshot, canType: canType);
+    final canComplete =
+        caps?.canSubmitMaterial == true ||
+        caps?.canSubmitPractice == true ||
+        caps?.canComplete == true ||
+        canType ||
+        _needsExtraSupportRepairAck(snapshot);
+    return Material(
+      key: const ValueKey('classroom-bottom-bar'),
+      elevation: 8,
+      color: Colors.white,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      key: const ValueKey('remote-question-input'),
+                      controller: inputController,
+                      minLines: 1,
+                      maxLines: 3,
+                      enabled: canType && !busy,
+                      onSubmitted: canType && !busy ? (_) => onSend() : null,
+                      decoration: InputDecoration(
+                        hintText: inputHint,
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                        filled: !canType,
+                        fillColor: canType ? null : const Color(0xFFF7F5FA),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    key: const ValueKey('remote-send-question'),
+                    onPressed: canType && !busy ? onSend : null,
+                    icon: busy
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.arrow_upward_rounded),
+                  ),
+                ],
+              ),
+              if (!canType) ...[
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _classroomInputBlockedReason(snapshot),
+                    style: const TextStyle(fontSize: 12, color: _muted),
+                  ),
+                ),
+              ],
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('classroom-ask-help-button'),
+                    onPressed: busy ? null : () => unawaited(onAskHelp()),
+                    icon: const Icon(Icons.help_outline_rounded, size: 18),
+                    label: const Text('我有疑问'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    key: const ValueKey('classroom-complete-step-button'),
+                    onPressed: busy || !canComplete
+                        ? null
+                        : () => unawaited(onComplete()),
+                    icon: const Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 18,
+                    ),
+                    label: Text(_completeButtonLabel(caps)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _completeButtonLabel(RemoteCourseCapabilities? caps) {
+    if (caps?.canSubmitMaterial == true) return '提交并继续';
+    if (caps?.canSubmitPractice == true) return '开始验证';
+    if (caps?.canComplete == true) return '完成总结';
+    final snapshot = controller.state.snapshot;
+    if (_needsExtraSupportRepairAck(snapshot)) return '听懂了，继续巩固';
+    return '我完成了';
+  }
+
+  bool _needsExtraSupportRepairAck(RemoteLearningSessionSnapshot? snapshot) {
+    final flow = snapshot?.teachingFlow;
+    if (flow?.explorationAct != RemoteGuidedExplorationAct.practiceRepair) {
+      return false;
+    }
+    return flow?.stage == RemoteTeachingStage.dialogue ||
+        flow?.stage == RemoteTeachingStage.focus;
+  }
+}
+
 /// 一次课堂只把当前认知关口放在台前；历史过程收进探索地图，避免退化为聊天记录。
 /// 对话区保留学生自己提出的问题和 AI 的反问，让每一轮都能回看并继续分支。
 final class _ClassroomGuideHeader extends StatelessWidget {
   const _ClassroomGuideHeader({
     required this.topic,
-    required this.currentQuestion,
+    required this.hookQuestion,
   });
 
   final String topic;
-  final String currentQuestion;
+  final String hookQuestion;
 
   @override
   Widget build(BuildContext context) {
@@ -1387,7 +2193,7 @@ final class _ClassroomGuideHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 5),
                 Text(
-                  currentQuestion,
+                  hookQuestion,
                   style: const TextStyle(
                     fontSize: 22,
                     height: 1.35,
@@ -1409,22 +2215,228 @@ final class _ClassroomGuideHeader extends StatelessWidget {
   }
 }
 
+/// 历史画板使用所属素材和练习快照完整回放，不复用当前教学动作，避免回看时内容串台或只剩标题。
+final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
+  const _HistoricalBoardSnapshotPanel({
+    required this.snapshot,
+    required this.board,
+  });
+
+  final RemoteLearningSessionSnapshot snapshot;
+  final RemoteTeachingBoardSnapshot board;
+
+  @override
+  Widget build(BuildContext context) {
+    final materials = ClassroomBoardCatalog.materialsForBoard(snapshot, board);
+    final practice = ClassroomBoardCatalog.practiceForBoard(snapshot, board);
+    if (materials.isEmpty && practice == null) {
+      return const SizedBox.shrink();
+    }
+
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 360),
+      child: SingleChildScrollView(
+        key: const ValueKey('historical-board-snapshot-panel'),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final material in materials)
+              _HistoricalMaterialCard(material: material),
+            if (practice != null) _HistoricalPracticeCard(practice: practice),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+final class _HistoricalMaterialCard extends StatelessWidget {
+  const _HistoricalMaterialCard({required this.material});
+
+  final RemoteLearningMaterial material;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: ValueKey('historical-material-${material.id}'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF7),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE8C9A0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.history_edu_rounded, color: Color(0xFFB45309)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  material.title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              const Chip(
+                label: Text('历史素材'),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // 历史素材保留当时的完整视觉，但禁止再次提交或制造新的学习证据。
+          IgnorePointer(
+            child: _RemoteMaterialCard(
+              material: material,
+              embedded: true,
+              onCompletionChanged: (_, _) {},
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _HistoricalPracticeCard extends StatelessWidget {
+  const _HistoricalPracticeCard({required this.practice});
+
+  final RemoteLearningPracticeNode practice;
+
+  @override
+  Widget build(BuildContext context) {
+    final reasoning = practice.latestReasoning?.trim();
+    final answer = practice.latestAnswer?.trim();
+    final feedback = practice.feedback?.trim();
+    return Container(
+      key: ValueKey('historical-practice-${practice.id}'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD8CBFF), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.fact_check_outlined, color: _brand),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  practice.title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+              _HistoricalPracticeStatus(status: practice.status),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(practice.prompt, style: const TextStyle(height: 1.5)),
+          if (reasoning != null && reasoning.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('当时的思路', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text(reasoning, style: const TextStyle(height: 1.45)),
+          ],
+          if (answer != null && answer.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text('当时的结论', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text(answer, style: const TextStyle(height: 1.45)),
+          ],
+          if (feedback != null && feedback.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF7ED),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '老师反馈：$feedback',
+                style: const TextStyle(height: 1.45),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+final class _HistoricalPracticeStatus extends StatelessWidget {
+  const _HistoricalPracticeStatus({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = status.trim().toUpperCase();
+    final (label, color, background) = switch (normalized) {
+      'MASTERED' ||
+      'CORRECT' ||
+      'PASSED' => ('已通过', const Color(0xFF15803D), const Color(0xFFDCFCE7)),
+      'PARTIAL' ||
+      'NEEDS_REVIEW' ||
+      'INCORRECT' => ('需巩固', const Color(0xFFB45309), const Color(0xFFFFEDD5)),
+      _ => ('已作答', const Color(0xFF475569), const Color(0xFFF1F5F9)),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
 /// 引导条只渲染服务端当前动作；素材操作仅决定按钮是否可提交，阶段与证据仍由服务端推进。
 final class _GuidedTeachingActionPanel extends StatefulWidget {
   const _GuidedTeachingActionPanel({
+    super.key,
+    this.snapshot,
+    this.focusBoard,
+    this.isCurrentBoard = true,
     required this.flow,
+    required this.guidance,
+    required this.capabilities,
     required this.material,
     required this.assetEventType,
     required this.onAssetComplete,
-    required this.onStartMicroCheck,
+    required this.onSkipMaterial,
+    this.onSubmitPractice,
+    this.onSendMessage,
+    this.onStartMicroCheck,
     required this.onStartReflection,
   });
 
+  final RemoteLearningSessionSnapshot? snapshot;
+  final RemoteTeachingBoardSnapshot? focusBoard;
+  final bool isCurrentBoard;
   final RemoteTeachingFlow flow;
+  final RemoteStudentGuidance? guidance;
+  final RemoteCourseCapabilities? capabilities;
   final RemoteLearningMaterial? material;
   final String? assetEventType;
   final Future<void> Function(Map<String, Object?> payload)? onAssetComplete;
-  final Future<void> Function() onStartMicroCheck;
+  final Future<void> Function()? onSkipMaterial;
+  final Future<bool> Function(GuidedPracticeDraft draft)? onSubmitPractice;
+  final Future<void> Function(String text)? onSendMessage;
+  final Future<void> Function()? onStartMicroCheck;
   final Future<void> Function() onStartReflection;
 
   @override
@@ -1454,22 +2466,342 @@ final class _GuidedTeachingActionPanelState
     });
   }
 
+  bool get canSubmitAssetNow =>
+      _isAssetReady &&
+      widget.material != null &&
+      widget.assetEventType != null &&
+      widget.onAssetComplete != null;
+
+  Future<void> submitAssetIfReady() async {
+    if (!canSubmitAssetNow) return;
+    await widget.onAssetComplete!(_assetPayload);
+  }
+
+  Future<void> requestHelp() async {
+    if (widget.onSkipMaterial != null) {
+      await widget.onSkipMaterial!();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final flow = widget.flow;
-    final canSubmitAsset =
-        _isAssetReady &&
-        widget.material != null &&
-        widget.assetEventType != null &&
-        widget.onAssetComplete != null;
-    return Container(
+    final guidance = widget.guidance;
+    final focusBoard = widget.focusBoard;
+    final isCurrentBoard = widget.isCurrentBoard;
+
+    if (focusBoard?.kind == 'SUPPORT_BRANCH') {
+      RemoteTeachingBranchRecord? branch;
+      for (final item
+          in widget.snapshot?.teachingArchitecture?.branches ??
+              const <RemoteTeachingBranchRecord>[]) {
+        if (item.id == focusBoard!.branchId) {
+          branch = item;
+          break;
+        }
+      }
+      if (branch != null) {
+        return ClassroomRemediationPanel.fromBranch(
+          branch: branch,
+          knowledgeNodeNames: focusBoard!.knowledgeNodeNames,
+          readOnly: !isCurrentBoard,
+          onQuickAnswer: isCurrentBoard && widget.onSendMessage != null
+              ? widget.onSendMessage
+              : null,
+        );
+      }
+    }
+
+    if (!isCurrentBoard) {
+      if (focusBoard?.kind == 'CHECK') {
+        final practice = _practiceForBoard(focusBoard!, flow);
+        if (practice != null) {
+          return InlinePracticeAnswerPanel(
+            practice: practice,
+            readOnly: true,
+            onSubmit: (_) async => false,
+          );
+        }
+      }
+      return const SizedBox.shrink();
+    }
+
+    final actionHint = guidance != null && guidance.actionHint.trim().isNotEmpty
+        ? guidance.actionHint.trim()
+        : flow.currentAction.prompt.trim();
+    final showMaterial =
+        widget.capabilities?.canSubmitMaterial ??
+        guidance?.showMaterialArea ??
+        (flow.stage == RemoteTeachingStage.asset &&
+            widget.material?.componentKey != null);
+    final showPractice =
+        widget.capabilities?.canSubmitPractice ??
+        guidance?.showPracticeArea ??
+        flow.stage == RemoteTeachingStage.focus;
+    final isConsolidation =
+        flow.currentAction.reasonCode == 'GUIDED_CONSOLIDATION_CHECK_READY' ||
+        guidance?.stageLabel == '巩固练习';
+    final practice = flow.activePractice;
+    final showRepairDialogue =
+        flow.stage == RemoteTeachingStage.dialogue &&
+        flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair;
+
+    return Column(
       key: const ValueKey('guided-teaching-action-panel'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (showRepairDialogue && widget.onSendMessage != null)
+          ClassroomRemediationPanel(
+            topic: focusBoard?.knowledgeNodeNames.isNotEmpty == true
+                ? focusBoard!.knowledgeNodeNames.first
+                : '薄弱知识点',
+            feedback: flow.feedback?.trim() ?? '',
+            repairFocus: flow.repairFocus,
+            onQuickAnswer: widget.onSendMessage,
+          ),
+        if (showMaterial && widget.material == null)
+          _GuidedMaterialPlaceholder(goal: flow.goal, stage: flow.stage),
+        if (showMaterial && widget.material != null)
+          _ClassroomTaskCard(
+            title: _classroomTaskTitle(widget.material, flow),
+            material: widget.material!,
+            onCompletionChanged: _setAssetReadiness,
+            canSubmit: canSubmitAssetNow,
+            onSubmit: () => unawaited(submitAssetIfReady()),
+          )
+        else if (showPractice &&
+            widget.onSubmitPractice != null &&
+            practice != null)
+          InlinePracticeAnswerPanel(
+            practice: practice,
+            isConsolidation: isConsolidation,
+            onSubmit: widget.onSubmitPractice!,
+          )
+        else if (showPractice && widget.onStartMicroCheck != null)
+          _PracticeReadyCard(
+            practice: practice,
+            actionHint: actionHint,
+            isConsolidation: isConsolidation,
+            onStart: () => unawaited(widget.onStartMicroCheck!()),
+          )
+        else if (widget.capabilities?.canComplete ??
+            flow.stage == RemoteTeachingStage.reflect)
+          Padding(
+            padding: const EdgeInsets.only(left: 44),
+            child: FilledButton.icon(
+              key: const ValueKey('guided-start-reflection-button'),
+              onPressed: () => unawaited(widget.onStartReflection()),
+              icon: const Icon(Icons.edit_note_rounded, size: 18),
+              label: const Text('写下反思并完成'),
+            ),
+          ),
+      ],
+    );
+  }
+
+  RemoteGuidedPractice? _practiceForBoard(
+    RemoteTeachingBoardSnapshot board,
+    RemoteTeachingFlow flow,
+  ) {
+    if (board.practiceId != null &&
+        flow.activePractice?.id == board.practiceId) {
+      return flow.activePractice;
+    }
+    final graphNode = widget.snapshot?.learningGraph?.practice
+        .where((item) => item.id == board.practiceId)
+        .toList(growable: false);
+    if (graphNode == null || graphNode.isEmpty) return null;
+    final node = graphNode.first;
+    return RemoteGuidedPractice(
+      id: node.id,
+      title: node.title,
+      prompt: node.prompt,
+      reasoningLabel: '理由',
+      answerLabel: '结论',
+    );
+  }
+}
+
+/// 独立验证阶段：把练习题干和操作入口放在同一卡片里，避免只有一句提示。
+final class _PracticeReadyCard extends StatelessWidget {
+  const _PracticeReadyCard({
+    required this.practice,
+    required this.actionHint,
+    required this.isConsolidation,
+    required this.onStart,
+  });
+
+  final RemoteGuidedPractice? practice;
+  final String actionHint;
+  final bool isConsolidation;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = practice?.title.trim();
+    final prompt = practice?.prompt.trim();
+    final cardTitle = isConsolidation
+        ? (title?.isNotEmpty == true ? '巩固练习：$title' : '巩固练习')
+        : (title?.isNotEmpty == true ? '独立验证：$title' : '独立验证');
+    final defaultHint = isConsolidation
+        ? '换一道稍不同的巩固题，用刚才补到的原理独立试一次。'
+        : '打开一道新题，用刚才发现的方法独立试一次。';
+    final buttonLabel = isConsolidation ? '开始巩固' : '开始作答';
+    return Container(
+      key: const ValueKey('practice-ready-card'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFF2ECFF), Color(0xFFF9F7FD)],
-        ),
+        color: const Color(0xFFF7F3FF),
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFD8CBFF), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('✅', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  cardTitle,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    color: _ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (prompt != null && prompt.isNotEmpty)
+            Text(prompt, style: const TextStyle(height: 1.55, color: _ink))
+          else if (actionHint.isNotEmpty)
+            Text(actionHint, style: const TextStyle(height: 1.55, color: _ink))
+          else
+            Text(
+              defaultHint,
+              style: const TextStyle(height: 1.55, color: _ink),
+            ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const ValueKey('guided-start-practice-button'),
+              onPressed: onStart,
+              icon: const Icon(Icons.fact_check_outlined, size: 18),
+              label: Text(buttonLabel),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 独立课堂任务卡片：与聊天气泡分离，承载互动/练习操作。
+final class _ClassroomTaskCard extends StatelessWidget {
+  const _ClassroomTaskCard({
+    required this.title,
+    required this.material,
+    required this.onCompletionChanged,
+    required this.canSubmit,
+    required this.onSubmit,
+  });
+
+  final String title;
+  final RemoteLearningMaterial material;
+  final void Function(bool isReady, Map<String, Object?> payload)
+  onCompletionChanged;
+  final bool canSubmit;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('classroom-task-card'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF7),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE8C9A0), width: 1.5),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 12,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('📝', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '课堂任务：$title',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 15,
+                    color: _ink,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _RemoteMaterialCard(
+            material: material,
+            embedded: true,
+            onCompletionChanged: onCompletionChanged,
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const ValueKey('guided-asset-complete-button'),
+              onPressed: canSubmit ? onSubmit : null,
+              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
+              label: Text(canSubmit ? '提交并继续' : '请先完成全部判断'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 联调期间真实素材尚未返回时提供可读的课堂内容，真实素材到达后自动被替换。
+final class _GuidedMaterialPlaceholder extends StatelessWidget {
+  const _GuidedMaterialPlaceholder({required this.goal, required this.stage});
+
+  final String goal;
+  final RemoteTeachingStage stage;
+
+  @override
+  Widget build(BuildContext context) {
+    final isChemistry =
+        goal.contains('原子') || goal.contains('化学') || goal.contains('配平');
+    final title = isChemistry ? '原子守恒示例' : '本节课堂示例';
+    final principle = isChemistry
+        ? '化学反应前后，每种元素的原子总数保持不变。下标表示物质组成，不能修改；系数表示微粒个数，可以调整。'
+        : '先观察例子中的不变量，再用自己的话说明变化前后什么保持不变。';
+
+    return Container(
+      key: const ValueKey('guided-material-placeholder'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFFF8F4FF), Color(0xFFF2F8FF)],
+        ),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFFD9C9FF)),
       ),
       child: Column(
@@ -1477,166 +2809,58 @@ final class _GuidedTeachingActionPanelState
         children: [
           Row(
             children: [
-              const Icon(Icons.science_outlined, color: _brand, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                flow.explorationAct == RemoteGuidedExplorationAct.unknown
-                    ? StudentLearningNarrative.stageTitle(flow.stage)
-                    : StudentLearningNarrative.explorationTitle(
-                        flow.explorationAct,
-                      ),
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
+              const Icon(Icons.menu_book_rounded, color: _brand, size: 18),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.w900),
                 ),
+              ),
+              const Chip(
+                label: Text('课堂示例'),
+                visualDensity: VisualDensity.compact,
               ),
             ],
           ),
           const SizedBox(height: 10),
-          Builder(
-            key: const ValueKey('student-learning-journey'),
-            builder: (context) {
-              final currentIndex =
-                  StudentLearningNarrative.explorationJourneyIndex(
-                    flow.stage,
-                    flow.explorationAct,
-                  );
-              return Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: StudentLearningNarrative.explorationJourney.indexed
-                    .map(
-                      (entry) => Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: entry.$1 == currentIndex
-                              ? _brand
-                              : const Color(0xFFEAE5F0),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          entry.$2,
-                          style: TextStyle(
-                            color: entry.$1 == currentIndex
-                                ? Colors.white
-                                : _muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          Text(
-            '今天要发现：${flow.goal}',
-            style: const TextStyle(color: _muted, fontSize: 12),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            flow.currentAction.prompt,
-            style: const TextStyle(fontWeight: FontWeight.w800, height: 1.45),
-          ),
-          if (flow.feedback?.trim().isNotEmpty == true) ...[
-            const SizedBox(height: 8),
-            Text(flow.feedback!, style: const TextStyle(height: 1.4)),
-          ],
-          if (flow.repairFocus?.trim().isNotEmpty == true) ...[
-            const SizedBox(height: 8),
+          Text(principle, style: const TextStyle(height: 1.55, color: _ink)),
+          if (isChemistry) ...[
+            const SizedBox(height: 12),
             Container(
-              key: const ValueKey('guided-repair-focus'),
               width: double.infinity,
-              padding: const EdgeInsets.all(10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF5E5),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(flow.repairFocus!),
-            ),
-          ],
-          if (StudentLearningNarrative.supportMessage(flow.supportLevel)
-              case final supportMessage?) ...[
-            const SizedBox(height: 8),
-            Text(
-              supportMessage,
-              style: const TextStyle(color: _muted, height: 1.4),
-            ),
-          ],
-          const SizedBox(height: 10),
-          if (flow.stage != RemoteTeachingStage.dialogue ||
-              const {
-                RemoteGuidedExplorationAct.postAssetObservation,
-                RemoteGuidedExplorationAct.deepenReasoning,
-                RemoteGuidedExplorationAct.synthesizeDiscovery,
-                RemoteGuidedExplorationAct.transferRevisit,
-                RemoteGuidedExplorationAct.practiceRepair,
-              }.contains(flow.explorationAct)) ...[
-            Container(
-              key: const ValueKey('student-verification-message'),
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: .72),
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Text(
-                StudentLearningNarrative.progressMessage(flow),
-                style: const TextStyle(
-                  color: Color(0xFF5C437D),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '2H₂ + O₂ → 2H₂O',
+                    style: TextStyle(
+                      color: _brand,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  SizedBox(height: 6),
+                  Text('反应前：H 4 个、O 2 个　｜　反应后：H 4 个、O 2 个'),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
           ],
-          if (flow.stage == RemoteTeachingStage.dialogue)
-            const Text(
-              '请在下方输入框继续表达，AI 老师会根据你的想法追问或安排验证。',
-              style: TextStyle(color: Color(0xFF5C437D), fontSize: 12),
-            )
-          else if (flow.stage == RemoteTeachingStage.asset) ...[
-            if (widget.material != null) ...[
-              _RemoteMaterialCard(
-                material: widget.material!,
-                onCompletionChanged: _setAssetReadiness,
-              ),
-              const SizedBox(height: 10),
-            ],
-            FilledButton.icon(
-              key: const ValueKey('guided-asset-complete-button'),
-              onPressed: canSubmitAsset
-                  ? () => unawaited(widget.onAssetComplete!(_assetPayload))
-                  : null,
-              icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
-              label: Text(
-                widget.material == null || widget.assetEventType == null
-                    ? '当前素材暂不支持事件上报'
-                    : _isAssetReady
-                    ? '提交观察并继续'
-                    : '请先完成上方操作',
-              ),
+          const SizedBox(height: 10),
+          Text(
+            stage == RemoteTeachingStage.dialogue
+                ? '想一想：为什么这里调整的是前面的系数，而不是右下角的数字？'
+                : '请结合上面的例子完成当前学习操作。',
+            style: const TextStyle(
+              color: Color(0xFF5C437D),
+              fontWeight: FontWeight.w700,
             ),
-          ] else if (flow.stage == RemoteTeachingStage.focus)
-            FilledButton.icon(
-              key: const ValueKey('guided-start-micro-check-button'),
-              onPressed: () => unawaited(widget.onStartMicroCheck()),
-              icon: const Icon(Icons.task_alt_rounded, size: 18),
-              label: const Text('换个情况试试'),
-            )
-          else if (flow.stage == RemoteTeachingStage.reflect)
-            FilledButton.icon(
-              key: const ValueKey('guided-start-reflection-button'),
-              onPressed: () => unawaited(widget.onStartReflection()),
-              icon: const Icon(Icons.edit_note_rounded, size: 18),
-              label: const Text('写下反思并完成'),
-            ),
+          ),
         ],
       ),
     );
@@ -1662,6 +2886,7 @@ String? _completionEventType(String? componentKey) => switch (componentKey) {
   'force_motion_widget' => 'FORCE_PARAMETERS_COMMITTED',
   'step_order_widget' => 'STEP_ORDER_VERIFIED',
   'unit_economics_widget' => 'UNIT_ECONOMICS_COMMITTED',
+  'set_membership_widget' => 'SET_MEMBERSHIP_VERIFIED',
   _ => null,
 };
 
@@ -1675,49 +2900,14 @@ final class _StudentLearningTimeline extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       key: const ValueKey('student-learning-timeline'),
-      children: turns.indexed
-          .map(
-            (entry) => IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    width: 30,
-                    child: Column(
-                      children: [
-                        Container(
-                          width: 14,
-                          height: 14,
-                          decoration: BoxDecoration(
-                            color: entry.$1 == turns.length - 1
-                                ? _brand
-                                : const Color(0xFF49B984),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x226B23FF),
-                                blurRadius: 6,
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (entry.$1 < turns.length - 1)
-                          Expanded(
-                            child: Container(
-                              width: 2,
-                              color: const Color(0xFFDCCBFF),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Expanded(child: entry.$2),
-                ],
-              ),
-            ),
-          )
-          .toList(growable: false),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (index, turn) in turns.indexed)
+          Padding(
+            padding: EdgeInsets.only(bottom: index < turns.length - 1 ? 4 : 0),
+            child: turn,
+          ),
+      ],
     );
   }
 }
@@ -1728,55 +2918,107 @@ final class _ExplorationTurnCard extends StatelessWidget {
     required this.materials,
     required this.isCurrent,
     required this.onOpenWhiteboard,
+    this.teachingFlow,
   });
 
   final RemoteLearningNode node;
   final List<RemoteLearningMaterial> materials;
   final bool isCurrent;
   final VoidCallback onOpenWhiteboard;
+  final RemoteTeachingFlow? teachingFlow;
 
   @override
   Widget build(BuildContext context) {
+    final question = node.question.trim();
+    final showTeacher = node.answer.trim().isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            key: ValueKey('student-question-${node.id}'),
-            constraints: const BoxConstraints(maxWidth: 560),
-            margin: const EdgeInsets.only(left: 56, bottom: 10),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0E9FF),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _studentContributionLabel(node),
-                  style: TextStyle(
-                    color: _brand,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w900,
+        if (question.isNotEmpty)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Flexible(
+                child: Container(
+                  key: ValueKey('student-question-${node.id}'),
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  margin: const EdgeInsets.only(bottom: 12, left: 48),
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                  decoration: BoxDecoration(
+                    color: _studentBubbleFill,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(18),
+                      topRight: Radius.circular(6),
+                      bottomLeft: Radius.circular(18),
+                      bottomRight: Radius.circular(18),
+                    ),
+                    border: const Border(
+                      right: BorderSide(color: _studentBubbleBorder, width: 3),
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x1A2563EB),
+                        blurRadius: 10,
+                        offset: Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.person_outline_rounded,
+                            size: 14,
+                            color: _studentBubbleBorder,
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            '学生',
+                            style: const TextStyle(
+                              color: _studentBubbleBorder,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        question,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: _studentBubbleInk,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  node.question,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(width: 8),
+              const CircleAvatar(
+                radius: 18,
+                backgroundColor: _studentBubbleBorder,
+                child: Icon(
+                  Icons.person_rounded,
+                  color: Colors.white,
+                  size: 20,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ),
-        _ExplorationClassroom(
-          node: node,
-          materials: materials,
-          isCurrent: isCurrent,
-          onOpenWhiteboard: onOpenWhiteboard,
-        ),
+        if (showTeacher)
+          _ExplorationClassroom(
+            node: node,
+            materials: materials,
+            isCurrent: isCurrent,
+            teachingFlow: teachingFlow,
+            onOpenWhiteboard: onOpenWhiteboard,
+          ),
         const SizedBox(height: 18),
       ],
     );
@@ -1789,107 +3031,24 @@ final class _ExplorationClassroom extends StatelessWidget {
     required this.materials,
     required this.isCurrent,
     required this.onOpenWhiteboard,
+    this.teachingFlow,
   });
 
   final RemoteLearningNode node;
   final List<RemoteLearningMaterial> materials;
   final bool isCurrent;
   final VoidCallback onOpenWhiteboard;
+  final RemoteTeachingFlow? teachingFlow;
 
   @override
   Widget build(BuildContext context) {
-    final sourceLabel = _answerSourceLabel(node);
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 860),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: isCurrent ? Colors.white : const Color(0xFFFCFBFE),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: isCurrent ? _brand : const Color(0xFFE5DFEA),
-          width: isCurrent ? 1.5 : 1,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                isCurrent ? 'AI 老师回应' : 'AI 老师的引导',
-                style: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: onOpenWhiteboard,
-                icon: const Icon(Icons.draw_outlined, size: 16),
-                label: const Text('在白板上演示'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '这一轮我们在发现：${_explorationConceptLabel(node)}',
-            style: const TextStyle(color: _brand, fontWeight: FontWeight.w800),
-          ),
-          if (sourceLabel != null) ...[
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF3EFF8),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text(
-                sourceLabel,
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 8),
-          Text(node.answer, style: const TextStyle(height: 1.65, fontSize: 16)),
-          if (materials.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            ...materials.map(
-              (material) => _RemoteMaterialCard(material: material),
-            ),
-          ],
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF0F7F4),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '下一步',
-                  style: TextStyle(
-                    color: Color(0xFF167A5A),
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  node.followUpQuestion.replaceFirst('下一步可以追问：', ''),
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF175B47),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+    final teacherMessage = _teacherMessageForNode(
+      node,
+      flow: teachingFlow,
+      isCurrent: isCurrent,
     );
+    if (teacherMessage.isEmpty) return const SizedBox.shrink();
+    return _TeacherChatBubble(message: teacherMessage);
   }
 }
 
@@ -1902,14 +3061,51 @@ String _studentContributionLabel(RemoteLearningNode node) =>
     };
 
 final class _RemoteMaterialCard extends StatelessWidget {
-  const _RemoteMaterialCard({required this.material, this.onCompletionChanged});
+  const _RemoteMaterialCard({
+    required this.material,
+    this.onCompletionChanged,
+    this.embedded = false,
+  });
 
   final RemoteLearningMaterial material;
   final void Function(bool isReady, Map<String, Object?> payload)?
   onCompletionChanged;
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!embedded) ...[
+          Row(
+            children: [
+              Icon(_materialIcon(material.type), size: 18, color: _brand),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  material.title,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 9),
+        ],
+        if (material.type == 'INTERACTIVE')
+          _InteractiveLearningMaterial(
+            material: material,
+            onCompletionChanged: onCompletionChanged,
+          )
+        else if (material.type == 'VIDEO')
+          _PlayableProcessMaterial(material: material)
+        else if (material.type == 'FIGURE')
+          _ConceptFigure(material: material)
+        else
+          _FormulaBlock(material: material),
+      ],
+    );
+    if (embedded) return content;
     return Card(
       elevation: 0,
       color: const Color(0xFFF9F8FC),
@@ -1917,38 +3113,7 @@ final class _RemoteMaterialCard extends StatelessWidget {
         side: const BorderSide(color: Color(0xFFE0DBE8)),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(_materialIcon(material.type), size: 18, color: _brand),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    material.title,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 9),
-            if (material.type == 'INTERACTIVE')
-              _InteractiveLearningMaterial(
-                material: material,
-                onCompletionChanged: onCompletionChanged,
-              )
-            else if (material.type == 'VIDEO')
-              _PlayableProcessMaterial(material: material)
-            else if (material.type == 'FIGURE')
-              _ConceptFigure(material: material)
-            else
-              _FormulaBlock(material: material),
-          ],
-        ),
-      ),
+      child: Padding(padding: const EdgeInsets.all(12), child: content),
     );
   }
 
@@ -1990,10 +3155,92 @@ final class _InteractiveLearningMaterialState
   double _mass = 2;
   int _oppositeNumber = -3;
   final List<int> _oppositeHistory = [-3];
+  final Map<String, bool> _setMembershipChoices = {};
+
+  static const _setMembershipItems =
+      <({String id, String element, String setLabel, bool belongs})>[
+        (
+          id: 'three-in-a',
+          element: '3',
+          setLabel: 'A = {1, 2, 3, 4, 5}',
+          belongs: true,
+        ),
+        (
+          id: 'six-not-in-a',
+          element: '6',
+          setLabel: 'A = {1, 2, 3, 4, 5}',
+          belongs: false,
+        ),
+        (
+          id: 'half-not-in-z',
+          element: '0.5',
+          setLabel: 'Z（整数集）',
+          belongs: false,
+        ),
+      ];
 
   @override
   Widget build(BuildContext context) {
     final key = widget.material.componentKey ?? '';
+    if (key == 'set_membership_widget') {
+      final allAnswered = _setMembershipItems.every(
+        (item) => _setMembershipChoices.containsKey(item.id),
+      );
+      final allCorrect = _setMembershipItems.every(
+        (item) => _setMembershipChoices[item.id] == item.belongs,
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '你的任务',
+            style: TextStyle(fontWeight: FontWeight.w900, color: _brand),
+          ),
+          const SizedBox(height: 4),
+          const Text('判断每个对象与集合之间是 ∈（属于）还是 ∉（不属于）。'),
+          const SizedBox(height: 10),
+          for (final item in _setMembershipItems) ...[
+            Text(
+              '${item.element} 与 ${item.setLabel}',
+              style: const TextStyle(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                ChoiceChip(
+                  label: const Text('∈ 属于'),
+                  selected: _setMembershipChoices[item.id] == true,
+                  onSelected: (_) => _updateSetMembership(item.id, true),
+                ),
+                const SizedBox(width: 8),
+                ChoiceChip(
+                  label: const Text('∉ 不属于'),
+                  selected: _setMembershipChoices[item.id] == false,
+                  onSelected: (_) => _updateSetMembership(item.id, false),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
+          Text(
+            !allAnswered
+                ? '请完成全部判断。'
+                : allCorrect
+                ? '很好！你已经能区分元素与集合的两种关系。'
+                : '再想想：集合元素具有确定性，每个对象要么属于，要么不属于。',
+            style: TextStyle(
+              fontSize: 12,
+              color: allCorrect && allAnswered
+                  ? const Color(0xFF167A5A)
+                  : const Color(0xFF9A5B00),
+              fontWeight: allCorrect && allAnswered
+                  ? FontWeight.w700
+                  : FontWeight.normal,
+            ),
+          ),
+        ],
+      );
+    }
     if (key == 'parabola_widget') {
       return Column(
         children: [
@@ -2106,7 +3353,17 @@ final class _InteractiveLearningMaterialState
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('只改系数，不改 H₂、O₂、H₂O 里的右下角数字。'),
+          const Text(
+            '你的任务',
+            style: TextStyle(fontWeight: FontWeight.w900, color: _brand),
+          ),
+          const SizedBox(height: 4),
+          const Text('点击下面的数字，让箭头左右两边 H 和 O 的数量分别相同。'),
+          const SizedBox(height: 4),
+          const Text(
+            '提示：只能改化学式前面的数字；右下角的小数字决定它是什么物质。',
+            style: TextStyle(color: _muted, height: 1.4),
+          ),
           const SizedBox(height: 10),
           Text(
             '${_hydrogenCoefficient}H₂ + ${_oxygenCoefficient}O₂ → ${_waterCoefficient}H₂O',
@@ -2131,12 +3388,13 @@ final class _InteractiveLearningMaterialState
           }),
           const SizedBox(height: 8),
           Text(
-            '左侧 H ${_hydrogenCoefficient * 2} / O ${_oxygenCoefficient * 2}；右侧 H ${_waterCoefficient * 2} / O $_waterCoefficient',
+            '反应前：H ${_hydrogenCoefficient * 2} 个、O ${_oxygenCoefficient * 2} 个'
+            '　｜　反应后：H ${_waterCoefficient * 2} 个、O $_waterCoefficient 个',
             style: const TextStyle(fontSize: 12, color: _muted),
           ),
           const SizedBox(height: 6),
           Text(
-            balanced ? '已配平：两种元素的原子数都守恒。' : '还未配平：先找出哪一种元素的原子数不相等。',
+            balanced ? '完成！反应前后的 H、O 数量都相同。' : '还差一点：看看 H 或 O 哪一种数量还不一样。',
             style: TextStyle(
               fontWeight: FontWeight.w800,
               color: balanced
@@ -2271,6 +3529,24 @@ final class _InteractiveLearningMaterialState
     widget.onCompletionChanged?.call(isReady, payload);
   }
 
+  void _updateSetMembership(String itemId, bool belongs) {
+    setState(() => _setMembershipChoices[itemId] = belongs);
+    final answers = {
+      for (final item in _setMembershipItems)
+        item.id: _setMembershipChoices[item.id],
+    };
+    final allAnswered = _setMembershipItems.every(
+      (item) => answers.containsKey(item.id),
+    );
+    final allCorrect = _setMembershipItems.every(
+      (item) => answers[item.id] == item.belongs,
+    );
+    _reportCompletion(allAnswered, {
+      'answers': answers,
+      'allCorrect': allCorrect,
+    });
+  }
+
   void _reportReactionReadiness() {
     final isBalanced =
         _hydrogenCoefficient * 2 == _waterCoefficient * 2 &&
@@ -2337,22 +3613,45 @@ final class _ConceptFigure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final description =
-        material.payload['description']?.toString() ?? '观察结构之间的连接关系';
+    final description = _studentMaterialCaption(material);
+    final leftLabel = material.materialId == 'chemistry-particle-figure'
+        ? '反应前'
+        : '现象';
+    final rightLabel = material.materialId == 'chemistry-particle-figure'
+        ? '反应后'
+        : description;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFFEAF7F6),
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Expanded(child: _FigureBlock(label: '现象')),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 8),
-            child: Icon(Icons.arrow_forward_rounded),
+          Row(
+            children: [
+              Expanded(child: _FigureBlock(label: leftLabel)),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(Icons.arrow_forward_rounded),
+              ),
+              Expanded(
+                child: _FigureBlock(
+                  label: rightLabel,
+                  emphasized:
+                      material.materialId != 'chemistry-particle-figure',
+                ),
+              ),
+            ],
           ),
-          Expanded(child: _FigureBlock(label: description, emphasized: true)),
+          if (material.materialId == 'chemistry-particle-figure') ...[
+            const SizedBox(height: 10),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 13, height: 1.5, color: _ink),
+            ),
+          ],
         ],
       ),
     );
@@ -2396,7 +3695,7 @@ final class _FormulaBlock extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        material.payload['description']?.toString() ?? material.title,
+        _studentMaterialCaption(material),
         textAlign: TextAlign.center,
         style: const TextStyle(
           fontFamily: 'monospace',
@@ -2424,6 +3723,52 @@ final class _TreePill extends StatelessWidget {
           label,
           style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
         ),
+      ),
+    );
+  }
+}
+
+final class _StaleSessionRestartPanel extends StatelessWidget {
+  const _StaleSessionRestartPanel({required this.onRestart});
+
+  final VoidCallback onRestart;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('stale-session-restart-panel'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7E8),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFF5D08A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.info_outline_rounded, color: Color(0xFFB45309)),
+              SizedBox(width: 8),
+              Text(
+                '这是旧测试会话，流程已失效',
+                style: TextStyle(fontWeight: FontWeight.w900, color: _ink),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '刷新页面无法修复。请返回章节目录，点「开始验收测试」重新开一场。',
+            style: TextStyle(height: 1.5, color: _ink),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: onRestart,
+            icon: const Icon(Icons.restart_alt_rounded, size: 18),
+            label: const Text('返回章节目录，重新开始'),
+          ),
+        ],
       ),
     );
   }

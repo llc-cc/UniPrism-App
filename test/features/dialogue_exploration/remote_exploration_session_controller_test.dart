@@ -712,6 +712,58 @@ void main() {
     controller.inspectNode('node-1');
     expect(controller.prepareBranchFromInspected, throwsA(isA<StateError>()));
   });
+
+  test('snapshot parses dynamic course state and capabilities', () {
+    final snapshot = RemoteLearningSessionSnapshot.fromJson({
+      'session': {
+        'id': 'learning-1',
+        'exploreSessionId': 'explore-1',
+        'topic': '化学方程式配平',
+        'scenarioId': 'prestudy',
+        'status': 'ACTIVE',
+        'revision': 2,
+        'nodeCount': 1,
+        'startedAt': '2026-08-18T01:00:00.000Z',
+        'expiresAt': '2026-08-18T02:00:00.000Z',
+      },
+      'nodes': const [],
+      'materials': const [],
+      'courseState': {
+        'currentStage': 'UNDERSTANDING_CHECK',
+        'currentGoal': 'G1',
+        'currentGoalIndex': 0,
+        'supportCount': 1,
+        'completionStatus': 'IN_PROGRESS',
+        'timeBudget': {
+          'totalMinutes': 35,
+          'elapsedMinutes': 20,
+          'remainingMinutes': 15,
+          'policy': 'NORMAL',
+        },
+      },
+      'teacherDecision': {
+        'action': 'REPEAT',
+        'reasonCode': 'PARTIAL_NEEDS_VARIANT',
+        'reason': '部分掌握，提供变式',
+        'decidedAt': '2026-08-18T01:20:00.000Z',
+      },
+      'allowedActions': ['SUBMIT_PRACTICE'],
+      'capabilities': {
+        'canSubmitText': false,
+        'canSelectMode': false,
+        'canSubmitMaterial': false,
+        'canSkipMaterial': false,
+        'canSwitchMaterial': false,
+        'canSubmitPractice': true,
+        'canComplete': false,
+      },
+    });
+
+    expect(snapshot.courseState?.timeBudget?.remainingMinutes, 15);
+    expect(snapshot.teacherDecision?.action, 'REPEAT');
+    expect(snapshot.capabilities?.canSubmitPractice, isTrue);
+    expect(snapshot.allows('SUBMIT_PRACTICE'), isTrue);
+  });
 }
 
 final class _FakeRemoteApi implements RemoteExplorationGateway {
@@ -899,6 +951,7 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
     String? question,
     String? idempotencyKey,
     RemoteFlowMode flowMode = RemoteFlowMode.openExploration,
+    RemoteSessionEntryMode? entryMode,
   }) async {
     createCalls += 1;
     createIdempotencyKeys.add(idempotencyKey);
@@ -1039,6 +1092,26 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
 
   @override
   Future<String> exportTree(String sessionId) async => '{"schemaVersion":1}';
+
+  @override
+  Future<RemoteTeachingModeOptionsSnapshot> getTeachingModeOptions({
+    required String sessionId,
+  }) async {
+    return RemoteTeachingModeOptionsSnapshot(
+      phase: RemoteTeachingPhase.unknown,
+      currentGoalIndex: 0,
+      options: null,
+    );
+  }
+
+  @override
+  Future<RemoteLearningSessionSnapshot> selectTeachingMode({
+    required String sessionId,
+    required String skill,
+    String? idempotencyKey,
+  }) async {
+    return snapshot;
+  }
 }
 
 RemoteNextLearningOption _nextLearningOption({

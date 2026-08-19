@@ -94,13 +94,14 @@ class UniPrismApp extends StatelessWidget {
         '/help-feedback': (_) => const HelpAndFeedbackPage(),
         '/about': (_) => const AboutAndFilingPage(),
         '/account-security': (_) => const AccountSecurityPage(),
+        if (!AppConfig.isProduction && !kReleaseMode)
+          '/dialogue-exploration-lab': (_) =>
+              _buildDialogueExplorationLabPage(),
         if (AppConfig.developerToolsEnabled) ...{
           // 开发验收页面需要稳定 URL，避免产品负责人必须经过主业务流程才能开始测试。
           '/developer-tools': (_) => const DeveloperToolsPage(),
           '/practice-assessment-lab': (_) =>
               _buildPracticeAssessmentLabPage(),
-          '/dialogue-exploration-lab': (_) =>
-              _buildDialogueExplorationLabPage(),
           '/content-source-test': (_) => const ZhihuContentTestPage(),
           '/github-content-source-test': (_) => const GitHubContentTestPage(),
           '/content-ingestion-preview': (_) =>

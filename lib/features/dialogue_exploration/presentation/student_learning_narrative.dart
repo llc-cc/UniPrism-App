@@ -54,7 +54,7 @@ abstract final class StudentLearningNarrative {
   static String stageTitle(RemoteTeachingStage stage) => switch (stage) {
     RemoteTeachingStage.dialogue => '先说说你的猜想',
     RemoteTeachingStage.asset => '我们验证一下',
-    RemoteTeachingStage.focus => '把刚才的发现用一下',
+    RemoteTeachingStage.focus => '换一道题，自己试一次',
     RemoteTeachingStage.reflect => '把今天的发现说出来',
     RemoteTeachingStage.unknown => '继续探索',
   };
@@ -62,20 +62,16 @@ abstract final class StudentLearningNarrative {
   static String stageLabel(RemoteTeachingStage stage) => switch (stage) {
     RemoteTeachingStage.dialogue => '说出猜想',
     RemoteTeachingStage.asset => '动手验证',
-    RemoteTeachingStage.focus => '迁移应用',
+    RemoteTeachingStage.focus => '自己试一题',
     RemoteTeachingStage.reflect => '整理收获',
     RemoteTeachingStage.unknown => '继续探索',
   };
 
   static String verificationMessage(RemoteEvidenceState evidence) {
-    final missingCount = evidence.missingCodes.length;
-    if (missingCount == 0 || evidence.isReadyForMicroCheck) {
+    if (evidence.isReadyForMicroCheck || evidence.missingCodes.isEmpty) {
       return '这个发现已经得到验证';
     }
-    if (missingCount == 1) {
-      return '还需要一次验证，确认你的想法';
-    }
-    return '还需要 $missingCount 次验证，确认你的想法';
+    return '再用一个例子验证一下你的想法';
   }
 
   /// 迁移失败时要明确告诉学生正在回到探索，避免连续出题造成“刷题补救”的感受。
