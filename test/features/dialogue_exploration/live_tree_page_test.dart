@@ -2198,7 +2198,7 @@ RemoteLearningSessionSnapshot _legacyCheckExtraSupportSnapshot() {
     summary: base.summary,
     learningGraph: base.learningGraph,
     // 线上已有会话可能只剩纠错消息，不带补救阶段、动作名或作答关联；UI 仍须给出明确的继续入口。
-    teachingFlow: _guidedTeachingFlow(RemoteTeachingStage.dialogue),
+    teachingFlow: _guidedTeachingFlow(RemoteTeachingStage.focus),
     processSchedulerState: RemoteProcessSchedulerState(
       schemaVersion: process.schemaVersion,
       lessonPlanId: process.lessonPlanId,

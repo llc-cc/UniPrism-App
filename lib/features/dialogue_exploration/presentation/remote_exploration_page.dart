@@ -92,21 +92,21 @@ bool _isActiveRemediationDialogue({
   required RemoteTeachingPhase? phase,
   String? correctionFeedback,
 }) {
-  if (!isCurrentBoard || flow?.stage != RemoteTeachingStage.dialogue) {
-    return false;
-  }
+  if (!isCurrentBoard) return false;
+
+  final hasCorrectionFeedback = correctionFeedback?.trim().isNotEmpty == true;
+  // 红色纠错反馈已经是进入补救的最终 UI 事实，即使后端误留在 FOCUS 等阶段，也不能继续暴露普通聊天框。
+  if (hasCorrectionFeedback) return true;
+  if (flow?.stage != RemoteTeachingStage.dialogue) return false;
 
   final hasRepairAction =
       flow?.explorationAct == RemoteGuidedExplorationAct.practiceRepair ||
       flow?.explorationAct == RemoteGuidedExplorationAct.transferRevisit;
   final hasAnsweredCheck =
       board?.kind == 'CHECK' && board?.practiceAttemptIds.isNotEmpty == true;
-  final hasCorrectionFeedback = correctionFeedback?.trim().isNotEmpty == true;
-  // 已有会话可能丢失阶段、动作和作答关联；纠错消息是用户已经看到的最终展示证据，必须优先保证后续操作可达。
   return phase == RemoteTeachingPhase.extraSupport ||
       hasRepairAction ||
-      hasAnsweredCheck ||
-      hasCorrectionFeedback;
+      hasAnsweredCheck;
 }
 
 typedef _LessonProgressInfo = ({
