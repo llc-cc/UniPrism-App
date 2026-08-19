@@ -79,7 +79,14 @@ final class _TeachingModeSelectionStageState
   @override
   void didUpdateWidget(covariant TeachingModeSelectionStage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.messages.length > oldWidget.messages.length) {
+    final focusChanged =
+        widget.selectedHistoryBoardId != oldWidget.selectedHistoryBoardId ||
+        widget.selectedHistoryNodeId != oldWidget.selectedHistoryNodeId;
+    if (focusChanged) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _syncScrollAfterFocusChange(),
+      );
+    } else if (widget.messages.length > oldWidget.messages.length) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
     }
   }
@@ -97,6 +104,17 @@ final class _TeachingModeSelectionStageState
       _scrollController.position.maxScrollExtent,
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOut,
+    );
+  }
+
+  void _syncScrollAfterFocusChange() {
+    if (!_scrollController.hasClients) return;
+    // 历史画板从第一句开始回放；返回当前学习时则定位到最新对话。
+    final position = _scrollController.position;
+    _scrollController.jumpTo(
+      widget.isReviewingHistory
+          ? position.minScrollExtent
+          : position.maxScrollExtent,
     );
   }
 

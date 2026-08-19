@@ -466,6 +466,7 @@ final class RemoteLearningMaterial {
     required this.title,
     required this.componentKey,
     required this.payload,
+    this.hasRecordedInteraction = false,
   });
 
   factory RemoteLearningMaterial.fromJson(Map<String, dynamic> json) {
@@ -477,6 +478,9 @@ final class RemoteLearningMaterial {
       title: _requiredString(json, 'title'),
       componentKey: _nullableString(json['componentKey']),
       payload: _mapOrEmpty(json['payload']),
+      hasRecordedInteraction:
+          json['interactionEvents'] is List &&
+          (json['interactionEvents'] as List).isNotEmpty,
     );
   }
 
@@ -487,6 +491,9 @@ final class RemoteLearningMaterial {
   final String title;
   final String? componentKey;
   final Map<String, dynamic> payload;
+
+  /// 历史素材只有产生过完成、跳过或操作事件，才能证明学生真实到达过该节点。
+  final bool hasRecordedInteraction;
 }
 
 /// 学生主动复述后生成的本次学习产出摘要。
