@@ -30,6 +30,7 @@ final class TeachingModeSelectionStage extends StatefulWidget {
     this.selectedHistoryBoardId,
     this.onBoardTap,
     this.boardPanelTitle,
+    this.emptyConversationLabel,
     this.isReviewingHistory = false,
     this.onReturnToCurrent,
   });
@@ -62,6 +63,7 @@ final class TeachingModeSelectionStage extends StatefulWidget {
   final String? selectedHistoryBoardId;
   final void Function(String boardId)? onBoardTap;
   final String? boardPanelTitle;
+  final String? emptyConversationLabel;
   final bool isReviewingHistory;
   final VoidCallback? onReturnToCurrent;
 
@@ -198,6 +200,7 @@ final class _TeachingModeSelectionStageState
                         mobile: widget.mobile,
                         initializing: widget.initializing,
                         teacherTyping: widget.teacherTyping,
+                        emptyLabel: widget.emptyConversationLabel,
                       ),
                     ),
                     if (widget.guidedPanel != null) widget.guidedPanel!,
@@ -233,6 +236,7 @@ final class _IntroChatPanel extends StatelessWidget {
     required this.mobile,
     required this.initializing,
     required this.teacherTyping,
+    this.emptyLabel,
   });
 
   final ScrollController controller;
@@ -240,6 +244,7 @@ final class _IntroChatPanel extends StatelessWidget {
   final bool mobile;
   final bool initializing;
   final bool teacherTyping;
+  final String? emptyLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -254,7 +259,11 @@ final class _IntroChatPanel extends StatelessWidget {
       child: messages.isEmpty && !teacherTyping
           ? Center(
               child: Text(
-                initializing ? 'AI 老师正在赶来…' : '跟 AI 老师打个招呼，开始这节课吧',
+                initializing
+                    ? 'AI 老师正在赶来…'
+                    : (emptyLabel?.trim().isNotEmpty == true
+                          ? emptyLabel!.trim()
+                          : '跟 AI 老师打个招呼，开始这节课吧'),
                 style: const TextStyle(color: _muted, fontSize: 13),
               ),
             )

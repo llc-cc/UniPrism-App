@@ -701,6 +701,9 @@ final class _RemoteLearningSessionPageState
     final focusBoard = focusBoardId == null
         ? null
         : snapshot.teachingArchitecture?.boardById(focusBoardId);
+    final focusParentBoard = focusBoard?.parentBoardId == null
+        ? null
+        : snapshot.teachingArchitecture?.boardById(focusBoard!.parentBoardId);
     final focusNodeId = state.inspectedNodeId ?? snapshot.currentNodeId!;
     final isCurrentBoard =
         focusBoard?.isActive ??
@@ -770,11 +773,16 @@ final class _RemoteLearningSessionPageState
             guidance?.showMaterialArea == true ||
             snapshot.capabilities?.canSubmitMaterial == true ||
             snapshot.capabilities?.canComplete == true);
+    final isSupportDialogue =
+        isCurrentBoard &&
+        focusBoard?.kind == 'SUPPORT_BRANCH' &&
+        teachingFlow?.stage == RemoteTeachingStage.dialogue;
     final showReplyBar =
         isCurrentBoard &&
         !state.isReadOnly &&
         !showModeOptions &&
         !showClassroomBottom &&
+        !isSupportDialogue &&
         widget.controller.canSubmitEntryDialogue(snapshot);
 
     void inspectBoard(String boardId) {
@@ -798,7 +806,11 @@ final class _RemoteLearningSessionPageState
           : ClassroomBoardCatalog.boardPanelTitle(
               focusBoard,
               isModeSelectionIntro: inIntro && isCurrentBoard,
+              parentBoard: focusParentBoard,
             ),
+      emptyConversationLabel: isReviewingHistory && messages.isEmpty
+          ? '这个阶段没有单独保存聊天内容，请查看下方的阶段说明。'
+          : null,
       onBoardTap: inspectBoard,
       isReviewingHistory: isReviewingHistory,
       onReturnToCurrent: isReviewingHistory
@@ -2254,11 +2266,31 @@ final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final materials = ClassroomBoardCatalog.materialsForBoard(snapshot, board);
-    final practice = ClassroomBoardCatalog.practiceForBoard(snapshot, board);
-    if (materials.isEmpty && practice == null) {
-      return const SizedBox.shrink();
+    final architecture = snapshot.teachingArchitecture;
+    final parentBoard = board.parentBoardId == null
+        ? null
+        : architecture?.boardById(board.parentBoardId);
+    final replayBoards =
+        board.kind == 'SUPPORT_BRANCH' && parentBoard?.kind == 'CHECK'
+        ? [parentBoard!, board]
+        : [board];
+    final materialsById = <String, RemoteLearningMaterial>{};
+    final practicesById = <String, RemoteLearningPracticeNode>{};
+    for (final replayBoard in replayBoards) {
+      for (final material in ClassroomBoardCatalog.materialsForBoard(
+        snapshot,
+        replayBoard,
+      )) {
+        materialsById[material.id] = material;
+      }
+      final practice = ClassroomBoardCatalog.practiceForBoard(
+        snapshot,
+        replayBoard,
+      );
+      if (practice != null) practicesById[practice.id] = practice;
     }
+    final materials = materialsById.values.toList(growable: false);
+    final practices = practicesById.values.toList(growable: false);
 
     return ConstrainedBox(
       constraints: const BoxConstraints(maxHeight: 300),
@@ -2267,11 +2299,56 @@ final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (materials.isEmpty && practices.isEmpty)
+              _HistoricalBoardOverviewCard(board: board),
             for (final material in materials)
               _HistoricalMaterialCard(material: material),
-            if (practice != null) _HistoricalPracticeCard(practice: practice),
+            for (final practice in practices)
+              _HistoricalPracticeCard(practice: practice),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 没有独立对话或素材的历史阶段仍展示真实课程信息，避免误回退成“请和老师打招呼”的空白开场。
+final class _HistoricalBoardOverviewCard extends StatelessWidget {
+  const _HistoricalBoardOverviewCard({required this.board});
+
+  final RemoteTeachingBoardSnapshot board;
+
+  @override
+  Widget build(BuildContext context) {
+    final topics = board.knowledgeNodeNames
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .join('、');
+    final topicText = topics.isEmpty ? '本阶段知识点' : topics;
+    return Container(
+      key: const ValueKey('historical-board-overview-card'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFCBD5E1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '本阶段学习内容',
+            style: TextStyle(fontWeight: FontWeight.w900, color: _ink),
+          ),
+          const SizedBox(height: 8),
+          Text(topicText, style: const TextStyle(height: 1.5, color: _ink)),
+          const SizedBox(height: 6),
+          const Text(
+            '这一步没有单独保存聊天或素材；相关讲解已融入后续互动和练习。回看不会改变当前学习进度。',
+            style: TextStyle(height: 1.45, color: _muted, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -2527,17 +2604,16 @@ final class _GuidedTeachingActionPanelState
           break;
         }
       }
-      final isRepairDialogue =
-          isCurrentBoard &&
-          flow.stage == RemoteTeachingStage.dialogue &&
-          flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair;
-      // 当前补救分支进入 FOCUS 后必须交还给正式练习面板；否则快捷讲解卡会截住作答和提交接口。
-      if (branch != null && (!isCurrentBoard || isRepairDialogue)) {
+      final isSupportDialogue =
+          isCurrentBoard && flow.stage == RemoteTeachingStage.dialogue;
+      // 补救分支的所有对话步骤都收在练习页内，并给出唯一继续入口；进入 FOCUS 后再交还正式作答面板。
+      if (branch != null && (!isCurrentBoard || isSupportDialogue)) {
         return ClassroomRemediationPanel.fromBranch(
           branch: branch,
           knowledgeNodeNames: focusBoard!.knowledgeNodeNames,
           readOnly: !isCurrentBoard,
-          onContinue: isRepairDialogue && widget.onSendMessage != null
+          nextAction: isSupportDialogue ? flow.currentAction.prompt : null,
+          onContinue: isSupportDialogue && widget.onSendMessage != null
               ? () => widget.onSendMessage!('继续')
               : null,
         );

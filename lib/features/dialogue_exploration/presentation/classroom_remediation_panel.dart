@@ -12,6 +12,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
     required this.topic,
     required this.feedback,
     this.repairFocus,
+    this.nextAction,
     this.readOnly = false,
     this.onContinue,
   });
@@ -19,6 +20,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
   final String topic;
   final String feedback;
   final String? repairFocus;
+  final String? nextAction;
   final bool readOnly;
   final Future<void> Function()? onContinue;
 
@@ -27,6 +29,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
     required List<String> knowledgeNodeNames,
     bool readOnly = false,
     Future<void> Function()? onContinue,
+    String? nextAction,
   }) {
     final topic = knowledgeNodeNames.isNotEmpty
         ? knowledgeNodeNames.first
@@ -35,6 +38,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
       topic: topic,
       feedback: branch.feedback,
       repairFocus: branch.repairFocus,
+      nextAction: nextAction,
       readOnly: readOnly,
       onContinue: onContinue,
     );
@@ -102,14 +106,45 @@ final class ClassroomRemediationPanel extends StatelessWidget {
             style: const TextStyle(height: 1.55, color: _ink, fontSize: 14),
           ),
           if (!readOnly && onContinue != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
+            Container(
+              key: const ValueKey('remediation-next-step'),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFED7AA)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '下一步怎么做',
+                    style: TextStyle(fontWeight: FontWeight.w900, color: _ink),
+                  ),
+                  const SizedBox(height: 5),
+                  if (nextAction?.trim().isNotEmpty == true) ...[
+                    Text(
+                      nextAction!.trim(),
+                      style: const TextStyle(height: 1.45, color: _ink),
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                  const Text(
+                    '点击下方按钮继续；巩固题会留在这个练习页面内，你只需填写“判断依据”和“结论”。',
+                    style: TextStyle(height: 1.45, color: _muted, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
                 key: const ValueKey('remediation-start-consolidation'),
                 onPressed: () => onContinue!(),
                 icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                label: const Text('听懂了，开始巩固'),
+                label: const Text('我明白了，继续这道练习'),
               ),
             ),
           ] else if (readOnly)

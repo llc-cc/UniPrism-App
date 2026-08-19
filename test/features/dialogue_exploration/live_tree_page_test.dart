@@ -1844,6 +1844,16 @@ void main() {
       expect(find.text('元素相同且集合没有顺序。'), findsWidgets);
       expect(find.textContaining('还需要明确说明无序性'), findsWidgets);
 
+      await tester.tap(find.text('概念：∈/∉ 与三大特性'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('historical-board-overview-card')),
+        findsOneWidget,
+      );
+      expect(find.text('本阶段学习内容'), findsOneWidget);
+      expect(find.text('跟 AI 老师打个招呼，开始这节课吧'), findsNothing);
+
       await tester.tap(find.byKey(const ValueKey('return-to-current-board')));
       await tester.pump();
 
@@ -1881,8 +1891,9 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('remediation-quick-yes')), findsNothing);
-
-    await tester.tap(find.text('老师帮助 #1'));
+    expect(find.text('老师帮助 #1'), findsNothing);
+    expect(find.text('练习：无序性判断'), findsOneWidget);
+    expect(find.text('练习 · 无序性判断'), findsOneWidget);
     await tester.enterText(
       find.byKey(const ValueKey('inline-practice-reasoning-input')),
       '补救理由',
@@ -1907,6 +1918,51 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'support explanation continues into consolidation on the same practice page',
+    (tester) async {
+      tester.view.physicalSize = const Size(1440, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final focusSnapshot = _supportFocusSnapshot();
+      final api = _UiFakeApi(
+        sessionSnapshot: _supportDialogueSnapshot(),
+        turnSnapshots: [focusSnapshot],
+      );
+      final controller = RemoteExplorationSessionController(api: api);
+      await controller.loadEntry('quadratic-function');
+      await controller.start();
+      await tester.pumpWidget(
+        MaterialApp(home: RemoteLearningSessionPage(controller: controller)),
+      );
+      await tester.pump();
+
+      expect(find.text('老师帮助 #1'), findsNothing);
+      expect(find.text('练习：无序性判断'), findsOneWidget);
+      expect(find.text('练习 · 无序性判断'), findsOneWidget);
+      expect(find.text('下一步怎么做'), findsOneWidget);
+      expect(find.byKey(const ValueKey('remote-question-input')), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('remediation-start-consolidation')),
+      );
+      await tester.pump();
+
+      expect(api.turnCalls, 1);
+      expect(find.text('练习：无序性判断'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('inline-practice-reasoning-input')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('inline-practice-answer-input')),
+        findsOneWidget,
+      );
+    },
+  );
 
   test('check history restores teacher feedback after branch trigger text', () {
     final messages = ClassroomBoardCatalog.messagesForBoard(
@@ -2043,6 +2099,42 @@ RemoteLearningSessionSnapshot _supportFocusSnapshot() {
         ),
       ],
     ),
+  );
+}
+
+RemoteLearningSessionSnapshot _supportDialogueSnapshot() {
+  final base = _supportFocusSnapshot();
+  return RemoteLearningSessionSnapshot(
+    session: base.session,
+    currentNodeId: base.currentNodeId,
+    activeStrategy: base.activeStrategy,
+    nodes: base.nodes,
+    conceptNodes: base.conceptNodes,
+    materials: base.materials,
+    summary: base.summary,
+    learningGraph: base.learningGraph,
+    teachingFlow: _guidedTeachingFlow(
+      RemoteTeachingStage.dialogue,
+      feedback: '需要补充无序性的判断依据。',
+      repairFocus: '元素完全相同，排列顺序不影响集合。',
+      supportLevel: 1,
+      explorationAct: RemoteGuidedExplorationAct.transferRevisit,
+    ),
+    processSchedulerState: base.processSchedulerState,
+    studentGuidance: base.studentGuidance,
+    courseState: base.courseState,
+    teacherDecision: base.teacherDecision,
+    capabilities: const RemoteCourseCapabilities(
+      canSubmitText: true,
+      canSelectMode: false,
+      canSubmitMaterial: false,
+      canSkipMaterial: false,
+      canSwitchMaterial: false,
+      canSubmitPractice: false,
+      canComplete: false,
+    ),
+    allowedActions: base.allowedActions,
+    teachingArchitecture: base.teachingArchitecture,
   );
 }
 
@@ -2362,6 +2454,23 @@ RemoteLearningSessionSnapshot _historicalBoardSnapshot() {
           'parentBoardId': 'board-example',
           'isActive': false,
           'openedAt': '2026-08-19T01:02:00.000Z',
+        },
+        {
+          'id': 'board-concept-empty',
+          'kind': 'CONCEPT',
+          'label': '概念：∈/∉ 与三大特性',
+          'goalId': 'G1',
+          'goalIndex': 0,
+          'knowledgeNodeIds': ['set-membership', 'set-unordered'],
+          'knowledgeNodeNames': ['∈/∉、确定性、互异性与无序性'],
+          'nodeIds': [],
+          'materialUsageIds': [],
+          'practiceAttemptIds': [],
+          'practiceId': null,
+          'branchId': null,
+          'parentBoardId': 'board-check',
+          'isActive': false,
+          'openedAt': '2026-08-19T01:02:30.000Z',
         },
         {
           'id': 'board-current',
