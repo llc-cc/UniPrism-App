@@ -20,6 +20,7 @@ sealed class RemoteTurnStreamEvent {
   const RemoteTurnStreamEvent();
 }
 
+/// 本轮请求的脱敏追踪标识与服务端模型名称。
 final class RemoteTurnMetadata extends RemoteTurnStreamEvent {
   const RemoteTurnMetadata({required this.traceId, required this.model});
 
@@ -27,18 +28,21 @@ final class RemoteTurnMetadata extends RemoteTurnStreamEvent {
   final String model;
 }
 
+/// 可立即显示的教师正文增量，不代表该轮学习状态已持久化。
 final class RemoteTurnAnswerDelta extends RemoteTurnStreamEvent {
   const RemoteTurnAnswerDelta(this.text);
 
   final String text;
 }
 
+/// 服务端完成校验与持久化后返回的完整学习快照。
 final class RemoteTurnCommitted extends RemoteTurnStreamEvent {
   const RemoteTurnCommitted(this.snapshot);
 
   final RemoteLearningSessionSnapshot snapshot;
 }
 
+/// 流式生成失败后的稳定提示及是否允许退回旧接口。
 final class RemoteTurnFailed extends RemoteTurnStreamEvent {
   const RemoteTurnFailed({required this.message, required this.canFallback});
 
@@ -46,10 +50,16 @@ final class RemoteTurnFailed extends RemoteTurnStreamEvent {
   final bool canFallback;
 }
 
+/// 流关闭时的数值性能与用量指标，两个命名空间保持独立避免键冲突。
 final class RemoteTurnDone extends RemoteTurnStreamEvent {
-  RemoteTurnDone(Map<String, num> timings) : timings = Map.unmodifiable(timings);
+  RemoteTurnDone({
+    required Map<String, num> timings,
+    required Map<String, num> usage,
+  }) : timings = Map.unmodifiable(timings),
+       usage = Map.unmodifiable(usage);
 
   final Map<String, num> timings;
+  final Map<String, num> usage;
 }
 
 /// 将 HTTP 字节流按 UTF-8 与 SSE 帧边界增量解析为强类型事件。
@@ -132,7 +142,11 @@ RemoteTurnStreamEvent? _decodeFrame(String eventName, String data) {
         canFallback: canFallback,
       );
     case 'done':
-      return RemoteTurnDone(_decodeMetrics(_decodeObject(data)));
+      final json = _decodeObject(data);
+      return RemoteTurnDone(
+        timings: _decodeMetrics(json, 'timings'),
+        usage: _decodeMetrics(json, 'usage'),
+      );
     default:
       // 向前兼容服务端新增的观测或心跳事件，不让其阻塞教师回复。
       return null;
@@ -165,17 +179,9 @@ String _requiredNonEmptyString(Map<String, dynamic> json, String key) {
   return value;
 }
 
-Map<String, num> _decodeMetrics(Map<String, dynamic> json) {
+Map<String, num> _decodeMetrics(Map<String, dynamic> json, String key) {
   final result = <String, num>{};
-  final timings = json['timings'];
-  final usage = json['usage'];
-  if (timings is Map || usage is Map) {
-    if (timings is Map) _copyNumericValues(result, timings);
-    if (usage is Map) _copyNumericValues(result, usage);
-  } else {
-    _copyNumericValues(result, json);
-  }
-  if (result.isEmpty) _invalidEvent();
+  _copyNumericValues(result, json[key]);
   return result;
 }
 

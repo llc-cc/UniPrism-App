@@ -33,17 +33,33 @@ void main() {
       expect((events[2] as RemoteTurnAnswerDelta).text, '，同学');
       expect((events[3] as RemoteTurnCommitted).snapshot.session.id, 'learning-1');
       expect((events[4] as RemoteTurnDone).timings['totalMs'], 45);
+      expect((events[4] as RemoteTurnDone).usage['inputTokens'], 8);
     });
 
-    test('accepts CRLF frames and joins multiple data lines', () async {
+    test('accepts CRLF frames and joins multiple non-empty data lines', () async {
       final events = await decodeRemoteTurnSse(
         Stream<List<int>>.value(
-          utf8.encode('event: answer_delta\r\ndata: {"text":"第一行"}\r\ndata: \r\n\r\n'),
+          utf8.encode('event: answer_delta\r\ndata: {"text":"第一行"}\r\ndata:  \r\n\r\n'),
         ),
       ).toList();
 
       expect(events.single, isA<RemoteTurnAnswerDelta>());
       expect((events.single as RemoteTurnAnswerDelta).text, '第一行');
+    });
+
+    test('accepts an event line and blank separator split across chunks', () async {
+      final bytes = utf8.encode('event: answer_delta\ndata: {"text":"边界"}\n\n');
+
+      final events = await decodeRemoteTurnSse(
+        Stream<List<int>>.fromIterable([
+          bytes.sublist(0, 4),
+          bytes.sublist(4, bytes.length - 1),
+          bytes.sublist(bytes.length - 1),
+        ]),
+      ).toList();
+
+      expect(events.single, isA<RemoteTurnAnswerDelta>());
+      expect((events.single as RemoteTurnAnswerDelta).text, '边界');
     });
 
     test('maps error frames and ignores unknown events', () async {
@@ -93,6 +109,23 @@ void main() {
 
       await expectLater(stream.toList(), throwsA(isA<RemoteExplorationException>()));
     });
+
+    test('rejects done frames without numeric timings and usage maps', () async {
+      const invalidPayloads = [
+        '{"timings":{"totalMs":1}}',
+        '{"timings":{"totalMs":1},"usage":"invalid"}',
+        '{"timings":{"totalMs":"slow"},"usage":{"inputTokens":1}}',
+      ];
+
+      for (final payload in invalidPayloads) {
+        await expectLater(
+          decodeRemoteTurnSse(
+            Stream<List<int>>.value(utf8.encode('event: done\ndata: $payload\n\n')),
+          ).toList(),
+          throwsA(isA<RemoteExplorationException>()),
+        );
+      }
+    });
   });
 
   test('submitTurnStream exposes a delta before the response stream closes', () async {
@@ -135,6 +168,118 @@ void main() {
     await responseController.close();
     await iterator.cancel();
   });
+
+  test('submitTurnStream aborts a request cancelled before response headers', () async {
+    final headersPending = Completer<http.StreamedResponse>();
+    final requestSent = Completer<http.AbortableRequest>();
+    final aborted = Completer<void>();
+    var requestCount = 0;
+    final client = _StreamClient((request) async {
+      requestCount += 1;
+      if (requestCount == 1) {
+        final abortable = request as http.AbortableRequest;
+        requestSent.complete(abortable);
+        abortable.abortTrigger!.then((_) => aborted.complete());
+        return headersPending.future;
+      }
+      return http.StreamedResponse(
+        Stream<List<int>>.value(
+          utf8.encode('event: answer_delta\ndata: {"text":"恢复"}\n\n'),
+        ),
+        200,
+      );
+    });
+    final api = _streamingApi(client);
+    final subscription = api
+        .submitTurnStream(sessionId: 'learning-1', question: '取消')
+        .listen((_) {});
+
+    await requestSent.future.timeout(const Duration(seconds: 1));
+    await subscription.cancel();
+    await aborted.future;
+    headersPending.completeError(http.RequestAbortedException());
+
+    final next = await api
+        .submitTurnStream(sessionId: 'learning-1', question: '重试')
+        .first;
+    expect(next, isA<RemoteTurnAnswerDelta>());
+    expect(requestCount, 2);
+  });
+
+  test('submitTurnStream aborts an active body subscription without closing client', () async {
+    final bodyCancelled = Completer<void>();
+    final deltaReceived = Completer<void>();
+    final abortObserved = Completer<void>();
+    final requestSent = Completer<http.AbortableRequest>();
+    final body = StreamController<List<int>>(
+      onCancel: () => bodyCancelled.complete(),
+    );
+    final client = _StreamClient((request) async {
+      final abortable = request as http.AbortableRequest;
+      requestSent.complete(abortable);
+      abortable.abortTrigger!.then((_) => abortObserved.complete());
+      return http.StreamedResponse(body.stream, 200);
+    });
+    final api = _streamingApi(client);
+    final subscription = api
+        .submitTurnStream(sessionId: 'learning-1', question: '停止')
+        .listen((event) {
+          if (event is RemoteTurnAnswerDelta) deltaReceived.complete();
+        });
+
+    await requestSent.future.timeout(const Duration(seconds: 1));
+    body.add(utf8.encode('event: answer_delta\ndata: {"text":"已开始"}\n\n'));
+    await deltaReceived.future;
+    await subscription.cancel();
+
+    await abortObserved.future.timeout(const Duration(seconds: 1));
+    await bodyCancelled.future.timeout(const Duration(seconds: 1));
+    await body.close();
+  });
+
+  test('submitTurnStream aborts a header request when the timeout elapses', () async {
+    final headersPending = Completer<http.StreamedResponse>();
+    final requestSent = Completer<http.AbortableRequest>();
+    final aborted = Completer<void>();
+    final client = _StreamClient((request) async {
+      final abortable = request as http.AbortableRequest;
+      requestSent.complete(abortable);
+      abortable.abortTrigger!.then((_) => aborted.complete());
+      return headersPending.future;
+    });
+    final api = _streamingApi(client, timeout: const Duration(milliseconds: 5));
+    final result = api
+        .submitTurnStream(sessionId: 'learning-1', question: '超时')
+        .toList();
+
+    await requestSent.future.timeout(const Duration(seconds: 1));
+    await expectLater(
+      result,
+      throwsA(isA<RemoteExplorationException>()),
+    );
+    await aborted.future;
+    headersPending.completeError(http.RequestAbortedException());
+  });
+
+  test('submitTurnStream maps empty and malformed non-2xx responses stably', () async {
+    final bodies = ['', '{'];
+    for (final body in bodies) {
+      final api = _streamingApi(
+        _StreamClient(
+          (_) async => http.StreamedResponse(Stream.value(utf8.encode(body)), 503),
+        ),
+      );
+
+      await expectLater(
+        api.submitTurnStream(sessionId: 'learning-1', question: '失败').toList(),
+        throwsA(
+          isA<RemoteExplorationException>()
+              .having((error) => error.message, 'message', '请求失败，请重试。')
+              .having((error) => error.statusCode, 'statusCode', 503),
+        ),
+      );
+    }
+  });
 }
 
 final class _StreamClient extends http.BaseClient {
@@ -145,6 +290,18 @@ final class _StreamClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) => _send(request);
 }
+
+RemoteExplorationApi _streamingApi(
+  http.Client client, {
+  Duration timeout = const Duration(seconds: 35),
+}) => RemoteExplorationApi(
+  client: client,
+  baseUrl: 'https://teacher.example',
+  timeout: timeout,
+  identityProvider: () async => const RemoteExplorationIdentity(
+    exploreSessionId: 'explore-a',
+  ),
+);
 
 Map<String, Object?> _snapshot() => {
   'session': {
