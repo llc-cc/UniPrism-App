@@ -279,7 +279,14 @@ final class RemoteExplorationApi
   }) {
     late final StreamController<RemoteTurnStreamEvent> controller;
     StreamSubscription<RemoteTurnStreamEvent>? subscription;
+    StreamSubscription<List<int>>? bodySubscription;
+    StreamController<List<int>>? decodedBytes;
+    final abortTrigger = Completer<void>();
     var cancelled = false;
+
+    void abortRequest() {
+      if (!abortTrigger.isCompleted) abortTrigger.complete();
+    }
 
     controller = StreamController<RemoteTurnStreamEvent>(
       onListen: () {
@@ -298,28 +305,44 @@ final class RemoteExplorationApi
               '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/turns/stream',
               body: body,
               idempotencyKey: idempotencyKey,
+              abortTrigger: abortTrigger.future,
             );
-            final streamed = await _client.send(request).timeout(timeout);
+            final streamed = await _client.send(request).timeout(
+              timeout,
+              onTimeout: () {
+                // 响应头超时也要中止 fetch，避免后台继续占用浏览器连接。
+                abortRequest();
+                throw TimeoutException('stream response headers timed out');
+              },
+            );
             if (cancelled) return;
             if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
               final response = await http.Response.fromStream(streamed).timeout(timeout);
               throw _responseException(response);
             }
             // 每次字节到达都会重置超时，首段答案不必等到流关闭才可见。
-            final decoded = decodeRemoteTurnSse(
-              streamed.stream.timeout(
+            decodedBytes = StreamController<List<int>>();
+            // 显式持有 body 订阅，取消页面时不能仅停止上层事件解析。
+            bodySubscription = streamed.stream.timeout(
                 timeout,
                 onTimeout: (sink) {
                   sink.addError(const RemoteExplorationException('AI 老师响应超时，请重试。'));
                   sink.close();
                 },
-              ),
+              ).listen(
+                decodedBytes!.add,
+                onError: decodedBytes!.addError,
+                onDone: decodedBytes!.close,
+              );
+            final decoded = decodeRemoteTurnSse(
+              decodedBytes!.stream,
             );
             subscription = decoded.listen(
               controller.add,
               onError: (Object error, StackTrace stackTrace) {
                 if (!cancelled) controller.addError(_streamException(error), stackTrace);
                 unawaited(subscription?.cancel() ?? Future<void>.value());
+                unawaited(bodySubscription?.cancel() ?? Future<void>.value());
                 if (!cancelled) unawaited(controller.close());
               },
               onDone: () {
@@ -342,6 +365,10 @@ final class RemoteExplorationApi
       onCancel: () async {
         // 页面离开时只取消本次订阅，不关闭由应用层复用的 HTTP Client。
         cancelled = true;
+        abortRequest();
+        // 先终止底层输入，避免解析器取消时仍等待一个永不结束的 body。
+        await bodySubscription?.cancel();
+        await decodedBytes?.close();
         await subscription?.cancel();
       },
     );
@@ -612,13 +639,18 @@ final class RemoteExplorationApi
     }
   }
 
-  http.Request _buildRequest(
+  http.AbortableRequest _buildRequest(
     String method,
     String path, {
     Map<String, Object?>? body,
     String? idempotencyKey,
+    Future<void>? abortTrigger,
   }) {
-    final request = http.Request(method, Uri.parse('$_baseUrl$path'));
+    final request = http.AbortableRequest(
+      method,
+      Uri.parse('$_baseUrl$path'),
+      abortTrigger: abortTrigger,
+    );
     final headers = <String, String>{
       'content-type': 'application/json',
       'x-miniapp-client': 'uniprism-weapp',
@@ -637,15 +669,26 @@ final class RemoteExplorationApi
   }
 
   RemoteExplorationException _responseException(http.Response response) {
-    final envelope = _asMap(jsonDecode(response.body));
-    final error = _asMapOrEmpty(envelope['error']);
-    return RemoteExplorationException(
-      error['message']?.toString() ??
-          envelope['message']?.toString() ??
-          '请求失败，请重试。',
-      code: error['code']?.toString(),
-      statusCode: response.statusCode,
-    );
+    try {
+      final decoded = response.body.trim().isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(response.body);
+      final envelope = _asMap(decoded);
+      final error = _asMapOrEmpty(envelope['error']);
+      return RemoteExplorationException(
+        error['message']?.toString() ??
+            envelope['message']?.toString() ??
+            '请求失败，请重试。',
+        code: error['code']?.toString(),
+        statusCode: response.statusCode,
+      );
+    } on FormatException {
+      // 非 2xx 的错误体不可靠，解析失败时仍保留 HTTP 状态供回退策略判断。
+      return RemoteExplorationException(
+        '请求失败，请重试。',
+        statusCode: response.statusCode,
+      );
+    }
   }
 
   RemoteExplorationException _streamException(Object error) {
