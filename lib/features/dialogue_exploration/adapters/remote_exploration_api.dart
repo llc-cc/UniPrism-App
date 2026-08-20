@@ -6,6 +6,9 @@ import 'package:http/http.dart' as http;
 
 import 'guided_teaching_flow_dto.dart';
 import 'remote_exploration_dto.dart';
+import 'remote_turn_stream.dart';
+
+export 'remote_turn_stream.dart';
 
 /// 远程 1.2 接口边界；Widget 与 Controller 均不直接处理 URL、鉴权头或 JSON。
 abstract interface class RemoteExplorationGateway {
@@ -95,6 +98,16 @@ abstract interface class RemoteExplorationGateway {
   Future<String> exportTree(String sessionId);
 }
 
+/// 可选流式能力独立于原 Gateway，避免要求既有测试替身同时实现新协议。
+abstract interface class RemoteStreamingExplorationGateway {
+  Stream<RemoteTurnStreamEvent> submitTurnStream({
+    required String sessionId,
+    required String question,
+    String? parentNodeId,
+    String? idempotencyKey,
+  });
+}
+
 /// 由应用装配层提供的当前学习身份；Feature 不直接依赖 AuthService，避免账号逻辑反向进入 UI 模块。
 final class RemoteExplorationIdentity {
   const RemoteExplorationIdentity({
@@ -118,19 +131,9 @@ RemoteExplorationIdentityProvider? remoteIdentityProviderForPlatform({
 }) => isWeb ? null : nativeProvider;
 
 /// 用户可见的稳定远程错误；原始响应和堆栈不直接暴露给学生。
-final class RemoteExplorationException implements Exception {
-  const RemoteExplorationException(this.message, {this.code, this.statusCode});
-
-  final String message;
-  final String? code;
-  final int? statusCode;
-
-  @override
-  String toString() => message;
-}
-
 /// App 与 Web 共用的 1.2 HTTP 客户端；仅匿名标识和短期会话 ID 保存在本实例。
-final class RemoteExplorationApi implements RemoteExplorationGateway {
+final class RemoteExplorationApi
+    implements RemoteExplorationGateway, RemoteStreamingExplorationGateway {
   RemoteExplorationApi({
     http.Client? client,
     String baseUrl = const String.fromEnvironment(
@@ -265,6 +268,84 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
       body['parentNodeId'] = parentNodeId;
     }
     return _mutateSnapshot(sessionId, 'turns', body, idempotencyKey);
+  }
+
+  @override
+  Stream<RemoteTurnStreamEvent> submitTurnStream({
+    required String sessionId,
+    required String question,
+    String? parentNodeId,
+    String? idempotencyKey,
+  }) {
+    late final StreamController<RemoteTurnStreamEvent> controller;
+    StreamSubscription<RemoteTurnStreamEvent>? subscription;
+    var cancelled = false;
+
+    controller = StreamController<RemoteTurnStreamEvent>(
+      onListen: () {
+        () async {
+          try {
+            // 身份获取和响应头都受同一超时约束，避免连接态无限等待。
+            final exploreSessionId = await _ensureExploreSession().timeout(timeout);
+            if (cancelled) return;
+            final body = <String, Object?>{
+              'exploreSessionId': exploreSessionId,
+              'question': question.trim(),
+            };
+            if (parentNodeId != null) body['parentNodeId'] = parentNodeId;
+            final request = _buildRequest(
+              'POST',
+              '/api/learning-sessions/${Uri.encodeComponent(sessionId)}/turns/stream',
+              body: body,
+              idempotencyKey: idempotencyKey,
+            );
+            final streamed = await _client.send(request).timeout(timeout);
+            if (cancelled) return;
+            if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+              final response = await http.Response.fromStream(streamed).timeout(timeout);
+              throw _responseException(response);
+            }
+            // 每次字节到达都会重置超时，首段答案不必等到流关闭才可见。
+            final decoded = decodeRemoteTurnSse(
+              streamed.stream.timeout(
+                timeout,
+                onTimeout: (sink) {
+                  sink.addError(const RemoteExplorationException('AI 老师响应超时，请重试。'));
+                  sink.close();
+                },
+              ),
+            );
+            subscription = decoded.listen(
+              controller.add,
+              onError: (Object error, StackTrace stackTrace) {
+                if (!cancelled) controller.addError(_streamException(error), stackTrace);
+                unawaited(subscription?.cancel() ?? Future<void>.value());
+                if (!cancelled) unawaited(controller.close());
+              },
+              onDone: () {
+                if (!cancelled) unawaited(controller.close());
+              },
+            );
+          } on TimeoutException {
+            if (!cancelled) {
+              controller.addError(const RemoteExplorationException('AI 老师响应超时，请重试。'));
+              await controller.close();
+            }
+          } catch (error) {
+            if (!cancelled) {
+              controller.addError(_streamException(error));
+              await controller.close();
+            }
+          }
+        }();
+      },
+      onCancel: () async {
+        // 页面离开时只取消本次订阅，不关闭由应用层复用的 HTTP Client。
+        cancelled = true;
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
   }
 
   @override
@@ -529,6 +610,53 @@ final class RemoteExplorationApi implements RemoteExplorationGateway {
     } catch (_) {
       throw RemoteExplorationException('无法连接学习服务（$_baseUrl）。');
     }
+  }
+
+  http.Request _buildRequest(
+    String method,
+    String path, {
+    Map<String, Object?>? body,
+    String? idempotencyKey,
+  }) {
+    final request = http.Request(method, Uri.parse('$_baseUrl$path'));
+    final headers = <String, String>{
+      'content-type': 'application/json',
+      'x-miniapp-client': 'uniprism-weapp',
+      if (method != 'GET')
+        'idempotency-key': idempotencyKey ?? _traceId('learning'),
+    };
+    final bearerToken = _bearerToken;
+    if (bearerToken != null && bearerToken.isNotEmpty) {
+      headers['authorization'] = 'Bearer $bearerToken';
+    }
+    final anonymousId = _anonymousId;
+    if (anonymousId != null) headers['x-anonymous-id'] = anonymousId;
+    request.headers.addAll(headers);
+    if (body != null) request.body = jsonEncode(body);
+    return request;
+  }
+
+  RemoteExplorationException _responseException(http.Response response) {
+    final envelope = _asMap(jsonDecode(response.body));
+    final error = _asMapOrEmpty(envelope['error']);
+    return RemoteExplorationException(
+      error['message']?.toString() ??
+          envelope['message']?.toString() ??
+          '请求失败，请重试。',
+      code: error['code']?.toString(),
+      statusCode: response.statusCode,
+    );
+  }
+
+  RemoteExplorationException _streamException(Object error) {
+    if (error is RemoteExplorationException) return error;
+    if (error is TimeoutException) {
+      return const RemoteExplorationException('AI 老师响应超时，请重试。');
+    }
+    if (error is FormatException) {
+      return const RemoteExplorationException('服务端返回格式不正确。');
+    }
+    return RemoteExplorationException('无法连接学习服务（$_baseUrl）。');
   }
 
   static String _traceId(String prefix) {
