@@ -47,6 +47,7 @@ abstract interface class RemoteExplorationGateway {
     required String sessionId,
     required String parentNodeId,
     required String question,
+    bool historicalRevisit = false,
     String? idempotencyKey,
   });
 
@@ -380,11 +381,13 @@ final class RemoteExplorationApi
     required String sessionId,
     required String parentNodeId,
     required String question,
+    bool historicalRevisit = false,
     String? idempotencyKey,
   }) {
     return _mutateSnapshot(sessionId, 'branches', {
       'parentNodeId': parentNodeId,
       'question': question.trim(),
+      if (historicalRevisit) 'conversationMode': 'REVISIT',
     }, idempotencyKey);
   }
 

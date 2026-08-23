@@ -50,6 +50,7 @@ final class RemoteTeachingBoardSnapshot {
     required this.beatKind,
     required List<String> knowledgeNodeIds,
     required List<String> knowledgeNodeNames,
+    List<String> knowledgeNodeSummaries = const [],
     required List<String> nodeIds,
     required List<String> materialUsageIds,
     required List<String> practiceAttemptIds,
@@ -60,6 +61,7 @@ final class RemoteTeachingBoardSnapshot {
     required this.openedAt,
   }) : knowledgeNodeIds = List.unmodifiable(knowledgeNodeIds),
        knowledgeNodeNames = List.unmodifiable(knowledgeNodeNames),
+       knowledgeNodeSummaries = List.unmodifiable(knowledgeNodeSummaries),
        nodeIds = List.unmodifiable(nodeIds),
        materialUsageIds = List.unmodifiable(materialUsageIds),
        practiceAttemptIds = List.unmodifiable(practiceAttemptIds);
@@ -74,6 +76,7 @@ final class RemoteTeachingBoardSnapshot {
       beatKind: _nullableString(json['beatKind']),
       knowledgeNodeIds: _strings(json['knowledgeNodeIds']),
       knowledgeNodeNames: _strings(json['knowledgeNodeNames']),
+      knowledgeNodeSummaries: _strings(json['knowledgeNodeSummaries']),
       nodeIds: _strings(json['nodeIds']),
       materialUsageIds: _strings(json['materialUsageIds']),
       practiceAttemptIds: _strings(json['practiceAttemptIds']),
@@ -93,6 +96,7 @@ final class RemoteTeachingBoardSnapshot {
   final String? beatKind;
   final List<String> knowledgeNodeIds;
   final List<String> knowledgeNodeNames;
+  final List<String> knowledgeNodeSummaries;
   final List<String> nodeIds;
   final List<String> materialUsageIds;
   final List<String> practiceAttemptIds;
@@ -128,7 +132,9 @@ final class RemoteTeachingBranchRecord {
       goalIndex: _int(json['goalIndex']),
       branchKind: _string(json['branchKind']),
       targetKnowledgeNodeIds: _strings(json['targetKnowledgeNodeIds']),
-      triggerPracticeAttemptId: _nullableString(json['triggerPracticeAttemptId']),
+      triggerPracticeAttemptId: _nullableString(
+        json['triggerPracticeAttemptId'],
+      ),
       triggerStudentText: _nullableString(json['triggerStudentText']),
       feedback: _string(json['feedback']),
       repairFocus: _nullableString(json['repairFocus']),
@@ -156,11 +162,11 @@ final class RemoteTeachingBranchRecord {
   final String boardId;
 }
 
-Map<String, dynamic> _map(Object? value) =>
-    value is Map<String, dynamic> ? value : Map<String, dynamic>.from(value as Map);
+Map<String, dynamic> _map(Object? value) => value is Map<String, dynamic>
+    ? value
+    : Map<String, dynamic>.from(value as Map);
 
-List<dynamic> _list(Object? value) =>
-    value is List ? value : const [];
+List<dynamic> _list(Object? value) => value is List ? value : const [];
 
 String _string(Object? value) => value?.toString() ?? '';
 

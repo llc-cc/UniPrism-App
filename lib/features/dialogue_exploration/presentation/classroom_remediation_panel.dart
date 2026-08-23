@@ -131,7 +131,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
                     const SizedBox(height: 4),
                   ],
                   const Text(
-                    '点击下方按钮继续；巩固题会留在这个练习页面内，你只需填写“判断依据”和“结论”。',
+                    '点击后仍停留在当前知识点，用一道新题确认是否真正掌握；验证通过后再由你决定是否进入下一个学习目标。',
                     style: TextStyle(height: 1.45, color: _muted, fontSize: 12),
                   ),
                 ],
@@ -144,7 +144,7 @@ final class ClassroomRemediationPanel extends StatelessWidget {
                 key: const ValueKey('remediation-start-consolidation'),
                 onPressed: () => onContinue!(),
                 icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                label: const Text('我明白了，继续这道练习'),
+                label: const Text('我理解了，开始验证'),
               ),
             ),
           ] else if (readOnly)

@@ -658,6 +658,7 @@ final class _ModeSelectionFakeGateway implements RemoteExplorationGateway {
     required String sessionId,
     required String parentNodeId,
     required String question,
+    bool historicalRevisit = false,
     String? idempotencyKey,
   }) async => snapshotToReturn!;
 

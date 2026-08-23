@@ -29,10 +29,12 @@ final class ChapterCatalogPicker extends StatelessWidget {
           ? const Center(child: Text('当前暂无已审核的预习章节'))
           : ListView(
               children: [
-                _TestFlowGuideCard(
-                  chapterId: TeacherAgentTestSeed.chapterId,
-                  onStart: () => onSelect(TeacherAgentTestSeed.chapterId),
-                ),
+                // 验收引导卡只服务于显式开启的联调构建，避免在正式目录中挤出真实章节。
+                if (TeacherAgentTestSeed.shouldAutoLoadChapter)
+                  _TestFlowGuideCard(
+                    chapterId: TeacherAgentTestSeed.chapterId,
+                    onStart: () => onSelect(TeacherAgentTestSeed.chapterId),
+                  ),
                 ...chapters.indexed.map((entry) {
                   final chapter = entry.$2;
                   final isTestChapter =

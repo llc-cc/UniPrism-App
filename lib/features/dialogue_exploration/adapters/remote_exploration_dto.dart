@@ -69,8 +69,10 @@ final class ChapterEntryGuidanceSnapshot {
   factory ChapterEntryGuidanceSnapshot.fromJson(Map<String, dynamic> json) {
     return ChapterEntryGuidanceSnapshot(
       welcomeMessages: _strings(json['welcomeMessages']),
-      designArenaPromptTemplate:
-          _requiredString(json, 'designArenaPromptTemplate'),
+      designArenaPromptTemplate: _requiredString(
+        json,
+        'designArenaPromptTemplate',
+      ),
       designArenaOptions: _list(json['designArenaOptions'])
           .map(RemoteTeachingModeOption.tryFromJson)
           .whereType<RemoteTeachingModeOption>()
@@ -378,6 +380,10 @@ final class RemoteLearningNode {
     required this.strategy,
     required this.depth,
     required this.isSideBranch,
+    this.conversationThreadId,
+    this.conversationThreadKind,
+    this.conversationThreadScopeId,
+    this.conversationAnchorNodeId,
     required this.backtrackTargetId,
     required this.confidence,
     required this.createdAt,
@@ -397,6 +403,14 @@ final class RemoteLearningNode {
       strategy: _nullableString(json['strategy']),
       depth: _int(json['depth']),
       isSideBranch: json['isSideBranch'] == true,
+      conversationThreadId: _nullableString(json['conversationThreadId']),
+      conversationThreadKind: _nullableString(json['conversationThreadKind']),
+      conversationThreadScopeId: _nullableString(
+        json['conversationThreadScopeId'],
+      ),
+      conversationAnchorNodeId: _nullableString(
+        json['conversationAnchorNodeId'],
+      ),
       backtrackTargetId: _nullableString(json['backtrackTargetId']),
       confidence: _doubleOrNull(json['confidence']),
       createdAt: _requiredString(json, 'createdAt'),
@@ -415,6 +429,10 @@ final class RemoteLearningNode {
   final String? strategy;
   final int depth;
   final bool isSideBranch;
+  final String? conversationThreadId;
+  final String? conversationThreadKind;
+  final String? conversationThreadScopeId;
+  final String? conversationAnchorNodeId;
   final String? backtrackTargetId;
   final double? confidence;
   final String createdAt;
@@ -743,9 +761,7 @@ final class RemoteStudentGuidance {
       showMaterialArea: json['showMaterialArea'] == true,
       showPracticeArea: json['showPracticeArea'] == true,
       showModeSelection: json['showModeSelection'] as bool?,
-      teacherIntroMessages: intro is List
-          ? _strings(intro)
-          : null,
+      teacherIntroMessages: intro is List ? _strings(intro) : null,
       modeSelectionPrompt: _nullableString(json['modeSelectionPrompt']),
     );
   }
@@ -833,6 +849,7 @@ final class RemoteCourseCapabilities {
     required this.canSwitchMaterial,
     required this.canSubmitPractice,
     required this.canComplete,
+    this.canAdvanceGoal = false,
   });
 
   static RemoteCourseCapabilities? tryFromJson(Object? value) {
@@ -846,6 +863,7 @@ final class RemoteCourseCapabilities {
       canSwitchMaterial: json['canSwitchMaterial'] == true,
       canSubmitPractice: json['canSubmitPractice'] == true,
       canComplete: json['canComplete'] == true,
+      canAdvanceGoal: json['canAdvanceGoal'] == true,
     );
   }
 
@@ -856,6 +874,9 @@ final class RemoteCourseCapabilities {
   final bool canSwitchMaterial;
   final bool canSubmitPractice;
   final bool canComplete;
+
+  /// 巩固验证已经通过，但课程仍停留在当前 Goal，等待学生主动进入下一目标。
+  final bool canAdvanceGoal;
 }
 
 final class RemoteCourseState {

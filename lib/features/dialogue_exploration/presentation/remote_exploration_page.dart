@@ -24,6 +24,7 @@ import 'classroom_remediation_panel.dart';
 import 'inline_practice_panel.dart';
 import '../adapters/teaching_architecture_dto.dart';
 import 'intro_chat_messages.dart';
+import 'math_interaction_lab_page.dart';
 import 'teaching_mode_selection_stage.dart';
 
 const _brand = Color(0xFF6B23FF);
@@ -35,6 +36,30 @@ const _studentBubbleBorder = Color(0xFF2563EB);
 const _studentBubbleInk = Color(0xFF1E3A8A);
 const _teacherBubbleFill = Color(0xFFFFFBF5);
 const _teacherBubbleBorder = Color(0xFFE8DFD0);
+
+/// 流式文本仅在本轮未提交时拼入渲染列表，避免它被误当作服务端历史节点。
+List<IntroChatMessage> _withStreamingTeacherMessage(
+  List<IntroChatMessage> messages,
+  RemoteExplorationState state,
+) {
+  final visible = List<IntroChatMessage>.of(messages);
+  final answer = state.streamingAnswer.trim();
+  if (answer.isNotEmpty) visible.add(IntroChatMessage.teacher(answer));
+  if (state.status == RemoteExplorationStatus.committing) {
+    visible.add(IntroChatMessage.teacher('正在保存学习记录…'));
+  }
+  return List.unmodifiable(visible);
+}
+
+bool _isTeacherResponsePending(RemoteExplorationStatus status) =>
+    status == RemoteExplorationStatus.submitting ||
+    status == RemoteExplorationStatus.connecting ||
+    status == RemoteExplorationStatus.streaming ||
+    status == RemoteExplorationStatus.committing;
+
+bool _shouldShowTeacherTyping(RemoteExplorationStatus status) =>
+    status == RemoteExplorationStatus.submitting ||
+    status == RemoteExplorationStatus.connecting;
 
 String _studentFriendlyRepairFocus(String value) {
   if (value.contains('系数') ||
@@ -107,6 +132,12 @@ bool _isActiveRemediationDialogue({
   return phase == RemoteTeachingPhase.extraSupport ||
       hasRepairAction ||
       hasAnsweredCheck;
+}
+
+bool _isGoalMasteryAwaitingAdvance(RemoteLearningSessionSnapshot? snapshot) {
+  // 能力字段是服务端对当前可执行动作的最终裁决；旧会话中的阶段快照可能滞后，
+  // 不能因此隐藏已经通过巩固验证后的确认卡和推进按钮。
+  return snapshot?.capabilities?.canAdvanceGoal == true;
 }
 
 typedef _LessonProgressInfo = ({
@@ -476,7 +507,12 @@ final class _RemoteLearningSessionPageState
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final _whiteboardLauncher = const MockExplorationWhiteboardLauncher();
-  final _guidedActionPanelKey = GlobalKey<_GuidedTeachingActionPanelState>();
+  // 两种课堂布局切换时不能移动同一个 GlobalKey 子树，否则依赖的 InheritedWidget
+  // 仍在通知旧后代时会触发 Flutter “dependent 不是后代”断言。
+  final _sidebarGuidedActionPanelKey =
+      GlobalKey<_GuidedTeachingActionPanelState>();
+  final _legacyGuidedActionPanelKey =
+      GlobalKey<_GuidedTeachingActionPanelState>();
   Timer? _timingTicker;
   String? _inspectedBoardId;
   String? _lastActiveBoardId;
@@ -682,14 +718,23 @@ final class _RemoteLearningSessionPageState
     final focusBoard = focusBoardId == null
         ? null
         : snapshot.teachingArchitecture?.boardById(focusBoardId);
+    final focusBoards = focusBoardId == null
+        ? const <RemoteTeachingBoardSnapshot>[]
+        : ClassroomBoardCatalog.viewingBoardsFor(snapshot, focusBoardId);
     final focusParentBoard = focusBoard?.parentBoardId == null
         ? null
         : snapshot.teachingArchitecture?.boardById(focusBoard!.parentBoardId);
     final focusNodeId = state.inspectedNodeId ?? snapshot.currentNodeId!;
+    final activeBoardId = snapshot.teachingArchitecture?.activeBoardId;
     final isCurrentBoard =
-        focusBoard?.isActive ??
+        focusBoards.any(
+          (board) => board.id == activeBoardId || board.isActive,
+        ) ||
         (focusBoardId == null && focusNodeId == snapshot.currentNodeId);
     final isReviewingHistory = focusBoard != null && !isCurrentBoard;
+    final historyFollowUpAnchor = isReviewingHistory
+        ? _historyFollowUpAnchor(snapshot, focusBoards, state.inspectedNodeId)
+        : null;
     final guidance = snapshot.studentGuidance;
     final teachingFlow = snapshot.teachingFlow;
     final guidedMaterial = teachingFlow == null
@@ -726,13 +771,15 @@ final class _RemoteLearningSessionPageState
         ? introPrompt
         : (actionHint != null && actionHint.isNotEmpty ? actionHint : null);
     final messages = focusBoardId != null
-        ? ClassroomBoardCatalog.messagesForBoard(
+        ? ClassroomBoardCatalog.messagesForBoards(
             snapshot,
-            focusBoardId,
+            focusBoards.map((board) => board.id),
             trailingTeacherPrompt: isCurrentBoard ? trailingPrompt : null,
             modeSelectionPrompt: guidance?.modeSelectionPrompt,
             appendModePrompt: showModeOptions,
             liveTeachingFlow: isCurrentBoard ? teachingFlow : null,
+            // 回访只在历史画板底部展示；当前 G2 即使遇到旧快照脏归属也不能显示 G1 回访。
+            includeRevisitThreads: false,
           )
         : ClassroomBoardCatalog.messagesForNode(
             snapshot,
@@ -742,24 +789,20 @@ final class _RemoteLearningSessionPageState
             appendModePrompt: showModeOptions,
             liveTeachingFlow: isCurrentBoard ? teachingFlow : null,
           );
+    final visibleMessages = _withStreamingTeacherMessage(messages, state);
+    final historyRevisitMessages = isReviewingHistory && focusBoardId != null
+        ? ClassroomBoardCatalog.revisitMessagesForBoards(
+            snapshot,
+            focusBoards.map((board) => board.id),
+          )
+        : const <IntroChatMessage>[];
     String? correctionFeedback;
     for (final message in messages) {
       if (message.isCorrectionFeedback && message.text.trim().isNotEmpty) {
         correctionFeedback = message.text.trim();
       }
     }
-    final submitting = state.status == RemoteExplorationStatus.submitting;
-    final needsRepairAck = _needsExtraSupportRepairAck(snapshot);
-    final showClassroomBottom =
-        isCurrentBoard &&
-        !state.isReadOnly &&
-        !showModeOptions &&
-        !(guidance?.showPracticeArea == true &&
-            teachingFlow?.stage == RemoteTeachingStage.focus) &&
-        (needsRepairAck ||
-            guidance?.showMaterialArea == true ||
-            snapshot.capabilities?.canSubmitMaterial == true ||
-            snapshot.capabilities?.canComplete == true);
+    final submitting = _isTeacherResponsePending(state.status);
     final isSupportDialogue =
         isCurrentBoard &&
         focusBoard?.kind == 'SUPPORT_BRANCH' &&
@@ -771,6 +814,18 @@ final class _RemoteLearningSessionPageState
       phase: snapshot.processSchedulerState?.currentPhase,
       correctionFeedback: correctionFeedback,
     );
+    final showRepairQuestionBar =
+        isRemediationDialogue && snapshot.capabilities?.canSubmitText == true;
+    final showClassroomBottom =
+        isCurrentBoard &&
+        !state.isReadOnly &&
+        !showModeOptions &&
+        !(guidance?.showPracticeArea == true &&
+            teachingFlow?.stage == RemoteTeachingStage.focus) &&
+        (guidance?.showMaterialArea == true ||
+            snapshot.capabilities?.canSubmitMaterial == true ||
+            snapshot.capabilities?.canComplete == true ||
+            snapshot.capabilities?.canAdvanceGoal == true);
     final showReplyBar =
         isCurrentBoard &&
         !state.isReadOnly &&
@@ -779,15 +834,31 @@ final class _RemoteLearningSessionPageState
         !isSupportDialogue &&
         !isRemediationDialogue &&
         widget.controller.canSubmitEntryDialogue(snapshot);
+    final showHistoryFollowUp =
+        isReviewingHistory &&
+        !state.isReadOnly &&
+        historyFollowUpAnchor != null;
 
     void inspectBoard(String boardId) {
-      final board = snapshot.teachingArchitecture?.boardById(boardId);
-      final shouldFollowCurrent = board?.isActive == true;
+      final viewingBoards = ClassroomBoardCatalog.viewingBoardsFor(
+        snapshot,
+        boardId,
+      );
+      final shouldFollowCurrent = viewingBoards.any(
+        (item) => item.id == activeBoardId || item.isActive,
+      );
       setState(() {
         _inspectedBoardId = shouldFollowCurrent ? null : boardId;
       });
       if (shouldFollowCurrent && snapshot.currentNodeId != null) {
         widget.controller.inspectNode(snapshot.currentNodeId!);
+        return;
+      }
+      final anchor = _historyFollowUpAnchor(snapshot, viewingBoards, null);
+      if (anchor != null && !state.isReadOnly) {
+        // 回看中的追问必须从该画板最后一轮对话分叉，不能写入正在进行的主线。
+        widget.controller.inspectNode(anchor.id);
+        widget.controller.prepareBranchFromInspected();
       }
     }
 
@@ -798,13 +869,23 @@ final class _RemoteLearningSessionPageState
       selectedHistoryBoardId: focusBoardId,
       boardPanelTitle: focusBoard == null
           ? null
+          : focusBoards.any(
+              (board) =>
+                  board.kind == 'EXAMPLE' ||
+                  board.kind == 'INTERACTION' ||
+                  board.kind == 'CHECK' ||
+                  board.kind == 'SUPPORT_BRANCH',
+            )
+          ? ClassroomBoardCatalog.explorationSegmentLabel(focusBoards)
           : ClassroomBoardCatalog.boardPanelTitle(
               focusBoard,
               isModeSelectionIntro: inIntro && isCurrentBoard,
               parentBoard: focusParentBoard,
             ),
       emptyConversationLabel: isReviewingHistory && messages.isEmpty
-          ? '这个阶段没有单独保存聊天内容，请查看下方的阶段说明。'
+          ? (historyFollowUpAnchor == null
+                ? '这个阶段没有可关联的历史问答，请从已有学习记录的节点继续追问。'
+                : '这个阶段暂未保存单独问答；你可以在下方继续追问，系统会保留为本阶段的对话分支。')
           : null,
       onBoardTap: inspectBoard,
       isReviewingHistory: isReviewingHistory,
@@ -818,10 +899,10 @@ final class _RemoteLearningSessionPageState
             }
           : null,
       options: resolvedOptions,
-      messages: messages,
+      messages: visibleMessages,
       showOptions: showModeOptions,
       submitting: submitting,
-      teacherTyping: submitting,
+      teacherTyping: _shouldShowTeacherTyping(state.status),
       showReplyBar: showReplyBar,
       onSendMessage: (text) => widget.controller.submitQuestion(text),
       onSelect: (skill) =>
@@ -835,6 +916,9 @@ final class _RemoteLearningSessionPageState
           widget.controller.inspectNode(nodeId);
         }
       },
+      onFunctionAreaATap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(builder: (_) => const MathInteractionLabPage()),
+      ),
       mobile: mobile,
       guidedPanel: isReviewingHistory
           ? Padding(
@@ -844,9 +928,11 @@ final class _RemoteLearningSessionPageState
                 mobile ? 12 : 20,
                 8,
               ),
-              child: _HistoricalBoardSnapshotPanel(
+              child: _HistoricalBoardReplayPanel(
                 snapshot: snapshot,
-                board: focusBoard,
+                boards: focusBoards,
+                revisitMessages: historyRevisitMessages,
+                hasPrimaryHistory: messages.isNotEmpty,
               ),
             )
           : teachingFlow != null
@@ -869,7 +955,7 @@ final class _RemoteLearningSessionPageState
                       ),
                     ),
                   _GuidedTeachingActionPanel(
-                    key: _guidedActionPanelKey,
+                    key: _sidebarGuidedActionPanelKey,
                     snapshot: snapshot,
                     focusBoard: focusBoard,
                     isCurrentBoard: isCurrentBoard,
@@ -914,7 +1000,8 @@ final class _RemoteLearningSessionPageState
               ),
             )
           : null,
-      classroomBottomBar: showClassroomBottom
+      classroomBottomBar:
+          showClassroomBottom || showRepairQuestionBar || showHistoryFollowUp
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -930,9 +1017,13 @@ final class _RemoteLearningSessionPageState
                   snapshot: snapshot,
                   controller: widget.controller,
                   inputController: _inputController,
-                  onSend: _send,
+                  isHistoryFollowUp: showHistoryFollowUp,
+                  onSend: showHistoryFollowUp
+                      ? () => _sendHistoricalFollowUp(historyFollowUpAnchor.id)
+                      : _send,
                   onAskHelp: _askTeacherForHelp,
                   onComplete: _completeCurrentStep,
+                  showCompleteAction: !showRepairQuestionBar,
                 ),
               ],
             )
@@ -994,20 +1085,26 @@ final class _RemoteLearningSessionPageState
         modeSelectionPrompt: guidance?.modeSelectionPrompt,
         appendModePrompt: guidance?.showModeSelection ?? false,
       );
-      final submitting = state.status == RemoteExplorationStatus.submitting;
+      final visibleMessages = _withStreamingTeacherMessage(messages, state);
+      final submitting = _isTeacherResponsePending(state.status);
       return TeachingModeSelectionStage(
         topicLabel: topicLabel,
         historyEntries: TeachingModeOptionCatalog.fromSessionPath(path),
         options: resolvedOptions,
-        messages: messages,
+        messages: visibleMessages,
         showOptions: guidance?.showModeSelection ?? false,
         submitting: submitting,
-        teacherTyping: submitting,
+        teacherTyping: _shouldShowTeacherTyping(state.status),
         showReplyBar: widget.controller.canSubmitEntryDialogue(snapshot),
         onSendMessage: (text) => widget.controller.submitQuestion(text),
         onSelect: (skill) =>
             unawaited(widget.controller.selectTeachingMode(skill)),
         onHistoryTap: widget.controller.inspectNode,
+        onFunctionAreaATap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const MathInteractionLabPage(),
+          ),
+        ),
         mobile: mobile,
       );
     }
@@ -1072,7 +1169,7 @@ final class _RemoteLearningSessionPageState
                   ),
                   if (teachingFlow != null)
                     _GuidedTeachingActionPanel(
-                      key: _guidedActionPanelKey,
+                      key: _legacyGuidedActionPanelKey,
                       flow: teachingFlow,
                       guidance: snapshot.studentGuidance,
                       capabilities: snapshot.capabilities,
@@ -1272,7 +1369,7 @@ final class _RemoteLearningSessionPageState
     final snapshot = widget.controller.state.snapshot;
     final caps = snapshot?.capabilities;
     if (caps?.canSkipMaterial == true) {
-      _guidedActionPanelKey.currentState?.requestHelp();
+      _activeGuidedActionPanelState?.requestHelp();
       return;
     }
     _inputController.text = '我有疑问，请再解释一下';
@@ -1282,12 +1379,17 @@ final class _RemoteLearningSessionPageState
   Future<void> _completeCurrentStep() async {
     final snapshot = widget.controller.state.snapshot;
     final caps = snapshot?.capabilities;
+    if (caps?.canAdvanceGoal == true) {
+      // “验证通过”和“进入下一 Goal”是两个不同事件，学生点击后才推进主线。
+      await widget.controller.submitQuestion('继续学习下一个目标', force: true);
+      return;
+    }
     if (_needsExtraSupportRepairAck(snapshot)) {
       await _acknowledgeExtraSupportRepair();
       return;
     }
     if (caps?.canSubmitMaterial == true) {
-      await _guidedActionPanelKey.currentState?.submitAssetIfReady();
+      await _activeGuidedActionPanelState?.submitAssetIfReady();
       return;
     }
     if (caps?.canSubmitPractice == true) {
@@ -1304,6 +1406,10 @@ final class _RemoteLearningSessionPageState
     }
   }
 
+  _GuidedTeachingActionPanelState? get _activeGuidedActionPanelState =>
+      _sidebarGuidedActionPanelKey.currentState ??
+      _legacyGuidedActionPanelKey.currentState;
+
   Future<void> _send() async {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
@@ -1313,6 +1419,49 @@ final class _RemoteLearningSessionPageState
       return;
     }
     _inputController.clear();
+  }
+
+  /// 在历史画板追问时，始终以历史节点为父节点创建分支；主线的教学阶段和进度不变。
+  Future<void> _sendHistoricalFollowUp(String anchorNodeId) async {
+    final text = _inputController.text.trim();
+    if (text.isEmpty) return;
+    widget.controller.inspectNode(anchorNodeId);
+    widget.controller.prepareBranchFromInspected();
+    await widget.controller.submitQuestion(
+      text,
+      force: true,
+      historicalRevisit: true,
+    );
+    if (!mounted ||
+        widget.controller.state.status == RemoteExplorationStatus.failed) {
+      return;
+    }
+    final updated = widget.controller.state.snapshot;
+    final nextAnchor = updated?.nodes
+        .where((node) => node.isSideBranch && node.parentId == anchorNodeId)
+        .toList(growable: false);
+    if (nextAnchor != null && nextAnchor.isNotEmpty) {
+      // 后续追问接在刚生成的回答之后，保留一条可连续回看的分支。
+      widget.controller.inspectNode(nextAnchor.last.id);
+    }
+    _inputController.clear();
+  }
+
+  RemoteLearningNode? _historyFollowUpAnchor(
+    RemoteLearningSessionSnapshot snapshot,
+    Iterable<RemoteTeachingBoardSnapshot> boards,
+    String? inspectedNodeId,
+  ) {
+    final boardNodes = ClassroomBoardCatalog.nodesForBoards(snapshot, boards);
+    if (boardNodes.isEmpty) return null;
+    final inspected = inspectedNodeId == null
+        ? null
+        : snapshot.nodeById(inspectedNodeId);
+    if (inspected != null &&
+        boardNodes.any((node) => node.id == inspected.id)) {
+      return inspected;
+    }
+    return boardNodes.last;
   }
 
   Future<void> _openWhiteboard(RemoteLearningNode node) async {
@@ -1413,22 +1562,30 @@ final class _RemoteLearningSessionPageState
     final reflection = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('整理这次探索'),
-        content: TextField(
-          controller: controller,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            hintText: '写下你现在的猜想、还没想明白的问题，或最想继续探索的方向',
-          ),
+        title: const Text('完成本节学习'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('记录一下你的收获或疑问，生成本节学习成果。'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                hintText: '写下你的收获、疑问或接下来想学习的内容',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('继续探索'),
+            child: const Text('返回查看'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('结束预习并生成探索结果'),
+            child: const Text('生成学习成果'),
           ),
         ],
       ),
@@ -2078,6 +2235,8 @@ final class _ClassroomBottomBar extends StatelessWidget {
     required this.onSend,
     required this.onAskHelp,
     required this.onComplete,
+    this.isHistoryFollowUp = false,
+    this.showCompleteAction = true,
   });
 
   final RemoteLearningSessionSnapshot snapshot;
@@ -2086,18 +2245,24 @@ final class _ClassroomBottomBar extends StatelessWidget {
   final Future<void> Function() onSend;
   final Future<void> Function() onAskHelp;
   final Future<void> Function() onComplete;
+  final bool isHistoryFollowUp;
+  final bool showCompleteAction;
 
   @override
   Widget build(BuildContext context) {
     final state = controller.state;
     final busy = state.status == RemoteExplorationStatus.submitting;
     final caps = snapshot.capabilities;
-    final canType = caps?.canSubmitText ?? true;
-    final inputHint = _classroomInputHint(snapshot, canType: canType);
+    // 历史追问走独立分支，不受主线素材/练习阶段的文本权限限制。
+    final canType = isHistoryFollowUp || (caps?.canSubmitText ?? true);
+    final inputHint = isHistoryFollowUp
+        ? '继续追问这个阶段（不会改变当前学习进度）'
+        : _classroomInputHint(snapshot, canType: canType);
     final canComplete =
         caps?.canSubmitMaterial == true ||
         caps?.canSubmitPractice == true ||
         caps?.canComplete == true ||
+        caps?.canAdvanceGoal == true ||
         canType ||
         _needsExtraSupportRepairAck(snapshot);
     return Material(
@@ -2111,6 +2276,18 @@ final class _ClassroomBottomBar extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (isHistoryFollowUp)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '正在回看本阶段：新问题会保存为独立追问，不影响当前学习。',
+                      key: ValueKey('history-follow-up-banner'),
+                      style: TextStyle(fontSize: 12, color: _muted),
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(
@@ -2146,7 +2323,7 @@ final class _ClassroomBottomBar extends StatelessWidget {
                   ),
                 ],
               ),
-              if (!canType) ...[
+              if (!canType && !isHistoryFollowUp) ...[
                 const SizedBox(height: 6),
                 Align(
                   alignment: Alignment.centerLeft,
@@ -2156,28 +2333,31 @@ final class _ClassroomBottomBar extends StatelessWidget {
                   ),
                 ),
               ],
-              Row(
-                children: [
-                  OutlinedButton.icon(
-                    key: const ValueKey('classroom-ask-help-button'),
-                    onPressed: busy ? null : () => unawaited(onAskHelp()),
-                    icon: const Icon(Icons.help_outline_rounded, size: 18),
-                    label: const Text('我有疑问'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    key: const ValueKey('classroom-complete-step-button'),
-                    onPressed: busy || !canComplete
-                        ? null
-                        : () => unawaited(onComplete()),
-                    icon: const Icon(
-                      Icons.check_circle_outline_rounded,
-                      size: 18,
+              if (!isHistoryFollowUp)
+                Row(
+                  children: [
+                    OutlinedButton.icon(
+                      key: const ValueKey('classroom-ask-help-button'),
+                      onPressed: busy ? null : () => unawaited(onAskHelp()),
+                      icon: const Icon(Icons.help_outline_rounded, size: 18),
+                      label: const Text('我有疑问'),
                     ),
-                    label: Text(_completeButtonLabel(caps)),
-                  ),
-                ],
-              ),
+                    if (showCompleteAction) ...[
+                      const SizedBox(width: 8),
+                      FilledButton.icon(
+                        key: const ValueKey('classroom-complete-step-button'),
+                        onPressed: busy || !canComplete
+                            ? null
+                            : () => unawaited(onComplete()),
+                        icon: const Icon(
+                          Icons.check_circle_outline_rounded,
+                          size: 18,
+                        ),
+                        label: Text(_completeButtonLabel(caps)),
+                      ),
+                    ],
+                  ],
+                ),
             ],
           ),
         ),
@@ -2188,9 +2368,15 @@ final class _ClassroomBottomBar extends StatelessWidget {
   String _completeButtonLabel(RemoteCourseCapabilities? caps) {
     if (caps?.canSubmitMaterial == true) return '提交并继续';
     if (caps?.canSubmitPractice == true) return '开始验证';
+    if (caps?.canAdvanceGoal == true) {
+      final scheduler = snapshot.processSchedulerState;
+      final nextGoal = (scheduler?.currentGoalIndex ?? 0) + 2;
+      final hasNextGoal = nextGoal <= (scheduler?.goalStatuses.length ?? 0);
+      return hasNextGoal ? '继续学习 G$nextGoal' : '完成本目标';
+    }
     if (caps?.canComplete == true) return '完成总结';
-    final snapshot = controller.state.snapshot;
-    if (_needsExtraSupportRepairAck(snapshot)) return '听懂了，继续巩固';
+    final latestSnapshot = controller.state.snapshot;
+    if (_needsExtraSupportRepairAck(latestSnapshot)) return '听懂了，继续巩固';
     return '我完成了';
   }
 
@@ -2268,26 +2454,39 @@ final class _ClassroomGuideHeader extends StatelessWidget {
   }
 }
 
-/// 历史画板使用所属素材和练习快照完整回放，不复用当前教学动作，避免回看时内容串台或只剩标题。
-final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
-  const _HistoricalBoardSnapshotPanel({
+/// 历史画板按“原素材/练习 → 后续回访”回放，回访始终位于页面最底部。
+final class _HistoricalBoardReplayPanel extends StatelessWidget {
+  const _HistoricalBoardReplayPanel({
     required this.snapshot,
-    required this.board,
+    required this.boards,
+    required this.revisitMessages,
+    required this.hasPrimaryHistory,
   });
 
   final RemoteLearningSessionSnapshot snapshot;
-  final RemoteTeachingBoardSnapshot board;
+  final List<RemoteTeachingBoardSnapshot> boards;
+  final List<IntroChatMessage> revisitMessages;
+  final bool hasPrimaryHistory;
 
   @override
   Widget build(BuildContext context) {
     final architecture = snapshot.teachingArchitecture;
-    final parentBoard = board.parentBoardId == null
-        ? null
-        : architecture?.boardById(board.parentBoardId);
+    final replayBoardsById = <String, RemoteTeachingBoardSnapshot>{
+      for (final board in boards) board.id: board,
+    };
+    for (final board in boards) {
+      final parentBoard = board.parentBoardId == null
+          ? null
+          : architecture?.boardById(board.parentBoardId);
+      if (board.kind == 'SUPPORT_BRANCH' && parentBoard?.kind == 'CHECK') {
+        replayBoardsById[parentBoard!.id] = parentBoard;
+      }
+    }
     final replayBoards =
-        board.kind == 'SUPPORT_BRANCH' && parentBoard?.kind == 'CHECK'
-        ? [parentBoard!, board]
-        : [board];
+        architecture?.boards
+            .where((board) => replayBoardsById.containsKey(board.id))
+            .toList(growable: false) ??
+        boards;
     final materialsById = <String, RemoteLearningMaterial>{};
     final practicesById = <String, RemoteLearningPracticeNode>{};
     for (final replayBoard in replayBoards) {
@@ -2307,19 +2506,48 @@ final class _HistoricalBoardSnapshotPanel extends StatelessWidget {
     final practices = practicesById.values.toList(growable: false);
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxHeight: 300),
+      constraints: const BoxConstraints(maxHeight: 460),
       child: SingleChildScrollView(
         key: const ValueKey('historical-board-snapshot-panel'),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (materials.isEmpty && practices.isEmpty)
-              _HistoricalBoardOverviewCard(board: board),
+            if (replayBoards.length > 1) const _HistoricalExplorationSummary(),
+            if (!hasPrimaryHistory && materials.isEmpty && practices.isEmpty)
+              _HistoricalBoardOverviewCard(board: replayBoards.first),
             for (final material in materials)
               _HistoricalMaterialCard(material: material),
             for (final practice in practices)
               _HistoricalPracticeCard(practice: practice),
+            if (revisitMessages.isNotEmpty)
+              HistoricalRevisitTranscript(messages: revisitMessages),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 回看时明确告诉学生这些素材与练习属于同一段探索，避免把连续任务误解为互不相关的历史记录。
+final class _HistoricalExplorationSummary extends StatelessWidget {
+  const _HistoricalExplorationSummary();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F8FF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFD6E4FF)),
+      ),
+      child: const Text(
+        '本段互动：例子 → 动手判断 → 练习巩固',
+        style: TextStyle(
+          color: Color(0xFF1D4ED8),
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
         ),
       ),
     );
@@ -2590,10 +2818,11 @@ final class _GuidedTeachingActionPanelState
   }
 
   bool get canSubmitAssetNow =>
-      _isAssetReady &&
       widget.material != null &&
       widget.assetEventType != null &&
-      widget.onAssetComplete != null;
+      widget.onAssetComplete != null &&
+      // 图文、公式和视频没有组件回调，由学生主动确认已阅读；交互组件仍须完成操作。
+      (widget.material!.componentKey == null || _isAssetReady);
 
   Future<void> submitAssetIfReady() async {
     if (!canSubmitAssetNow) return;
@@ -2699,7 +2928,8 @@ final class _GuidedTeachingActionPanelState
         widget.capabilities?.canSubmitMaterial ??
         guidance?.showMaterialArea ??
         (flow.stage == RemoteTeachingStage.asset &&
-            widget.material?.componentKey != null);
+            // 兼容未携带能力字段的旧快照：公式、图文等静态素材也必须显示并允许确认完成。
+            widget.material != null);
     final baseShowPractice =
         widget.capabilities?.canSubmitPractice ??
         guidance?.showPracticeArea ??
@@ -2707,6 +2937,9 @@ final class _GuidedTeachingActionPanelState
     final isConsolidation =
         flow.currentAction.reasonCode == 'GUIDED_CONSOLIDATION_CHECK_READY' ||
         guidance?.stageLabel == '巩固练习';
+    final isGoalMasteryAwaitingAdvance = _isGoalMasteryAwaitingAdvance(
+      widget.snapshot,
+    );
     final practice =
         flow.activePractice ??
         (focusBoard?.kind == 'CHECK'
@@ -2720,7 +2953,22 @@ final class _GuidedTeachingActionPanelState
       phase: widget.snapshot?.processSchedulerState?.currentPhase,
       correctionFeedback: widget.correctionFeedback,
     );
-    final showRepairDialogue = isRemediationDialogue && !_showRecoveredPractice;
+    final isPassiveRepairAsset =
+        flow.stage == RemoteTeachingStage.asset &&
+        flow.explorationAct == RemoteGuidedExplorationAct.practiceRepair &&
+        guidance?.showMaterialArea != true &&
+        widget.capabilities?.canSubmitMaterial != true;
+    final isRepairIntroductionStage =
+        flow.stage == RemoteTeachingStage.dialogue ||
+        isPassiveRepairAsset ||
+        (flow.stage == RemoteTeachingStage.focus &&
+            focusBoard?.kind == 'CHECK');
+    // 旧会话可能把无交互素材停在 ASSET，也可能直接停在 CHECK/FOCUS；两者都没有
+    // 其他可点击入口，必须先显示补救卡。真正可交互的 ASSET 仍由素材卡负责推进。
+    final showRepairDialogue =
+        isRemediationDialogue &&
+        isRepairIntroductionStage &&
+        !_showRecoveredPractice;
     final showPractice = baseShowPractice || _showRecoveredPractice;
     final effectiveFeedback = flow.feedback?.trim().isNotEmpty == true
         ? flow.feedback!.trim()
@@ -2735,19 +2983,39 @@ final class _GuidedTeachingActionPanelState
       key: const ValueKey('guided-teaching-action-panel'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (showRepairDialogue && widget.onSendMessage != null)
+        if (isGoalMasteryAwaitingAdvance)
+          _GoalMasteryCard(
+            topic: focusBoard?.knowledgeNodeNames.isNotEmpty == true
+                ? focusBoard!.knowledgeNodeNames.first
+                : flow.activePractice?.title ?? flow.goal,
+            nextGoalNumber:
+                (widget.snapshot?.processSchedulerState?.currentGoalIndex ??
+                    0) +
+                2,
+            hasNextGoal:
+                ((widget.snapshot?.processSchedulerState?.currentGoalIndex ??
+                        0) +
+                    1) <
+                (widget.snapshot?.processSchedulerState?.goalStatuses.length ??
+                    0),
+          )
+        else if (showRepairDialogue && widget.onSendMessage != null)
           ClassroomRemediationPanel(
             topic: focusBoard?.knowledgeNodeNames.isNotEmpty == true
                 ? focusBoard!.knowledgeNodeNames.first
                 : '薄弱知识点',
             feedback: effectiveFeedback,
             repairFocus: effectiveRepairFocus,
-            nextAction: flow.currentAction.prompt,
+            // 补救卡只说明当前 Goal 的操作，不展示可能已被旧快照污染的下一 Goal 提示。
+            nextAction: '接下来仍在当前知识点完成一道验证题，确认掌握后再进入下一学习目标。',
             onContinue: () => _continueRemediation(practice),
-          ),
-        if (showMaterial && widget.material == null)
+          )
+        else if (showMaterial && widget.material == null)
           _GuidedMaterialPlaceholder(goal: flow.goal, stage: flow.stage),
-        if (showMaterial && widget.material != null)
+        if (!isGoalMasteryAwaitingAdvance &&
+            !showRepairDialogue &&
+            showMaterial &&
+            widget.material != null)
           _ClassroomTaskCard(
             title: _classroomTaskTitle(widget.material, flow),
             material: widget.material!,
@@ -2755,7 +3023,9 @@ final class _GuidedTeachingActionPanelState
             canSubmit: canSubmitAssetNow,
             onSubmit: () => unawaited(submitAssetIfReady()),
           )
-        else if (showPractice &&
+        else if (!isGoalMasteryAwaitingAdvance &&
+            !showRepairDialogue &&
+            showPractice &&
             widget.onSubmitPractice != null &&
             practice != null)
           InlinePracticeAnswerPanel(
@@ -2763,15 +3033,20 @@ final class _GuidedTeachingActionPanelState
             isConsolidation: isConsolidation,
             onSubmit: widget.onSubmitPractice!,
           )
-        else if (showPractice && widget.onStartMicroCheck != null)
+        else if (!isGoalMasteryAwaitingAdvance &&
+            !showRepairDialogue &&
+            showPractice &&
+            widget.onStartMicroCheck != null)
           _PracticeReadyCard(
             practice: practice,
             actionHint: actionHint,
             isConsolidation: isConsolidation,
             onStart: () => unawaited(widget.onStartMicroCheck!()),
           )
-        else if (widget.capabilities?.canComplete ??
-            flow.stage == RemoteTeachingStage.reflect)
+        else if (!isGoalMasteryAwaitingAdvance &&
+            !showRepairDialogue &&
+            (widget.capabilities?.canComplete ??
+                flow.stage == RemoteTeachingStage.reflect))
           Padding(
             padding: const EdgeInsets.only(left: 44),
             child: FilledButton.icon(
@@ -2789,6 +3064,11 @@ final class _GuidedTeachingActionPanelState
     RemoteTeachingBoardSnapshot board,
     RemoteTeachingFlow flow,
   ) {
+    if (board.isActive && flow.activePractice != null) {
+      // 补救后会生成新的巩固题，但 CHECK 画板可能仍保留失败题 ID；
+      // 当前学习必须以服务端 activePractice 为准，历史回看才按画板 ID 还原。
+      return flow.activePractice;
+    }
     if (board.practiceId != null &&
         flow.activePractice?.id == board.practiceId) {
       return flow.activePractice;
@@ -2804,6 +3084,61 @@ final class _GuidedTeachingActionPanelState
       prompt: node.prompt,
       reasoningLabel: '理由',
       answerLabel: '结论',
+    );
+  }
+}
+
+/// 当前 Goal 的验证结果卡；只报告“已掌握”，真正推进由底部唯一按钮触发。
+final class _GoalMasteryCard extends StatelessWidget {
+  const _GoalMasteryCard({
+    required this.topic,
+    required this.nextGoalNumber,
+    required this.hasNextGoal,
+  });
+
+  final String topic;
+  final int nextGoalNumber;
+  final bool hasNextGoal;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('goal-mastery-card'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0FDF4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Color(0xFF16A34A)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '已掌握：$topic',
+                  style: const TextStyle(
+                    color: Color(0xFF166534),
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            hasNextGoal
+                ? '你已通过当前知识点的巩固验证。学习进度仍停留在这里，点击下方“继续学习 G$nextGoalNumber”后再进入下一目标。'
+                : '你已通过最后一个知识点的验证，可以在下方确认完成本目标。',
+            style: const TextStyle(height: 1.5, color: Color(0xFF166534)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -3073,6 +3408,8 @@ String? _completionEventType(String? componentKey) => switch (componentKey) {
   'step_order_widget' => 'STEP_ORDER_VERIFIED',
   'unit_economics_widget' => 'UNIT_ECONOMICS_COMMITTED',
   'set_membership_widget' => 'SET_MEMBERSHIP_VERIFIED',
+  // 静态素材没有组件专属事件，后端以通用完成事件推进到下一教学阶段。
+  null => 'MATERIAL_COMPLETED',
   _ => null,
 };
 

@@ -25,7 +25,7 @@ void main() {
       );
       expect(
         StudentLearningNarrative.stageLabel(RemoteTeachingStage.focus),
-        '迁移应用',
+        '自己试一题',
       );
       expect(
         StudentLearningNarrative.stageLabel(RemoteTeachingStage.reflect),
@@ -80,7 +80,7 @@ void main() {
 
       expect(
         StudentLearningNarrative.verificationMessage(evidence),
-        '还需要 2 次验证，确认你的想法',
+        '再用一个例子验证一下你的想法',
       );
     });
 

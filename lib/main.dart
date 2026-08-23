@@ -55,6 +55,29 @@ Future<void> main() async {
   });
 }
 
+/// 为开发验收路由构造真实课堂入口，并保持 Web 与原生端的身份边界一致。
+Widget _buildDialogueExplorationLabPage() {
+  return RemoteExplorationLabPage(
+    gateway: RemoteExplorationApi(
+      baseUrl: AppConfig.apiBaseUrl,
+      identityProvider: remoteIdentityProviderForPlatform(
+        isWeb: kIsWeb,
+        nativeProvider: () async {
+          final auth = AuthService.instance;
+          final exploreSessionId = auth.isLoggedIn
+              ? await auth.bindExploreSessionToCurrentUser()
+              : await auth.ensureExploreSession();
+          return RemoteExplorationIdentity(
+            exploreSessionId: exploreSessionId,
+            bearerToken: auth.token,
+            anonymousId: auth.anonymousId,
+          );
+        },
+      ),
+    ),
+  );
+}
+
 class UniPrismApp extends StatelessWidget {
   const UniPrismApp({super.key});
 

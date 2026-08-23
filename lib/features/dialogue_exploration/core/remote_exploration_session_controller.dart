@@ -12,6 +12,9 @@ enum RemoteExplorationStatus {
   loadingEntry,
   ready,
   submitting,
+  connecting,
+  streaming,
+  committing,
   active,
   failed,
   completed,
@@ -34,6 +37,8 @@ final class RemoteExplorationState {
     required this.canRetry,
     required this.history,
     required this.chapterCatalog,
+    required this.streamingTraceId,
+    required this.streamingAnswer,
   });
 
   const RemoteExplorationState.idle()
@@ -48,7 +53,9 @@ final class RemoteExplorationState {
       memoryCandidateNodeIds = const {},
       canRetry = false,
       history = const [],
-      chapterCatalog = const [];
+      chapterCatalog = const [],
+      streamingTraceId = null,
+      streamingAnswer = '';
 
   final RemoteExplorationStatus status;
   final LearningChapterOverviewSnapshot? chapter;
@@ -62,6 +69,8 @@ final class RemoteExplorationState {
   final bool canRetry;
   final List<RemoteLearningSessionSummary> history;
   final List<LearningChapterCatalogItem> chapterCatalog;
+  final String? streamingTraceId;
+  final String streamingAnswer;
 
   /// 已结束或由服务端标记为不可继续的历史会话只能浏览，避免修改既有学习证据。
   bool get isReadOnly {
@@ -89,6 +98,10 @@ final class RemoteExplorationState {
     bool? canRetry,
     List<RemoteLearningSessionSummary>? history,
     List<LearningChapterCatalogItem>? chapterCatalog,
+    String? streamingTraceId,
+    bool clearStreamingTraceId = false,
+    String? streamingAnswer,
+    bool clearStreamingAnswer = false,
   }) {
     return RemoteExplorationState(
       status: status ?? this.status,
@@ -108,6 +121,12 @@ final class RemoteExplorationState {
       canRetry: canRetry ?? this.canRetry,
       history: history ?? this.history,
       chapterCatalog: chapterCatalog ?? this.chapterCatalog,
+      streamingTraceId: clearStreamingTraceId
+          ? null
+          : streamingTraceId ?? this.streamingTraceId,
+      streamingAnswer: clearStreamingAnswer
+          ? ''
+          : streamingAnswer ?? this.streamingAnswer,
     );
   }
 }
@@ -120,8 +139,10 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   RemoteExplorationState _state = const RemoteExplorationState.idle();
   Future<void> Function()? _retryOperation;
   Timer? _submitWatchdog;
+  StreamSubscription<RemoteTurnStreamEvent>? _activeTurnSubscription;
   String? _pendingTeachingModeSkill;
   List<RemoteTeachingModeOption>? _modeMenuOptionsOverride;
+  Future<void>? _questionSubmissionFuture;
   var _isDisposed = false;
 
   RemoteExplorationState get state => _state;
@@ -585,7 +606,39 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     _replace(_state.copyWith(composerMode: RemoteComposerMode.currentPath));
   }
 
-  Future<void> submitQuestion(String question, {bool force = false}) async {
+  Future<void> submitQuestion(
+    String question, {
+    bool force = false,
+    bool historicalRevisit = false,
+  }) => _runExclusiveSubmission(
+    () => _submitQuestion(
+      question,
+      force: force,
+      historicalRevisit: historicalRevisit,
+    ),
+  );
+
+  /// 提问与重试复用同一 Future，防止学生连续点击时绕过同一轮的幂等边界。
+  Future<void> _runExclusiveSubmission(Future<void> Function() action) {
+    final inFlight = _questionSubmissionFuture;
+    if (inFlight != null) return inFlight;
+
+    late final Future<void> submission;
+    submission = Future<void>.sync(action).whenComplete(() {
+      // 返回的就是登记 Future；异常也只会沿调用方等待的这条链传播。
+      if (identical(_questionSubmissionFuture, submission)) {
+        _questionSubmissionFuture = null;
+      }
+    });
+    _questionSubmissionFuture = submission;
+    return submission;
+  }
+
+  Future<void> _submitQuestion(
+    String question, {
+    required bool force,
+    required bool historicalRevisit,
+  }) async {
     final normalized = question.trim();
     if (normalized.isEmpty) return;
     final snapshot = _requireMutableSnapshot();
@@ -604,27 +657,168 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
     Future<void> operation() async {
       _submitting();
       try {
-        final updated = mode == RemoteComposerMode.branchFromNode
-            ? await api.createBranch(
+        if (mode != RemoteComposerMode.branchFromNode &&
+            api is RemoteStreamingExplorationGateway) {
+          await _submitStreamingTurn(
+            api as RemoteStreamingExplorationGateway,
+            sessionId: snapshot.session.id,
+            question: normalized,
+            parentNodeId: parentId,
+            idempotencyKey: key,
+          );
+        } else {
+          final updated = mode == RemoteComposerMode.branchFromNode
+              ? await api.createBranch(
                 sessionId: snapshot.session.id,
                 parentNodeId: parentId!,
                 question: normalized,
+                historicalRevisit: historicalRevisit,
                 idempotencyKey: key,
               )
-            : await api.submitTurn(
+              : await api.submitTurn(
                 sessionId: snapshot.session.id,
                 question: normalized,
                 parentNodeId: parentId,
                 idempotencyKey: key,
               );
-        await _acceptSnapshot(updated);
-        await _applyPendingTeachingModeIfReady(_state.snapshot!);
+          await _acceptSnapshot(updated);
+        }
+        final committed = _state.snapshot;
+        if (committed != null) await _applyPendingTeachingModeIfReady(committed);
       } catch (error) {
         _fail(error, operation);
       }
     }
 
     await operation();
+  }
+
+  /// 流式正文只用于即时可见；收到 committed 前绝不覆盖服务端快照，避免半截回答进入学习历史。
+  Future<void> _submitStreamingTurn(
+    RemoteStreamingExplorationGateway gateway, {
+    required String sessionId,
+    required String question,
+    required String? parentNodeId,
+    required String idempotencyKey,
+  }) async {
+    _streamConnecting();
+    var receivedDelta = false;
+    var receivedCommitted = false;
+    var receivedDone = false;
+    var fallbackRequested = false;
+    final completion = Completer<void>();
+    late final StreamSubscription<RemoteTurnStreamEvent> subscription;
+
+    void completeError(Object error, [StackTrace? stackTrace]) {
+      if (completion.isCompleted) return;
+      completion.completeError(error, stackTrace);
+    }
+
+    subscription = gateway
+        .submitTurnStream(
+          sessionId: sessionId,
+          question: question,
+          parentNodeId: parentNodeId,
+          idempotencyKey: idempotencyKey,
+        )
+        .listen(
+          (event) {
+            if (_isDisposed || completion.isCompleted) return;
+            switch (event) {
+              case RemoteTurnMetadata(:final traceId):
+                _replace(_state.copyWith(streamingTraceId: traceId));
+              case RemoteTurnAnswerDelta(:final text):
+                if (text.isEmpty) return;
+                receivedDelta = true;
+                _replace(
+                  _state.copyWith(
+                    status: RemoteExplorationStatus.streaming,
+                    streamingAnswer: '${_state.streamingAnswer}$text',
+                    clearError: true,
+                  ),
+                );
+              case RemoteTurnCommitted(:final snapshot):
+                receivedCommitted = true;
+                _commitStreamSnapshot(snapshot);
+              case RemoteTurnFailed(:final message, :final canFallback):
+                if (!receivedDelta && canFallback) {
+                  fallbackRequested = true;
+                  completion.complete();
+                  return;
+                }
+                completeError(RemoteExplorationException(message));
+              case RemoteTurnDone():
+                receivedDone = true;
+                if (!receivedCommitted) {
+                  completeError(
+                    const RemoteExplorationException('AI 老师回答未完成，请重试。'),
+                  );
+                  return;
+                }
+                _finishStreamCommit();
+                completion.complete();
+            }
+          },
+          onError: completeError,
+          onDone: () {
+            if (!completion.isCompleted && !receivedDone) {
+              completeError(
+                const RemoteExplorationException('AI 老师回答未完成，请重试。'),
+              );
+            }
+          },
+        );
+    _activeTurnSubscription = subscription;
+    try {
+      await completion.future;
+      if (fallbackRequested) {
+        // 仅在一个字都没给出时回退，防止页面同时出现两段教师答案。
+        final snapshot = await api.submitTurn(
+          sessionId: sessionId,
+          question: question,
+          parentNodeId: parentNodeId,
+          idempotencyKey: idempotencyKey,
+        );
+        await _acceptSnapshot(snapshot);
+      }
+    } finally {
+      if (identical(_activeTurnSubscription, subscription)) {
+        _activeTurnSubscription = null;
+      }
+      await subscription.cancel();
+    }
+  }
+
+  void _commitStreamSnapshot(RemoteLearningSessionSnapshot snapshot) {
+    _retryOperation = null;
+    _submitWatchdog?.cancel();
+    // committed 是服务端已持久化的唯一信号；此处立即用最终快照替换临时文本。
+    _replace(
+      _state.copyWith(
+        status: RemoteExplorationStatus.committing,
+        snapshot: snapshot,
+        clearStreamingTraceId: true,
+        clearStreamingAnswer: true,
+        clearInspectedNode: true,
+        composerMode: RemoteComposerMode.currentPath,
+        clearError: true,
+        canRetry: false,
+      ),
+    );
+  }
+
+  void _finishStreamCommit() {
+    final snapshot = _state.snapshot;
+    if (snapshot == null || _isDisposed) return;
+    _submitWatchdog?.cancel();
+    _replace(
+      _state.copyWith(
+        status: snapshot.session.status == 'COMPLETED'
+            ? RemoteExplorationStatus.completed
+            : RemoteExplorationStatus.active,
+      ),
+    );
+    unawaited(_syncTeachingModeIfNeeded());
   }
 
   Future<void> _applyPendingTeachingModeIfReady(
@@ -869,9 +1063,10 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
 
   Future<String> exportTree() => api.exportTree(_requireSnapshot().session.id);
 
-  Future<void> retry() async {
+  Future<void> retry() {
     final operation = _retryOperation;
-    if (operation != null) await operation();
+    if (operation == null) return Future<void>.value();
+    return _runExclusiveSubmission(operation);
   }
 
   RemoteLearningNode _requireInspectedNode() {
@@ -894,7 +1089,13 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   void _submitting() {
     _submitWatchdog?.cancel();
     _submitWatchdog = Timer(const Duration(seconds: 75), () {
-      if (_isDisposed || _state.status != RemoteExplorationStatus.submitting) {
+      if (_isDisposed ||
+          !{
+            RemoteExplorationStatus.submitting,
+            RemoteExplorationStatus.connecting,
+            RemoteExplorationStatus.streaming,
+            RemoteExplorationStatus.committing,
+          }.contains(_state.status)) {
         return;
       }
       _replace(
@@ -909,6 +1110,18 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
       _state.copyWith(
         status: RemoteExplorationStatus.submitting,
         clearError: true,
+      ),
+    );
+  }
+
+  void _streamConnecting() {
+    _submitting();
+    // 单独标记建连阶段，页面可继续使用已有的“老师正在输入”提示而不伪造回答内容。
+    _replace(
+      _state.copyWith(
+        status: RemoteExplorationStatus.connecting,
+        clearStreamingTraceId: true,
+        clearStreamingAnswer: true,
       ),
     );
   }
@@ -946,8 +1159,10 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   }
 
   void _replace(RemoteExplorationState next) {
+    // 页面销毁后的网络回调既不能通知监听者，也不能继续改写可观察状态。
+    if (_isDisposed) return;
     _state = next;
-    if (!_isDisposed) notifyListeners();
+    notifyListeners();
   }
 
   static const _preStudyScenarioId = 'prestudy';
@@ -961,6 +1176,8 @@ final class RemoteExplorationSessionController extends ChangeNotifier {
   void dispose() {
     _submitWatchdog?.cancel();
     _isDisposed = true;
+    // 取消当前订阅即可中止本轮解析；Gateway 自己拥有的 HTTP client 和 stream controller 不能由页面关闭。
+    unawaited(_activeTurnSubscription?.cancel() ?? Future<void>.value());
     super.dispose();
   }
 }

@@ -31,8 +31,7 @@ abstract final class ClassroomBoardCatalog {
   }) {
     final entries = <TeachingModeHistoryEntry>[];
     int? lastGoalIndex;
-    final repairCountByGoal = <int, int>{};
-    final checkEntryIndexByBoardId = <String, int>{};
+    final emittedExplorationGoals = <int>{};
     final activeBoardId = _resolvedActiveBoardId(architecture);
     final activeBoardIndex = architecture.boards.indexWhere(
       (board) => board.id == activeBoardId,
@@ -50,7 +49,7 @@ abstract final class ClassroomBoardCatalog {
           TeachingModeHistoryEntry(
             label: _goalHeaderLabel(board.goalId, goalIndex),
             isGoalHeader: true,
-            goalStatus: _goalStatus(architecture, goalIndex),
+            goalStatus: _goalStatus(snapshot, architecture, goalIndex),
             depth: 0,
             kind: 'GOAL',
           ),
@@ -58,46 +57,54 @@ abstract final class ClassroomBoardCatalog {
         lastGoalIndex = goalIndex;
       }
 
-      final repairIndex =
-          board.kind == 'SUPPORT_BRANCH' && board.goalIndex != null
-          ? () {
-              final goalIdx = board.goalIndex!;
-              repairCountByGoal[goalIdx] =
-                  (repairCountByGoal[goalIdx] ?? 0) + 1;
-              return repairCountByGoal[goalIdx];
-            }()
-          : null;
-      final displayLabel = _studentBoardLabel(
-        board,
-        repairIndex: repairIndex,
-        isModeSelectionIntro: isModeSelectionIntro && board.id == activeBoardId,
-      );
-
-      final parentCheckEntryIndex = board.kind == 'SUPPORT_BRANCH'
-          ? checkEntryIndexByBoardId[board.parentBoardId]
-          : null;
-      if (parentCheckEntryIndex != null) {
-        final checkEntry = entries[parentCheckEntryIndex];
-        // 补救是一次练习内的教学状态，不是新的课程节点；侧边栏仍保留一张练习卡，
-        // 但把点击目标切到补救画板，确保讲解、下一步和巩固作答在同一页面完成。
-        entries[parentCheckEntryIndex] = TeachingModeHistoryEntry(
-          label: checkEntry.label,
-          boardId: board.id,
-          nodeId: board.nodeIds.isNotEmpty ? board.nodeIds.first : null,
-          isActive: board.id == activeBoardId,
-          isCompleted: _isBoardCompleted(
+      if (_isExplorationActivityBoard(board) && board.goalIndex != null) {
+        final goalIndex = board.goalIndex!;
+        if (emittedExplorationGoals.add(goalIndex)) {
+          final group = _visibleExplorationBoardsForGoal(
+            snapshot,
             architecture,
-            board,
-            boardIndex: index,
-            activeBoardIndex: activeBoardIndex,
-          ),
-          depth: checkEntry.depth,
-          kind: 'CHECK',
-        );
+            goalIndex,
+            activeBoardId,
+          );
+          final representative = _explorationRepresentative(
+            group,
+            activeBoardId,
+          );
+          if (representative != null) {
+            // 素材、动手互动和练习虽由不同教学板承载，但学生完成的是同一段探索。
+            // 侧栏只保留一个入口，点击后仍会按板归属读取完整内容，避免跨 Goal 串台。
+            entries.add(
+              TeachingModeHistoryEntry(
+                label: explorationSegmentLabel(group),
+                boardId: representative.id,
+                nodeId: representative.nodeIds.isNotEmpty
+                    ? representative.nodeIds.first
+                    : null,
+                isActive: group.any(
+                  (item) => item.id == activeBoardId || item.isActive,
+                ),
+                isCompleted: group.every((item) {
+                  final itemIndex = architecture.boards.indexOf(item);
+                  return _isBoardCompleted(
+                    architecture,
+                    item,
+                    boardIndex: itemIndex,
+                    activeBoardIndex: activeBoardIndex,
+                  );
+                }),
+                depth: 1,
+                kind: 'INTERACTION',
+              ),
+            );
+          }
+        }
         continue;
       }
 
-      final entryIndex = entries.length;
+      final displayLabel = _studentBoardLabel(
+        board,
+        isModeSelectionIntro: isModeSelectionIntro && board.id == activeBoardId,
+      );
       entries.add(
         TeachingModeHistoryEntry(
           label: displayLabel,
@@ -114,12 +121,62 @@ abstract final class ClassroomBoardCatalog {
           kind: board.kind,
         ),
       );
-      if (board.kind == 'CHECK') {
-        checkEntryIndexByBoardId[board.id] = entryIndex;
-      }
     }
 
     return List.unmodifiable(entries);
+  }
+
+  /// 学生端把“看例子—动手判断—完成练习”视为同一段连续任务。
+  /// 后端仍保留细粒度 TeachingBoard，以便每条对话和补救分支准确归属。
+  static bool _isExplorationActivityBoard(RemoteTeachingBoardSnapshot board) {
+    return switch (board.kind) {
+      'EXAMPLE' || 'INTERACTION' || 'CHECK' || 'SUPPORT_BRANCH' => true,
+      _ => false,
+    };
+  }
+
+  static List<RemoteTeachingBoardSnapshot> _visibleExplorationBoardsForGoal(
+    RemoteLearningSessionSnapshot snapshot,
+    RemoteTeachingArchitectureSnapshot architecture,
+    int goalIndex,
+    String? activeBoardId,
+  ) {
+    return architecture.boards
+        .where(
+          (board) =>
+              board.goalIndex == goalIndex &&
+              _isExplorationActivityBoard(board) &&
+              _isStudentVisibleBoard(snapshot, board, activeBoardId),
+        )
+        .toList(growable: false);
+  }
+
+  static RemoteTeachingBoardSnapshot? _explorationRepresentative(
+    List<RemoteTeachingBoardSnapshot> boards,
+    String? activeBoardId,
+  ) {
+    if (boards.isEmpty) return null;
+    return boards
+            .where((board) => board.id == activeBoardId || board.isActive)
+            .firstOrNull ??
+        boards.where((board) => board.kind == 'INTERACTION').firstOrNull ??
+        boards.where((board) => board.kind == 'EXAMPLE').firstOrNull ??
+        boards.first;
+  }
+
+  /// 学生看到的是一个由互动主导的连续任务，例子和练习只作为该任务内的前后步骤。
+  static String explorationSegmentLabel(
+    Iterable<RemoteTeachingBoardSnapshot> boards,
+  ) {
+    final boardList = boards.toList(growable: false);
+    final interaction = boardList
+        .where((board) => board.kind == 'INTERACTION')
+        .firstOrNull;
+    final source = interaction ?? boardList.firstOrNull;
+    if (source == null) return '互动与练习';
+    final label = _sanitizeLabel(source.label);
+    if (label.isEmpty || _looksLikeDevLabel(label)) return '互动与练习';
+    return '互动与练习：$label';
   }
 
   static bool _isStudentVisibleBoard(
@@ -152,6 +209,7 @@ abstract final class ClassroomBoardCatalog {
   }
 
   static String? _goalStatus(
+    RemoteLearningSessionSnapshot snapshot,
     RemoteTeachingArchitectureSnapshot architecture,
     int goalIndex,
   ) {
@@ -159,18 +217,30 @@ abstract final class ClassroomBoardCatalog {
         .where((board) => board.goalIndex == goalIndex)
         .toList(growable: false);
     if (boardsForGoal.isEmpty) return 'pending';
+    final scheduler = snapshot.processSchedulerState;
+    if (scheduler != null) {
+      // Goal 是否“当前”只能由课程调度器决定；旧 CHECK 画板仍存在不代表旧 Goal
+      // 仍在学习，否则跨入下一 Goal 后会同时出现两个“当前学习”。
+      if (goalIndex == scheduler.currentGoalIndex &&
+          scheduler.currentPhase != RemoteTeachingPhase.goalComplete) {
+        return 'ongoing';
+      }
+      final schedulerStatus = goalIndex < scheduler.goalStatuses.length
+          ? scheduler.goalStatuses[goalIndex]
+          : RemoteLessonGoalStatus.unknown;
+      if (schedulerStatus == RemoteLessonGoalStatus.mastered ||
+          goalIndex < scheduler.currentGoalIndex) {
+        return 'completed';
+      }
+      return 'pending';
+    }
+
     final activeGoalIndex = architecture
         .boardById(_resolvedActiveBoardId(architecture))
         ?.goalIndex;
     if (activeGoalIndex == goalIndex) return 'ongoing';
     if (activeGoalIndex != null && goalIndex < activeGoalIndex) {
       return 'completed';
-    }
-    if (boardsForGoal.every((board) => !board.isActive)) {
-      final lastBoard = boardsForGoal.last;
-      if (lastBoard.kind == 'CHECK' || lastBoard.kind == 'SUPPORT_BRANCH') {
-        return 'ongoing';
-      }
     }
     return 'pending';
   }
@@ -407,6 +477,28 @@ abstract final class ClassroomBoardCatalog {
     return architecture.activeBoardId ?? architecture.boards.last.id;
   }
 
+  /// 返回学生在同一学习段中应连续看到的教学板。
+  /// 只按同一 Goal 的显式归属聚合，不能依赖时间相邻，避免回看追问混入其他知识点。
+  static List<RemoteTeachingBoardSnapshot> viewingBoardsFor(
+    RemoteLearningSessionSnapshot snapshot,
+    String boardId,
+  ) {
+    final architecture = snapshot.teachingArchitecture;
+    final focusBoard = architecture?.boardById(boardId);
+    if (architecture == null || focusBoard == null) return const [];
+    if (!_isExplorationActivityBoard(focusBoard) ||
+        focusBoard.goalIndex == null) {
+      return [focusBoard];
+    }
+    final boards = _visibleExplorationBoardsForGoal(
+      snapshot,
+      architecture,
+      focusBoard.goalIndex!,
+      _resolvedActiveBoardId(architecture),
+    );
+    return List.unmodifiable(boards.isEmpty ? [focusBoard] : boards);
+  }
+
   static List<IntroChatMessage> messagesForBoard(
     RemoteLearningSessionSnapshot snapshot,
     String boardId, {
@@ -414,10 +506,35 @@ abstract final class ClassroomBoardCatalog {
     String? modeSelectionPrompt,
     bool appendModePrompt = false,
     RemoteTeachingFlow? liveTeachingFlow,
+    bool includeRevisitThreads = true,
+  }) {
+    return messagesForBoards(
+      snapshot,
+      [boardId],
+      trailingTeacherPrompt: trailingTeacherPrompt,
+      modeSelectionPrompt: modeSelectionPrompt,
+      appendModePrompt: appendModePrompt,
+      liveTeachingFlow: liveTeachingFlow,
+      includeRevisitThreads: includeRevisitThreads,
+    );
+  }
+
+  /// 聚合一个连续学习段的对话；每个节点仍必须由其 TeachingBoard 显式持有。
+  static List<IntroChatMessage> messagesForBoards(
+    RemoteLearningSessionSnapshot snapshot,
+    Iterable<String> boardIds, {
+    String? trailingTeacherPrompt,
+    String? modeSelectionPrompt,
+    bool appendModePrompt = false,
+    RemoteTeachingFlow? liveTeachingFlow,
+    bool includeRevisitThreads = true,
   }) {
     final architecture = snapshot.teachingArchitecture;
-    final board = architecture?.boardById(boardId);
-    if (board == null) {
+    final requestedBoardIds = boardIds.toSet();
+    final boards = architecture?.boards
+        .where((board) => requestedBoardIds.contains(board.id))
+        .toList(growable: false);
+    if (boards == null || boards.isEmpty) {
       final nodeId = snapshot.currentNodeId;
       if (nodeId == null) return const [];
       return messagesForNode(
@@ -430,82 +547,139 @@ abstract final class ClassroomBoardCatalog {
       );
     }
 
-    final isActive = board.isActive;
+    final activeBoardId = _resolvedActiveBoardId(architecture!);
+    final isActive = boards.any(
+      (board) => board.id == activeBoardId || board.isActive,
+    );
     final messages = <IntroChatMessage>[];
+    final practiceByAnswerNodeId = <String, RemoteLearningPracticeNode>{};
+    final renderedPracticePromptIds = <String>{};
+    final boardNodes = nodesForBoards(snapshot, boards);
+    final mainBoardNodes = boardNodes
+        .where((node) => node.conversationThreadKind != 'REVISIT')
+        .toList(growable: false);
 
-    for (final node in nodesForBoard(snapshot, board)) {
+    for (final board in boards) {
+      final practice = practiceForBoard(snapshot, board);
+      if (practice == null) continue;
+      for (final nodeId in board.nodeIds) {
+        final node = snapshot.nodeById(nodeId);
+        if (node?.conversationThreadKind != 'REVISIT' &&
+            node?.question.trim().isNotEmpty == true) {
+          practiceByAnswerNodeId.putIfAbsent(nodeId, () => practice);
+        }
+      }
+    }
+
+    for (final node in mainBoardNodes) {
+      final practice = practiceByAnswerNodeId[node.id];
+      if (practice != null && renderedPracticePromptIds.add(practice.id)) {
+        // 练习的题干来自 TeachingBoard 关联的结构化练习，而不是学生回答节点；
+        // 回看时必须先补回题干，避免只看到学生答案而失去作答语境。
+        messages.add(
+          IntroChatMessage.teacher(_practiceDialoguePrompt(practice)),
+        );
+      }
       messages.addAll(IntroChatMessage.fromSingleNode(node));
     }
 
-    if (board.practiceAttemptIds.isNotEmpty) {
-      final hasStudentLine = board.nodeIds.any((nodeId) {
-        final node = snapshot.nodeById(nodeId);
-        return node?.question.trim().isNotEmpty == true;
-      });
-      if (!hasStudentLine) {
-        final branch = architecture?.branches
-            .where(
-              (item) =>
-                  item.triggerPracticeAttemptId ==
-                  board.practiceAttemptIds.first,
-            )
-            .firstOrNull;
-        final practiceNode = board.practiceId == null
-            ? null
-            : snapshot.learningGraph?.practice
-                  .where((item) => item.id == board.practiceId)
-                  .firstOrNull;
-        final triggerText = branch?.triggerStudentText?.trim();
-        if (triggerText != null && triggerText.isNotEmpty) {
-          for (final line
-              in triggerText
-                  .split('\n')
-                  .map((item) => item.trim())
-                  .where((item) => item.isNotEmpty)) {
-            messages.add(IntroChatMessage.student(line));
-          }
-        } else if (practiceNode != null) {
-          final reasoning = practiceNode.latestReasoning?.trim();
-          final answer = practiceNode.latestAnswer?.trim();
-          if (reasoning != null && reasoning.isNotEmpty) {
-            messages.add(IntroChatMessage.student(reasoning));
-          }
-          if (answer != null && answer.isNotEmpty && answer != reasoning) {
-            messages.add(IntroChatMessage.student('结论：$answer'));
+    final conceptBoards = boards
+        .where((board) => board.kind == 'CONCEPT')
+        .toList(growable: false);
+    if (messages.isEmpty &&
+        conceptBoards.isNotEmpty &&
+        conceptBoards.length == boards.length) {
+      // 早期会话只持久化了知识结构，没有把概念讲解复制成聊天 turn；
+      // 回看时使用服务端保存的知识摘要还原真实学习记录，不能再展示成空白页。
+      final conceptRecord = _conceptLearningRecord(conceptBoards);
+      if (conceptRecord.isNotEmpty) {
+        messages.add(IntroChatMessage.teacher(conceptRecord));
+      }
+    }
+
+    final processedPracticeIds = <String>{};
+    for (final board in boards) {
+      if (board.practiceAttemptIds.isNotEmpty) {
+        final practiceAttemptId = board.practiceAttemptIds.first;
+        if (processedPracticeIds.add(practiceAttemptId)) {
+          final hasStudentLine = board.nodeIds.any((nodeId) {
+            final node = snapshot.nodeById(nodeId);
+            return node?.conversationThreadKind != 'REVISIT' &&
+                node?.question.trim().isNotEmpty == true;
+          });
+          if (!hasStudentLine) {
+            final branch = architecture.branches
+                .where(
+                  (item) => item.triggerPracticeAttemptId == practiceAttemptId,
+                )
+                .firstOrNull;
+            final practiceNode = practiceForBoard(snapshot, board);
+            if (practiceNode != null &&
+                renderedPracticePromptIds.add(practiceNode.id)) {
+              messages.add(
+                IntroChatMessage.teacher(_practiceDialoguePrompt(practiceNode)),
+              );
+            }
+            final triggerText = branch?.triggerStudentText?.trim();
+            if (triggerText != null && triggerText.isNotEmpty) {
+              for (final line
+                  in triggerText
+                      .split('\n')
+                      .map((item) => item.trim())
+                      .where((item) => item.isNotEmpty)) {
+                messages.add(IntroChatMessage.student(line));
+              }
+            } else if (practiceNode != null) {
+              final reasoning = practiceNode.latestReasoning?.trim();
+              final answer = practiceNode.latestAnswer?.trim();
+              if (reasoning != null && reasoning.isNotEmpty) {
+                messages.add(IntroChatMessage.student(reasoning));
+              }
+              if (answer != null && answer.isNotEmpty && answer != reasoning) {
+                messages.add(IntroChatMessage.student('结论：$answer'));
+              }
+            }
+            final practiceFeedback = practiceNode?.feedback?.trim();
+            final feedback = practiceFeedback?.isNotEmpty == true
+                ? practiceFeedback
+                : branch?.feedback.trim();
+            if (feedback != null &&
+                feedback.isNotEmpty &&
+                board.kind == 'CHECK' &&
+                !messages.any(
+                  (line) => line.isTeacher && line.text == feedback,
+                )) {
+              messages.add(IntroChatMessage.teacherCorrection(feedback));
+            }
           }
         }
-        final practiceFeedback = practiceNode?.feedback?.trim();
-        final feedback = practiceFeedback?.isNotEmpty == true
-            ? practiceFeedback
-            : branch?.feedback.trim();
-        if (feedback != null &&
-            feedback.isNotEmpty &&
-            board.kind == 'CHECK' &&
-            !messages.any((line) => line.isTeacher && line.text == feedback)) {
-          messages.add(IntroChatMessage.teacherCorrection(feedback));
+      }
+
+      if (board.branchId != null) {
+        final branch = architecture.branches
+            .where((item) => item.id == board.branchId)
+            .firstOrNull;
+        if (branch != null) {
+          if (branch.feedback.trim().isNotEmpty &&
+              !messages.any(
+                (line) => line.isTeacher && line.text == branch.feedback.trim(),
+              )) {
+            messages.add(
+              IntroChatMessage.teacherCorrection(branch.feedback.trim()),
+            );
+          }
+          final repair = branch.repairFocus?.trim();
+          if (repair != null && repair.isNotEmpty) {
+            messages.add(IntroChatMessage.teacher('这次重点看这里：$repair'));
+          }
         }
       }
     }
 
-    if (board.branchId != null) {
-      final branch = architecture!.branches
-          .where((item) => item.id == board.branchId)
-          .firstOrNull;
-      if (branch != null) {
-        if (branch.feedback.trim().isNotEmpty &&
-            !messages.any(
-              (line) => line.isTeacher && line.text == branch.feedback.trim(),
-            )) {
-          messages.add(
-            IntroChatMessage.teacherCorrection(branch.feedback.trim()),
-          );
-        }
-        final repair = branch.repairFocus?.trim();
-        if (repair != null && repair.isNotEmpty) {
-          messages.add(IntroChatMessage.teacher('这次重点看这里：$repair'));
-        }
-      }
-    } else if (isActive && liveTeachingFlow != null) {
+    final activeBoard = boards
+        .where((board) => board.id == activeBoardId || board.isActive)
+        .firstOrNull;
+    if (activeBoard?.branchId == null && isActive && liveTeachingFlow != null) {
       messages.addAll(_liveFlowMessages(snapshot, liveTeachingFlow));
     }
 
@@ -524,34 +698,71 @@ abstract final class ClassroomBoardCatalog {
       }
     }
 
+    if (includeRevisitThreads) {
+      // 回访发生在主教学和素材操作之后，展示时统一追加到底部，不能按创建时间插回原课堂中间。
+      messages.addAll(_revisitMessagesFromNodes(boardNodes));
+    }
+
     return List.unmodifiable(messages);
   }
 
-  /// 历史画板优先读取服务端显式 nodeIds；旧快照缺失归属时，再用素材关联节点和画板时间窗补齐。
-  /// 补齐只影响只读展示，不回写会话，也不把同一轮对话重复投影成新节点。
+  /// 返回指定历史学习段的回访线程；页面将它放在原问答与素材快照之后。
+  static List<IntroChatMessage> revisitMessagesForBoards(
+    RemoteLearningSessionSnapshot snapshot,
+    Iterable<String> boardIds,
+  ) {
+    final architecture = snapshot.teachingArchitecture;
+    if (architecture == null) return const [];
+    final requestedBoardIds = boardIds.toSet();
+    final boards = architecture.boards
+        .where((board) => requestedBoardIds.contains(board.id))
+        .toList(growable: false);
+    if (boards.isEmpty) return const [];
+    return _revisitMessagesFromNodes(nodesForBoards(snapshot, boards));
+  }
+
+  static List<IntroChatMessage> _revisitMessagesFromNodes(
+    Iterable<RemoteLearningNode> nodes,
+  ) {
+    final threads = <String, List<RemoteLearningNode>>{};
+    for (final node in nodes) {
+      if (node.conversationThreadKind != 'REVISIT') continue;
+      final explicitId = node.conversationThreadId?.trim();
+      final threadId = explicitId?.isNotEmpty == true
+          ? explicitId!
+          : 'revisit-${node.conversationAnchorNodeId ?? node.id}';
+      threads.putIfAbsent(threadId, () => <RemoteLearningNode>[]).add(node);
+    }
+
+    final messages = <IntroChatMessage>[];
+    for (final (index, threadNodes) in threads.values.indexed) {
+      messages.add(IntroChatMessage.threadHeader('回访对话 #${index + 1}'));
+      for (final node in threadNodes) {
+        messages.addAll(IntroChatMessage.fromSingleNode(node));
+      }
+    }
+    return List.unmodifiable(messages);
+  }
+
+  /// 历史画板只读取服务端明确归属的节点及其素材节点。
+  /// 不能按时间窗兜底：学生可以在进入后续 Goal 后回到旧节点追问，时间相邻不等于属于同一画板。
   static List<RemoteLearningNode> nodesForBoard(
     RemoteLearningSessionSnapshot snapshot,
     RemoteTeachingBoardSnapshot board,
   ) {
-    final nodeIds = <String>{...board.nodeIds};
-    for (final material in materialsForBoard(snapshot, board)) {
-      nodeIds.add(material.nodeId);
-    }
+    return nodesForBoards(snapshot, [board]);
+  }
 
-    final boards = snapshot.teachingArchitecture?.boards ?? const [];
-    final boardIndex = boards.indexWhere((item) => item.id == board.id);
-    final openedAt = DateTime.tryParse(board.openedAt);
-    final nextOpenedAt = boardIndex >= 0 && boardIndex + 1 < boards.length
-        ? DateTime.tryParse(boards[boardIndex + 1].openedAt)
-        : null;
-    if (openedAt != null) {
-      for (final node in snapshot.nodes) {
-        final createdAt = DateTime.tryParse(node.createdAt);
-        if (createdAt == null || createdAt.isBefore(openedAt)) continue;
-        if (nextOpenedAt != null && !createdAt.isBefore(nextOpenedAt)) {
-          continue;
-        }
-        nodeIds.add(node.id);
+  /// 多板合并仅做展示层聚合；节点集合仍来自每一张板的显式 nodeIds 和素材归属。
+  static List<RemoteLearningNode> nodesForBoards(
+    RemoteLearningSessionSnapshot snapshot,
+    Iterable<RemoteTeachingBoardSnapshot> boards,
+  ) {
+    final nodeIds = <String>{};
+    for (final board in boards) {
+      nodeIds.addAll(board.nodeIds);
+      for (final material in materialsForBoard(snapshot, board)) {
+        nodeIds.add(material.nodeId);
       }
     }
 
@@ -584,6 +795,42 @@ abstract final class ClassroomBoardCatalog {
       if (practice.id == practiceId) return practice;
     }
     return null;
+  }
+
+  /// 将结构化题干投影进对话时间线，使“题目 → 作答 → 反馈”成为可回看的完整单元。
+  static String _practiceDialoguePrompt(RemoteLearningPracticeNode practice) {
+    final title = practice.title.trim();
+    final prompt = practice.prompt.trim();
+    final purpose = practice.purpose.trim();
+    final header = title.isEmpty ? '本题任务' : '练习题：$title';
+    if (purpose.isEmpty) return '$header\n$prompt';
+    return '$header\n$prompt\n\n请围绕：$purpose 作答。';
+  }
+
+  static String _conceptLearningRecord(
+    Iterable<RemoteTeachingBoardSnapshot> boards,
+  ) {
+    final summaries = <String>{};
+    final names = <String>{};
+    for (final board in boards) {
+      summaries.addAll(
+        board.knowledgeNodeSummaries
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty),
+      );
+      names.addAll(
+        board.knowledgeNodeNames
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty),
+      );
+    }
+    if (summaries.isNotEmpty) {
+      return '概念学习记录\n${summaries.map((item) => '• $item').join('\n')}';
+    }
+    if (names.isNotEmpty) {
+      return '概念学习记录\n这一阶段学习了：${names.join('、')}。';
+    }
+    return '';
   }
 
   static List<IntroChatMessage> messagesForNode(

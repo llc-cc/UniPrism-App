@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -340,7 +341,7 @@ void main() {
   );
 
   test('locked next-learning option does not create a session', () async {
-    final api = _FakeRemoteApi();
+    final api = _StreamingFakeRemoteApi();
     final controller = RemoteExplorationSessionController(api: api);
 
     await (controller as dynamic).startNextLearningOption(
@@ -403,6 +404,14 @@ void main() {
 
       await controller.startFromChapterNode('opposite-number');
 
+      expect(api.createCalls, 0);
+      expect(controller.state.errorMessage, '先写下你想和 AI 老师讨论的内容');
+
+      await controller.startFromChapterNode(
+        'opposite-number',
+        question: '连续两次取相反数，方向为什么会回到原处？',
+      );
+
       expect(api.createCalls, 1);
       expect(api.lastAtomId, 'negative-times-negative');
       expect(api.lastScenarioId, 'prestudy');
@@ -444,7 +453,7 @@ void main() {
   );
 
   test('loads entry and creates the first server session', () async {
-    final api = _FakeRemoteApi();
+    final api = _StreamingFakeRemoteApi();
     final controller = RemoteExplorationSessionController(api: api);
 
     await controller.loadEntry('quadratic-function');
@@ -584,7 +593,7 @@ void main() {
   );
 
   test('explicit branch submits against the inspected parent', () async {
-    final api = _FakeRemoteApi();
+    final api = _StreamingFakeRemoteApi();
     final controller = RemoteExplorationSessionController(api: api);
     await controller.loadEntry('quadratic-function');
     await controller.start(directionId: 'graph-secret');
@@ -610,9 +619,151 @@ void main() {
     expect(controller.state.snapshot, same(previous));
     expect(controller.state.status, RemoteExplorationStatus.failed);
     expect(controller.state.canRetry, isTrue);
-    await controller.retry();
+    api.turnGate = Completer<void>();
+    final retry = controller.retry();
+    await Future<void>.delayed(Duration.zero);
+    final duplicateRetry = controller.retry();
+    final duplicateSubmit = controller.submitQuestion('重复点击不应新发请求');
+    expect(identical(retry, duplicateRetry), isTrue);
+    expect(identical(retry, duplicateSubmit), isTrue);
+    var duplicateCompleted = false;
+    unawaited(
+      Future.wait([duplicateRetry, duplicateSubmit]).whenComplete(
+        () => duplicateCompleted = true,
+      ),
+    );
+
+    expect(api.turnCalls, 2);
+    expect(duplicateCompleted, isFalse);
+    api.turnGate!.complete();
+    await Future.wait([retry, duplicateRetry, duplicateSubmit]);
     expect(api.turnCalls, 2);
     expect(controller.state.status, RemoteExplorationStatus.active);
+  });
+
+  test('concurrent question submissions share one in-flight request', () async {
+    final api = _FakeRemoteApi()..turnGate = Completer<void>();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start(directionId: 'graph-secret');
+
+    final first = controller.submitQuestion('继续追问');
+    final duplicate = controller.submitQuestion('继续追问');
+    var duplicateCompleted = false;
+    unawaited(duplicate.whenComplete(() => duplicateCompleted = true));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.turnCalls, 1);
+    expect(controller.state.status, RemoteExplorationStatus.submitting);
+    expect(duplicateCompleted, isFalse);
+    api.turnGate!.complete();
+    await Future.wait([first, duplicate]);
+    expect(controller.state.status, RemoteExplorationStatus.active);
+  });
+
+  test('streaming turn renders deltas before committed and rejects done without commit', () async {
+    final api = _StreamingFakeRemoteApi();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+    final previous = controller.state.snapshot;
+
+    final pending = controller.submitQuestion('继续追问');
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.state.status, RemoteExplorationStatus.connecting);
+
+    api.streamEvents.add(const RemoteTurnMetadata(traceId: 'trace-1', model: 'MiniMax'));
+    api.streamEvents.add(const RemoteTurnAnswerDelta('先看定义'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.state.status, RemoteExplorationStatus.streaming);
+    expect(controller.state.streamingAnswer, '先看定义');
+    expect(controller.state.streamingTraceId, 'trace-1');
+    expect(controller.state.snapshot, same(previous));
+
+    api.streamEvents.add(RemoteTurnDone(timings: const {}, usage: const {}));
+    await api.streamEvents.close();
+    await pending;
+    expect(controller.state.status, RemoteExplorationStatus.failed);
+    expect(controller.state.snapshot, same(previous));
+  });
+
+  test('committed streaming turn replaces snapshot once and clears temporary text', () async {
+    final api = _StreamingFakeRemoteApi();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+    final previous = controller.state.snapshot;
+
+    final pending = controller.submitQuestion('继续追问');
+    await Future<void>.delayed(Duration.zero);
+    api.streamEvents
+      ..add(const RemoteTurnAnswerDelta('先看'))
+      ..add(const RemoteTurnAnswerDelta('定义'))
+      ..add(RemoteTurnCommitted(api.snapshot))
+      ..add(RemoteTurnDone(timings: const {}, usage: const {}));
+    await api.streamEvents.close();
+    await pending;
+
+    expect(controller.state.status, RemoteExplorationStatus.active);
+    expect(controller.state.snapshot, isNot(same(previous)));
+    expect(controller.state.streamingAnswer, isEmpty);
+    expect(controller.state.streamingTraceId, isNull);
+  });
+
+  test('pre-delta stream failure falls back once with the same idempotency key', () async {
+    final api = _StreamingFakeRemoteApi();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+
+    final pending = controller.submitQuestion('继续追问');
+    await Future<void>.delayed(Duration.zero);
+    api.streamEvents.add(const RemoteTurnFailed(message: 'stream unavailable', canFallback: true));
+    await api.streamEvents.close();
+    await pending;
+
+    expect(api.streamTurnKeys, hasLength(1));
+    expect(api.turnIdempotencyKeys, [api.streamTurnKeys.single]);
+    expect(controller.state.status, RemoteExplorationStatus.active);
+  });
+
+  test('post-delta stream failure preserves text and never falls back automatically', () async {
+    final api = _StreamingFakeRemoteApi();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+
+    final pending = controller.submitQuestion('继续追问');
+    await Future<void>.delayed(Duration.zero);
+    api.streamEvents
+      ..add(const RemoteTurnAnswerDelta('先看定义'))
+      ..add(const RemoteTurnFailed(message: 'stream interrupted', canFallback: true));
+    await api.streamEvents.close();
+    await pending;
+
+    expect(api.turnCalls, 0);
+    expect(controller.state.status, RemoteExplorationStatus.failed);
+    expect(controller.state.streamingAnswer, '先看定义');
+    expect(controller.state.canRetry, isTrue);
+  });
+
+  test('disposed controller ignores later stream events', () async {
+    final api = _StreamingFakeRemoteApi();
+    final controller = RemoteExplorationSessionController(api: api);
+    await controller.loadEntry('quadratic-function');
+    await controller.start();
+    var notifications = 0;
+    controller.addListener(() => notifications += 1);
+
+    unawaited(controller.submitQuestion('继续追问'));
+    await Future<void>.delayed(Duration.zero);
+    controller.dispose();
+    final before = notifications;
+    api.streamEvents.add(const RemoteTurnAnswerDelta('不应出现'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(notifications, before);
+    expect(controller.state.streamingAnswer, isEmpty);
   });
 
   test('backtrack, memory, complete and export use server endpoints', () async {
@@ -766,7 +917,7 @@ void main() {
   });
 }
 
-final class _FakeRemoteApi implements RemoteExplorationGateway {
+class _FakeRemoteApi implements RemoteExplorationGateway {
   int createCalls = 0;
   int getEntryCalls = 0;
   int turnCalls = 0;
@@ -785,8 +936,12 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
   bool failNextMaterialEvent = false;
   bool failNextCatalogLoad = false;
   bool failNextCreate = false;
+  Completer<void>? turnGate;
+  final streamEvents = StreamController<RemoteTurnStreamEvent>();
   final List<String> materialEventIds = [];
   final List<String?> createIdempotencyKeys = [];
+  final List<String?> turnIdempotencyKeys = [];
+  final List<String?> streamTurnKeys = [];
   RemoteTeachingFlow? teachingFlow = _guidedAssetFlow();
 
   List<RemoteLearningSessionSummary> history = const [
@@ -997,6 +1152,8 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
     String? idempotencyKey,
   }) async {
     turnCalls += 1;
+    turnIdempotencyKeys.add(idempotencyKey);
+    await turnGate?.future;
     if (failNextTurn) {
       failNextTurn = false;
       throw const RemoteExplorationException('网络暂时不可用');
@@ -1005,11 +1162,13 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
     return snapshot;
   }
 
+
   @override
   Future<RemoteLearningSessionSnapshot> createBranch({
     required String sessionId,
     required String parentNodeId,
     required String question,
+    bool historicalRevisit = false,
     String? idempotencyKey,
   }) async {
     branchCalls += 1;
@@ -1111,6 +1270,20 @@ final class _FakeRemoteApi implements RemoteExplorationGateway {
     String? idempotencyKey,
   }) async {
     return snapshot;
+  }
+}
+
+final class _StreamingFakeRemoteApi extends _FakeRemoteApi
+    implements RemoteStreamingExplorationGateway {
+  @override
+  Stream<RemoteTurnStreamEvent> submitTurnStream({
+    required String sessionId,
+    required String question,
+    String? parentNodeId,
+    String? idempotencyKey,
+  }) {
+    streamTurnKeys.add(idempotencyKey);
+    return streamEvents.stream;
   }
 }
 

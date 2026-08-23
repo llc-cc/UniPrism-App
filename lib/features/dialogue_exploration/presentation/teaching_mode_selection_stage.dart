@@ -33,6 +33,7 @@ final class TeachingModeSelectionStage extends StatefulWidget {
     this.emptyConversationLabel,
     this.isReviewingHistory = false,
     this.onReturnToCurrent,
+    this.onFunctionAreaATap,
   });
 
   final String topicLabel;
@@ -66,6 +67,9 @@ final class TeachingModeSelectionStage extends StatefulWidget {
   final String? emptyConversationLabel;
   final bool isReviewingHistory;
   final VoidCallback? onReturnToCurrent;
+
+  /// 功能区 A 由页面层注入导航，侧栏只负责呈现入口。
+  final VoidCallback? onFunctionAreaATap;
 
   @override
   State<TeachingModeSelectionStage> createState() =>
@@ -149,6 +153,7 @@ final class _TeachingModeSelectionStageState
             onCollapse: () => setState(() => _sidebarCollapsed = true),
             selectedBoardId: widget.selectedHistoryBoardId,
             selectedNodeId: widget.selectedHistoryNodeId,
+            onFunctionAreaATap: widget.onFunctionAreaATap,
           ),
         Expanded(
           child: Column(
@@ -276,6 +281,9 @@ final class _IntroChatPanel extends StatelessWidget {
                   return const _TeacherTypingIndicator();
                 }
                 final line = messages[index];
+                if (line.isThreadHeader) {
+                  return _ConversationThreadHeader(label: line.text);
+                }
                 if (line.isTeacher) {
                   if (line.isModePrompt) {
                     return TeacherModePromptBanner(prompt: line.text);
@@ -288,6 +296,71 @@ final class _IntroChatPanel extends StatelessWidget {
                 return _StudentChatBubble(text: line.text);
               },
             ),
+    );
+  }
+}
+
+final class _ConversationThreadHeader extends StatelessWidget {
+  const _ConversationThreadHeader({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: Divider(color: Color(0xFFD8D3E3))),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF6B5B95),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider(color: Color(0xFFD8D3E3))),
+      ],
+    );
+  }
+}
+
+/// 历史回访独立放在原教学问答和素材快照之后，避免学生误以为它属于当时的主线课堂。
+final class HistoricalRevisitTranscript extends StatelessWidget {
+  const HistoricalRevisitTranscript({super.key, required this.messages});
+
+  final List<IntroChatMessage> messages;
+
+  @override
+  Widget build(BuildContext context) {
+    if (messages.isEmpty) return const SizedBox.shrink();
+    return Container(
+      key: const ValueKey('historical-revisit-transcript'),
+      margin: const EdgeInsets.only(left: 44, right: 8, bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFAF8FF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFD8CBFF), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final (index, line) in messages.indexed) ...[
+            if (index > 0) const SizedBox(height: 10),
+            if (line.isThreadHeader)
+              _ConversationThreadHeader(label: line.text)
+            else if (line.isTeacher && line.isCorrectionFeedback)
+              _TeacherCorrectionBubble(text: line.text)
+            else if (line.isTeacher)
+              _TeacherChatBubble(text: line.text)
+            else
+              _StudentChatBubble(text: line.text),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -698,6 +771,7 @@ final class ModeSelectionSidebar extends StatefulWidget {
     this.onCollapse,
     this.selectedBoardId,
     this.selectedNodeId,
+    this.onFunctionAreaATap,
   });
 
   final List<TeachingModeHistoryEntry> entries;
@@ -707,9 +781,14 @@ final class ModeSelectionSidebar extends StatefulWidget {
   final VoidCallback? onCollapse;
   final String? selectedBoardId;
   final String? selectedNodeId;
+  final VoidCallback? onFunctionAreaATap;
 
   static const _functionAreas = [
-    (icon: Icons.grid_view_rounded, label: '功能区A', color: Color(0xFF3B82F6)),
+    (
+      icon: Icons.grid_view_rounded,
+      label: '功能区A · 数学实验',
+      color: Color(0xFF3B82F6),
+    ),
     (icon: Icons.menu_book_rounded, label: '功能区B', color: Color(0xFF8B5CF6)),
     (icon: Icons.bar_chart_rounded, label: '功能区C', color: Color(0xFF22C55E)),
     (icon: Icons.star_rounded, label: '功能区D', color: Color(0xFFF59E0B)),
@@ -951,7 +1030,9 @@ final class _ModeSelectionSidebarState extends State<ModeSelectionSidebar> {
                     const SizedBox(height: 6),
                     for (final area in ModeSelectionSidebar._functionAreas)
                       InkWell(
-                        onTap: () {},
+                        onTap: area.label.startsWith('功能区A')
+                            ? widget.onFunctionAreaATap
+                            : null,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,

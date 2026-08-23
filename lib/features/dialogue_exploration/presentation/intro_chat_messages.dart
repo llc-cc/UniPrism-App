@@ -7,6 +7,7 @@ final class IntroChatMessage {
     required this.isTeacher,
     this.isModePrompt = false,
     this.isCorrectionFeedback = false,
+    this.isThreadHeader = false,
   });
 
   factory IntroChatMessage.teacher(String text, {bool isModePrompt = false}) {
@@ -29,10 +30,15 @@ final class IntroChatMessage {
     return IntroChatMessage(text: text, isTeacher: false);
   }
 
+  factory IntroChatMessage.threadHeader(String text) {
+    return IntroChatMessage(text: text, isTeacher: true, isThreadHeader: true);
+  }
+
   final String text;
   final bool isTeacher;
   final bool isModePrompt;
   final bool isCorrectionFeedback;
+  final bool isThreadHeader;
 
   /// 从服务端会话路径投影聊天行；寒暄与选路前引导均走真实 turn 数据。
   static List<IntroChatMessage> fromSessionPath(
@@ -53,10 +59,7 @@ final class IntroChatMessage {
     final messages = <IntroChatMessage>[];
     for (final (index, node) in path.indexed) {
       messages.addAll(
-        fromSingleNode(
-          node,
-          includeFollowUp: index == path.length - 1,
-        ),
+        fromSingleNode(node, includeFollowUp: index == path.length - 1),
       );
     }
 
