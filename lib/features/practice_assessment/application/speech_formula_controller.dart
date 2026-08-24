@@ -166,6 +166,13 @@ final class SpeechFormulaController extends ChangeNotifier {
       _showError('没有识别到语音，请靠近麦克风后重试。');
       return;
     }
+    // 浏览器停止监听时可能重复回送最终结果；先切换状态以保证只转换一次。
+    _setState(
+      SpeechFormulaState(
+        status: SpeechFormulaStatus.converting,
+        transcript: transcript,
+      ),
+    );
     unawaited(_finishFinalRecognition(operationId, transcript));
   }
 

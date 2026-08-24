@@ -4,10 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:math_keyboard/math_keyboard.dart';
 
 import '../adapters/mock_gaokao_math_repository.dart';
+import '../adapters/demo_spoken_formula_repository.dart';
+import '../adapters/platform_speech_formula_recognizer.dart';
 import '../adapters/practice_api_client.dart';
 import '../adapters/practice_participant_token_store.dart';
 import '../adapters/remote_practice_repository.dart';
+import '../adapters/remote_spoken_formula_repository.dart';
 import '../application/practice_session_controller.dart';
+import '../application/speech_formula_controller.dart';
 import '../core/practice_models.dart';
 import 'math_answer_field.dart';
 
@@ -17,16 +21,24 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     super.key,
     required this.controller,
     this.disposeController = false,
+    this.speechFormulaController,
+    this.disposeSpeechFormulaController = false,
   });
 
   /// 创建供开发者工具使用的自造题内存版本。
   factory PracticeAssessmentLabPage.mock({Key? key}) {
+    final speechController = SpeechFormulaController(
+      recognizer: createPlatformSpeechFormulaRecognizer(),
+      repository: const DemoSpokenFormulaRepository(),
+    );
     return PracticeAssessmentLabPage(
       key: key,
       controller: PracticeSessionController(
         repository: MockGaokaoMathRepository(),
       ),
       disposeController: true,
+      speechFormulaController: speechController,
+      disposeSpeechFormulaController: true,
     );
   }
 
@@ -35,22 +47,29 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     required String baseUrl,
     Future<String?> Function()? bearerTokenProvider,
   }) {
-    final repository = RemotePracticeRepository(
-      api: PracticeApiClient(
-        baseUrl: baseUrl,
-        participantTokenStore: NativePracticeParticipantTokenStore(),
-        bearerTokenProvider: bearerTokenProvider,
-      ),
+    final api = PracticeApiClient(
+      baseUrl: baseUrl,
+      participantTokenStore: NativePracticeParticipantTokenStore(),
+      bearerTokenProvider: bearerTokenProvider,
     );
     return PracticeAssessmentLabPage(
       key: key,
-      controller: PracticeSessionController(repository: repository),
+      controller: PracticeSessionController(
+        repository: RemotePracticeRepository(api: api),
+      ),
       disposeController: true,
+      speechFormulaController: SpeechFormulaController(
+        recognizer: createPlatformSpeechFormulaRecognizer(),
+        repository: RemoteSpokenFormulaRepository(api),
+      ),
+      disposeSpeechFormulaController: true,
     );
   }
 
   final PracticeSessionController controller;
   final bool disposeController;
+  final SpeechFormulaController? speechFormulaController;
+  final bool disposeSpeechFormulaController;
 
   @override
   State<PracticeAssessmentLabPage> createState() =>
@@ -86,6 +105,9 @@ final class _PracticeAssessmentLabPageState
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_refresh);
     if (widget.disposeController) widget.controller.dispose();
+    if (widget.disposeSpeechFormulaController) {
+      widget.speechFormulaController?.dispose();
+    }
     super.dispose();
   }
 
@@ -156,6 +178,7 @@ final class _PracticeAssessmentLabPageState
                     draft: state.currentDraft,
                     isSubmitting:
                         state.status == PracticeSessionStatus.submitting,
+                    speechFormulaController: widget.speechFormulaController,
                     onOption: widget.controller.toggleOption,
                     onAnswer: widget.controller.updateAnswer,
                     onReasoning: widget.controller.updateReasoning,
@@ -331,6 +354,7 @@ final class _QuestionCard extends StatelessWidget {
     required this.question,
     required this.draft,
     required this.isSubmitting,
+    this.speechFormulaController,
     required this.onOption,
     required this.onAnswer,
     required this.onReasoning,
@@ -339,6 +363,7 @@ final class _QuestionCard extends StatelessWidget {
   final PracticeQuestion question;
   final PracticeDraft draft;
   final bool isSubmitting;
+  final SpeechFormulaController? speechFormulaController;
   final ValueChanged<String> onOption;
   final ValueChanged<String> onAnswer;
   final ValueChanged<String> onReasoning;
@@ -371,6 +396,7 @@ final class _QuestionCard extends StatelessWidget {
                 prompt: question.prompt,
                 value: draft.answer,
                 enabled: !isSubmitting,
+                speechFormulaController: speechFormulaController,
                 onChanged: onAnswer,
               )
             else ...[

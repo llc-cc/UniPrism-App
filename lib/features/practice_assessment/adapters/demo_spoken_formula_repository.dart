@@ -7,6 +7,7 @@ final class DemoSpokenFormulaRepository implements SpokenFormulaRepository {
   static const Map<String, String> _exact = <String, String>{
     'x的平方': 'x^2',
     'x的平方加二x加一': 'x^2+2x+1',
+    'x的平方加2x加1': 'x^2+2x+1',
     '根号下x加一': r'\sqrt{x+1}',
     '二分之一乘以mv的平方': r'\frac{1}{2}mv^2',
     '从零到一积分x的平方dx': r'\int_0^1x^2\,dx',

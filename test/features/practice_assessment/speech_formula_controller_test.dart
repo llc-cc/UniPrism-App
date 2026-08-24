@@ -57,6 +57,23 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.idle);
     expect(controller.state.conversion, isNull);
   });
+
+  test('重复的最终识别结果只触发一次公式转换', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _CountingRepository();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(repository.callCount, 1);
+  });
 }
 
 SpokenFormulaConversion _conversion() => const SpokenFormulaConversion(
@@ -115,4 +132,17 @@ final class _DeferredRepository implements SpokenFormulaRepository {
   }) => _completer.future;
 
   void complete(SpokenFormulaConversion value) => _completer.complete(value);
+}
+
+final class _CountingRepository implements SpokenFormulaRepository {
+  int callCount = 0;
+
+  @override
+  Future<SpokenFormulaConversion> convert({
+    required String text,
+    String locale = 'zh-CN',
+  }) async {
+    callCount += 1;
+    return _conversion();
+  }
 }

@@ -1,10 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:math_keyboard/math_keyboard.dart';
 
+import '../application/speech_formula_controller.dart';
 import 'practice_formula_config.dart';
 import 'practice_formula_draft_restorer.dart';
 import 'practice_formula_keyboard.dart';
+import 'practice_formula_latex_guard.dart';
+import 'practice_formula_voice_panel.dart';
 
 /// 填空题的可排版数学输入框；对外只暴露 LaTeX 字符串，不泄漏编辑器内部树。
 final class MathAnswerField extends StatefulWidget {
@@ -16,6 +21,7 @@ final class MathAnswerField extends StatefulWidget {
     required this.onChanged,
     this.controller,
     this.prompt,
+    this.speechFormulaController,
   });
 
   final String questionId;
@@ -28,6 +34,9 @@ final class MathAnswerField extends StatefulWidget {
 
   /// 允许测试或上层复用控制器；只有组件自行创建时才负责销毁。
   final MathFieldEditingController? controller;
+
+  /// 页面级语音控制器；为空时保持原有纯键盘输入行为。
+  final SpeechFormulaController? speechFormulaController;
 
   @override
   State<MathAnswerField> createState() => _MathAnswerFieldState();
@@ -66,6 +75,11 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
     if (widget.value != _lastAcceptedValue ||
         oldWidget.questionId != widget.questionId) {
       _synchronizeExternalValue(widget.value);
+    }
+    if (oldWidget.questionId != widget.questionId ||
+        (oldWidget.enabled && !widget.enabled)) {
+      // 切题或提交锁定后必须使旧语音回调失效，避免候选写入另一道题。
+      unawaited(widget.speechFormulaController?.reset());
     }
   }
 
@@ -129,6 +143,16 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
     _lastAcceptedValue = value;
     widget.onChanged(value);
     if (widget.prompt != null && mounted) setState(() {});
+  }
+
+  void _insertSpokenFormula(String latex) {
+    try {
+      insertValidatedPracticeFormulaLatex(_controller, latex);
+    } on ArgumentError catch (error) {
+      setState(() {
+        _formatError = error.message?.toString() ?? '该语音公式暂时无法插入。';
+      });
+    }
   }
 
   double get _inlineAnswerWidth {
@@ -230,11 +254,17 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
               ),
             ),
           ],
-          if (_isKeyboardVisible && widget.enabled)
+          if (_isKeyboardVisible && widget.enabled) ...[
+            if (widget.speechFormulaController case final voiceController?)
+              PracticeFormulaVoicePanel(
+                controller: voiceController,
+                onInsert: _insertSpokenFormula,
+              ),
             PracticeFormulaKeyboard(
               controller: _controller,
               onDone: _finishEditing,
             ),
+          ],
         ],
       ),
     );

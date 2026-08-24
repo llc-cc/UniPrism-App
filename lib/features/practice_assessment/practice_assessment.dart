@@ -1,12 +1,17 @@
+export 'adapters/demo_spoken_formula_repository.dart';
 export 'adapters/mock_gaokao_math_repository.dart';
+export 'adapters/platform_speech_formula_recognizer.dart';
 export 'adapters/practice_api_client.dart';
 export 'adapters/practice_dto_mapper.dart';
 export 'adapters/practice_event_recorder.dart';
 export 'adapters/practice_participant_token_store.dart';
 export 'adapters/remote_practice_repository.dart';
+export 'adapters/remote_spoken_formula_repository.dart';
 export 'application/practice_session_controller.dart';
+export 'application/speech_formula_controller.dart';
 export 'core/ability_profile_aggregator.dart';
 export 'core/practice_models.dart';
 export 'core/practice_ports.dart';
 export 'core/rule_based_attempt_assessor.dart';
+export 'core/spoken_formula.dart';
 export 'presentation/practice_assessment_lab_page.dart';

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:math_keyboard/math_keyboard.dart';
+import 'package:uniprism_app/features/practice_assessment/application/speech_formula_controller.dart';
+import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 import 'package:uniprism_app/features/practice_assessment/presentation/math_answer_field.dart';
 
 void main() {
@@ -509,6 +511,51 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('语音候选确认后插入当前光标并进入原有 onChanged', (tester) async {
+    final mathController = MathFieldEditingController();
+    final recognizer = _VoiceTestRecognizer();
+    final speechController = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _VoiceTestRepository(),
+    );
+    final changes = <String>[];
+    addTearDown(mathController.dispose);
+    addTearDown(speechController.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-voice',
+          value: 'ab',
+          enabled: true,
+          controller: mathController,
+          speechFormulaController: speechController,
+          onChanged: changes.add,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    mathController.goBack();
+    final changesBeforeVoice = List<String>.of(changes);
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-start')),
+    );
+    await tester.pump();
+    recognizer.emit('x 的平方', isFinal: true);
+    for (var index = 0; index < 5; index++) {
+      await tester.pump();
+    }
+
+    expect(changes, changesBeforeVoice);
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-insert')),
+    );
+    await tester.pump();
+
+    expect(changes.last, r'ax^2b');
+  });
 }
 
 Widget _app(Widget child) {
@@ -527,4 +574,41 @@ Future<void> _selectFormulaSection(
   await tester.ensureVisible(section);
   await tester.tap(section);
   await tester.pump();
+}
+
+final class _VoiceTestRecognizer implements SpeechFormulaRecognizer {
+  SpeechFormulaResultCallback? _onResult;
+
+  @override
+  Future<bool> initialize() async => true;
+
+  @override
+  Future<void> listen({required SpeechFormulaResultCallback onResult}) async {
+    _onResult = onResult;
+  }
+
+  void emit(String words, {required bool isFinal}) =>
+      _onResult?.call(words, isFinal: isFinal);
+
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> stop() async {}
+}
+
+final class _VoiceTestRepository implements SpokenFormulaRepository {
+  const _VoiceTestRepository();
+
+  @override
+  Future<SpokenFormulaConversion> convert({
+    required String text,
+    String locale = 'zh-CN',
+  }) async => SpokenFormulaConversion(
+    recognizedText: text,
+    normalizedText: text,
+    latex: 'x^2',
+    alternatives: const <String>[],
+    warnings: const <String>[],
+  );
 }

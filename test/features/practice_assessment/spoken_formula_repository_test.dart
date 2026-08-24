@@ -44,6 +44,14 @@ void main() {
     expect(result.latex, 'x^2');
   });
 
+  test('演示转换兼容浏览器把中文数字转写为阿拉伯数字', () async {
+    const repository = DemoSpokenFormulaRepository();
+
+    final conversion = await repository.convert(text: 'x的平方加2x加1');
+
+    expect(conversion.latex, 'x^2+2x+1');
+  });
+
   test('远程响应缺少公式时拒绝进入预览', () async {
     final repository = RemoteSpokenFormulaRepository(
       PracticeApiClient(
