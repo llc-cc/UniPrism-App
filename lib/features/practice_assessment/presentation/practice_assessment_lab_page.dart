@@ -13,6 +13,7 @@ import '../adapters/remote_spoken_formula_repository.dart';
 import '../application/practice_session_controller.dart';
 import '../application/speech_formula_controller.dart';
 import '../core/practice_models.dart';
+import '../core/spoken_formula.dart';
 import 'math_answer_field.dart';
 
 /// 独立练习评分实验室；只展示单次作答事实和证据，不推导长期掌握度。
@@ -26,10 +27,14 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
   });
 
   /// 创建供开发者工具使用的自造题内存版本。
-  factory PracticeAssessmentLabPage.mock({Key? key}) {
+  factory PracticeAssessmentLabPage.mock({
+    Key? key,
+    SpokenFormulaRepository spokenFormulaRepository =
+        const DemoSpokenFormulaRepository(),
+  }) {
     final speechController = SpeechFormulaController(
       recognizer: createPlatformSpeechFormulaRecognizer(),
-      repository: const DemoSpokenFormulaRepository(),
+      repository: spokenFormulaRepository,
     );
     return PracticeAssessmentLabPage(
       key: key,

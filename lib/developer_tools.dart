@@ -2,12 +2,24 @@ part of 'main.dart';
 
 /// 统一构造练习实验室，确保开发工具点击入口与 Web 直达路由使用同一连接模式。
 Widget _buildPracticeAssessmentLabPage() {
-  return AppConfig.practiceAssessmentRemote
-      ? PracticeAssessmentLabPage.remote(
-          baseUrl: AppConfig.apiBaseUrl,
-          bearerTokenProvider: () async => AuthService.instance.token,
-        )
-      : PracticeAssessmentLabPage.mock();
+  if (AppConfig.practiceAssessmentRemote) {
+    return PracticeAssessmentLabPage.remote(
+      baseUrl: AppConfig.apiBaseUrl,
+      bearerTokenProvider: () async => AuthService.instance.token,
+    );
+  }
+  if (AppConfig.practiceSpokenFormulaRemote) {
+    // 练习题可继续使用本地 Mock，仅将语音公式交给共享后端，便于独立联调模型能力。
+    final api = PracticeApiClient(
+      baseUrl: AppConfig.apiBaseUrl,
+      participantTokenStore: NativePracticeParticipantTokenStore(),
+      bearerTokenProvider: () async => AuthService.instance.token,
+    );
+    return PracticeAssessmentLabPage.mock(
+      spokenFormulaRepository: RemoteSpokenFormulaRepository(api),
+    );
+  }
+  return PracticeAssessmentLabPage.mock();
 }
 
 /// 统一构造对话探索实验室，避免直达路由与开发工具入口的身份契约发生漂移。
@@ -69,6 +81,8 @@ class DeveloperToolsPage extends StatelessWidget {
             title: '练习评分实验室',
             description: AppConfig.practiceAssessmentRemote
                 ? '后端会话、规则判题与能力证据'
+                : AppConfig.practiceSpokenFormulaRemote
+                ? '本地 Mock 题目 + MiniMax 语音公式转换'
                 : '演示 Mock：19 题本地规则判题',
             onTap: () => _push(context, _buildPracticeAssessmentLabPage()),
           ),

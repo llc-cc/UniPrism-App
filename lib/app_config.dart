@@ -26,6 +26,10 @@ abstract final class AppConfig {
     'PRACTICE_ASSESSMENT_REMOTE',
     defaultValue: false,
   );
+  static const practiceSpokenFormulaRemote = bool.fromEnvironment(
+    'PRACTICE_SPOKEN_FORMULA_REMOTE',
+    defaultValue: false,
+  );
   static const _agentMockRequested = bool.fromEnvironment(
     'AGENT_MOCK_ENABLED',
     defaultValue: true,
