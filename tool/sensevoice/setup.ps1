@@ -12,9 +12,9 @@ Import-Module $modulePath -Force
 $paths = Get-SenseVoicePaths -Root $Root
 
 $freeBefore = @{}
-foreach ($drive in Get-PSDrive -Name C, D) {
-  $freeBefore[$drive.Name] = [int64]$drive.Free
-  Write-Host ("{0}: free bytes before setup = {1}" -f $drive.Name, $freeBefore[$drive.Name])
+foreach ($driveName in @('C', 'D')) {
+  $freeBefore[$driveName] = Get-SenseVoiceDriveFreeBytes -DriveName $driveName
+  Write-Host ("{0}: free bytes before setup = {1}" -f $driveName, $freeBefore[$driveName])
 }
 
 $createdDirectories = @(
@@ -78,13 +78,9 @@ if ($LASTEXITCODE -ne 0) {
 $freeze | Set-Content -Path $lockFile -Encoding utf8
 
 $freeAfter = @{}
-foreach ($drive in Get-PSDrive -Name C, D) {
-  $freeAfter[$drive.Name] = [int64]$drive.Free
-  Write-Host ("{0}: free bytes after setup = {1}" -f $drive.Name, $freeAfter[$drive.Name])
+foreach ($driveName in @('C', 'D')) {
+  $freeAfter[$driveName] = Get-SenseVoiceDriveFreeBytes -DriveName $driveName
+  Write-Host ("{0}: free bytes after setup = {1}" -f $driveName, $freeAfter[$driveName])
 }
 
-# 即使缓存变量已限定到 D 盘，也在结束时检测 C 盘异常消耗，避免安装器悄然写入系统盘.
-$cDriveBytesUsed = $freeBefore['C'] - $freeAfter['C']
-if ($cDriveBytesUsed -gt 1GB) {
-  throw "SenseVoice setup consumed more than 1GB on C drive: $cDriveBytesUsed bytes"
-}
+Assert-SenseVoiceCDriveUsage -FreeBytesBefore $freeBefore['C'] -FreeBytesAfter $freeAfter['C']

@@ -37,4 +37,54 @@ function Set-SenseVoiceProcessEnvironment {
   $env:PYTHONPYCACHEPREFIX = Join-Path $Paths.Temp 'pycache'
 }
 
-Export-ModuleMember -Function Get-SenseVoicePaths, Set-SenseVoiceProcessEnvironment
+function Get-SenseVoiceDriveFreeBytes {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string] $DriveName)
+
+  $normalizedDriveName = $DriveName.Trim().TrimEnd(':', '\', '/')
+  if ([string]::IsNullOrWhiteSpace($normalizedDriveName)) {
+    throw "SenseVoice cannot read free space for drive: $DriveName"
+  }
+
+  $psDrive = Get-PSDrive -Name $normalizedDriveName -ErrorAction SilentlyContinue
+  if ($null -ne $psDrive -and $null -ne $psDrive.Free) {
+    $freeBytes = [int64]$psDrive.Free
+    if ($freeBytes -ge 0) {
+      return $freeBytes
+    }
+  }
+
+  # 部分 PowerShell 运行时会把 Get-PSDrive.Free 置空，必须回退到 DriveInfo；两者均不可读时停止安装.
+  try {
+    $driveInfo = [System.IO.DriveInfo]::new("$normalizedDriveName`:\")
+    if (-not $driveInfo.IsReady) {
+      throw 'Drive is not ready'
+    }
+    $freeBytes = [int64]$driveInfo.AvailableFreeSpace
+    if ($freeBytes -lt 0) {
+      throw 'Drive returned a negative free-space value'
+    }
+    return $freeBytes
+  } catch {
+    throw "SenseVoice cannot read free space for drive ${DriveName}: $($_.Exception.Message)"
+  }
+}
+
+function Assert-SenseVoiceCDriveUsage {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][int64] $FreeBytesBefore,
+    [Parameter(Mandatory)][int64] $FreeBytesAfter
+  )
+
+  if ($FreeBytesBefore -lt 0 -or $FreeBytesAfter -lt 0) {
+    throw 'SenseVoice C-drive free-space readings must be non-negative'
+  }
+
+  $cDriveBytesUsed = $FreeBytesBefore - $FreeBytesAfter
+  if ($cDriveBytesUsed -gt 1GB) {
+    throw "SenseVoice setup consumed more than 1GB on C drive: $cDriveBytesUsed bytes"
+  }
+}
+
+Export-ModuleMember -Function Get-SenseVoicePaths, Set-SenseVoiceProcessEnvironment, Get-SenseVoiceDriveFreeBytes, Assert-SenseVoiceCDriveUsage
