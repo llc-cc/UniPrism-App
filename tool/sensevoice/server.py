@@ -29,7 +29,11 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def create_application(device: str, cors_origin: str):
+def create_application(host: str, device: str, cors_origin: str):
+    # 在导入/创建 FunASR 应用前拒绝公网地址，避免错误配置触发模型加载后才失败.
+    if host != "127.0.0.1":
+        raise ValueError("Local SenseVoice may bind only to 127.0.0.1")
+
     import funasr
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
@@ -58,12 +62,12 @@ def create_application(device: str, cors_origin: str):
 
 def main() -> None:
     arguments = parse_arguments()
-    if arguments.host != "127.0.0.1":
-        raise SystemExit("Local SenseVoice may bind only to 127.0.0.1")
 
     import uvicorn
 
-    application = create_application(arguments.device, arguments.cors_origin)
+    application = create_application(
+        arguments.host, arguments.device, arguments.cors_origin
+    )
     uvicorn.run(application, host=arguments.host, port=arguments.port)
 
 
