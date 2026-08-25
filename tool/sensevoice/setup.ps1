@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string] $Root = 'D:\dev\local-ai\sensevoice',
-  [string] $PythonLauncher = 'py'
+  [string] $PythonLauncher = 'py',
+  [switch] $ValidateOnly
 )
 
 Set-StrictMode -Version Latest
@@ -10,6 +11,20 @@ $ErrorActionPreference = 'Stop'
 $modulePath = Join-Path $PSScriptRoot 'SenseVoicePaths.psm1'
 Import-Module $modulePath -Force
 $paths = Get-SenseVoicePaths -Root $Root
+$launcherName = [IO.Path]::GetFileNameWithoutExtension($PythonLauncher)
+$venvArguments = if ($launcherName -eq 'py') {
+  @('-3.11', '-m', 'venv', $paths.Venv)
+} else {
+  @('-m', 'venv', $paths.Venv)
+}
+
+if ($ValidateOnly) {
+  [ordered]@{
+    launcher = $PythonLauncher
+    venvArguments = $venvArguments
+  } | ConvertTo-Json -Compress
+  return
+}
 
 $freeBefore = @{}
 foreach ($driveName in @('C', 'D')) {
@@ -39,7 +54,7 @@ $createdDirectories | ForEach-Object { Write-Host $_ }
 Set-SenseVoiceProcessEnvironment -Paths $paths
 
 # 依赖安装必须通过虚拟环境执行，确保全局 Python 与用户目录不会承载模型运行时资产.
-& $PythonLauncher @('-3.11', '-m', 'venv', $paths.Venv)
+& $PythonLauncher @venvArguments
 if ($LASTEXITCODE -ne 0) {
   throw "Python virtual environment creation failed with exit code $LASTEXITCODE"
 }
