@@ -16,6 +16,8 @@ final class RemoteSpokenFormulaRepository implements SpokenFormulaRepository {
       'POST',
       '/api/practice/formulas/from-spoken-text',
       body: <String, Object?>{'text': text, 'locale': locale},
+      // 后端最多执行两次 30 秒模型尝试，额外预算用于 HTTP 往返和响应解析。
+      requestTimeout: const Duration(seconds: 70),
     );
     final recognizedText = _requiredString(data, 'recognizedText');
     final normalizedText = _requiredString(data, 'normalizedText');

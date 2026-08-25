@@ -220,7 +220,7 @@ export type MathAstNode =
   | { type: 'combinatoric'; kind: 'arrangement' | 'combination'; n: MathAstNode; k: MathAstNode }
   | { type: 'piecewise'; cases: PiecewiseCase[]; otherwise?: MathAstNode }
   | { type: 'binder'; kind: 'sum' | 'product' | 'limit'; body: MathAstNode; variable?: MathAstNode; lower?: MathAstNode; upper?: MathAstNode; target?: MathAstNode }
-  | { type: 'derivative'; expression: MathAstNode; variable: MathAstNode; order?: number };
+  | { type: 'derivative'; expression: MathAstNode; variable: MathAstNode; order?: number; at?: MathAstNode };
 
 export const mathAstNodeSchema: z.ZodType<MathAstNode> = z.lazy(
   () => z.union([
@@ -265,6 +265,7 @@ Implementation rules:
 - `constant` enum: `pi`, `e`, `infinity`, `emptySet`, `natural`, `integer`, `rational`, `real`, `complex`;
 - collection/function/call items: 1–12 except a finite `set`, which can be empty and has at most 128 items;
 - piecewise cases: 1–8; derivative order: 1–5;
+- walk optional `derivative.at` exactly once as a recursive child, including it in depth, per-candidate node count, and total response node count;
 - `sum` and `product` require `variable`; `limit` requires `variable` and `target`;
 - regular functions take exactly one argument except `max` and `min`, which take 1–12;
 - `base` is legal only when `name === 'log'`;
@@ -535,7 +536,7 @@ Implement the switch using this complete canonical mapping; each row is one expl
 | `piecewise` | fixed `cases` rows; optional else row uses literal `\text{otherwise}` | Atom |
 | `binder.sum/product` | fixed command, structured lower `variable=lower`, upper, then body | Atom |
 | `binder.limit` | `\lim_{variable\to target}` then body | Atom |
-| `derivative` | first-order `\frac{d}{dvariable}` or matching higher-order superscripts | Atom |
+| `derivative` | first-order `\frac{d}{dvariable}` or matching higher-order superscripts; optional `at` wraps the complete derivative as `\left.\frac{d}{dvariable}expression\right|_{variable=at}` | Atom |
 
 Parenthesize only when child precedence would change meaning. Multiplication may omit `\cdot` only for unambiguous coefficient/symbol or adjacent symbol notation; all other products emit `\cdot`. Use only the static command/operator maps proven by the golden tests. No model-authored text reaches an environment or command name.
 
@@ -703,6 +704,7 @@ The prompt must state:
 
 ```text
 不得输出 latex、raw、HTML、Markdown、URL、解释性前后缀或协议之外字段。
+derivative.order 只能是 1–5；指定点求值必须使用递归字段 derivative.at，不得伪装为 subscript 或直接计算结果。
 status=unsupported 时 primary 必须为 null 且 alternatives 必须为空。
 status=ambiguous 时 alternatives 至少包含一个与 primary 结构语义不同的候选。
 ```

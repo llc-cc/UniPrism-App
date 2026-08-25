@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,53 @@ import 'package:uniprism_app/features/practice_assessment/adapters/remote_spoken
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
 void main() {
+  test('语音公式请求使用 70 秒预算且共享请求仍保留 15 秒默认值', () async {
+    final observedTimeouts = <Duration>[];
+    final api = PracticeApiClient(
+      baseUrl: 'http://localhost:3000',
+      participantTokenStore: MemoryPracticeParticipantTokenStore(),
+      client: MockClient((request) async {
+        final data =
+            request.url.path == '/api/practice/formulas/from-spoken-text'
+            ? <String, Object?>{
+                'recognizedText': 'x',
+                'normalizedText': 'x',
+                'latex': 'x',
+                'alternatives': <String>[],
+                'warnings': <String>[],
+              }
+            : <String, Object?>{'reachable': true};
+        return http.Response(
+          jsonEncode({'ok': true, 'data': data}),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }),
+    );
+    final repository = RemoteSpokenFormulaRepository(api);
+
+    await runZoned(
+      () async {
+        await repository.convert(text: 'x');
+        await api.request('GET', '/api/practice/ping');
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration == const Duration(seconds: 15) ||
+              duration == const Duration(seconds: 70)) {
+            observedTimeouts.add(duration);
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    expect(observedTimeouts, <Duration>[
+      const Duration(seconds: 70),
+      const Duration(seconds: 15),
+    ]);
+  });
+
   test('远程转换只发送最终文字和中文区域', () async {
     final repository = RemoteSpokenFormulaRepository(
       PracticeApiClient(

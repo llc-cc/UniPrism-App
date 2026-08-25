@@ -124,7 +124,7 @@ V1 只允许以下判别联合节点，不提供任意命令或任意文本节�
 | `combinatoric` | `kind`, `n`, `k` | 排列数和组合数 |
 | `piecewise` | `cases`, `otherwise?` | 分段函数 |
 | `binder` | `kind`, `body`, `variable?`, `lower?`, `upper?`, `target?` | 求和、乘积、极限 |
-| `derivative` | `expression`, `variable`, `order?` | 高中导数表达 |
+| `derivative` | `expression`, `variable`, `order?`, `at?` | 高中导数表达及可选的指定点求值 |
 
 运算符和函数采用固定枚举：
 
@@ -147,6 +147,7 @@ Zod 负责字段和枚举校验，独立的 AST 审核器负责跨节点限制�
 - 函数调用、元组和有限集合最多 12 项；
 - 分段函数最多 8 个分支；
 - 导数阶数限 1–5；
+- `derivative.at` 与 `expression`、`variable` 一样是递归 AST 子节点，必须计入候选深度、单候选节点数和全部候选总节点数；
 - 数字字符串最长 40，禁止科学计数法、`NaN` 和无穷字符串；
 - 同一响应全部候选合计最多 256 个节点；
 - 渲染后的单个 LaTeX 仍不得超过 512 字符；
@@ -172,6 +173,7 @@ relation < add/subtract < multiply/divide < unary < power < atom
 - 连续关系按操作符数组顺序渲染，不改写为逻辑与；
 - 分段函数只由结构化分支生成固定 `cases` 环境；
 - 集合、区间、数集、无穷和希腊字母全部走静态映射；
+- `derivative.at` 使用完整导数求值记号 `\left.\frac{d}{dx}expression\right|_{x=at}`，不得退化为表达式下标或直接计算导数值；
 - 不进行代数化简，不擅自把 `x+x` 变成 `2x`，也不改变学生口语表达的运算结构。
 
 渲染完成后继续调用现有 `assertSafeFormulaLatex`。AST 渲染器产生的所有命令必须属于最终 LaTeX 白名单；若新增一个节点映射需要新命令，必须同时补充渲染测试、安全白名单测试和 KaTeX 验证。

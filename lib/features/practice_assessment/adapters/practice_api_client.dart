@@ -48,6 +48,7 @@ final class PracticeApiClient {
     Map<String, Object?>? body,
     String? idempotencyKey,
     bool includeParticipantTokenHeader = false,
+    Duration? requestTimeout,
   }) async {
     final bearer = await bearerTokenProvider?.call();
     final participant = bearer == null || includeParticipantTokenHeader
@@ -71,7 +72,10 @@ final class PracticeApiClient {
     try {
       final request = http.Request(method, uri)..headers.addAll(headers);
       if (body != null) request.body = jsonEncode(body);
-      final streamed = await _client.send(request).timeout(timeout);
+      // 仅显式长耗时端点覆盖共享默认值，避免放大全部练习 API 的失败等待时间。
+      final streamed = await _client
+          .send(request)
+          .timeout(requestTimeout ?? timeout);
       final response = await http.Response.fromStream(streamed);
       final decoded = _decode(response.body);
       if (response.statusCode < 200 ||
