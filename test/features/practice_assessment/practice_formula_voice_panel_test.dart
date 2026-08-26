@@ -14,6 +14,7 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller, (_) {}));
+    expect(find.text('识别方式：浏览器语音'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('practice-formula-voice-start')),
     );
@@ -23,6 +24,29 @@ void main() {
       find.byKey(const ValueKey('practice-formula-voice-stop')),
       findsOneWidget,
     );
+    expect(find.textContaining('识别方式：'), findsNothing);
+  });
+
+  testWidgets('375 窄屏空闲状态显示本机 SenseVoice 来源且不溢出', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = SpeechFormulaController(
+      recognizer: _FakeRecognizer(),
+      repository: _Repository(),
+      sourceLabel: '本机 SenseVoice',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, (_) {}));
+
+    expect(find.text('识别方式：本机 SenseVoice'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-start')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('预览确认前不插入且确认后只回调选中候选', (tester) async {

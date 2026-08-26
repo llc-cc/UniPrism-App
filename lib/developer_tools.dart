@@ -2,10 +2,26 @@ part of 'main.dart';
 
 /// 统一构造练习实验室，确保开发工具点击入口与 Web 直达路由使用同一连接模式。
 Widget _buildPracticeAssessmentLabPage() {
+  // 识别器只在进入实验页时构造一次，再与对应来源标签一起交给页面持有。
+  final speechFormulaRecognizer = createPlatformSpeechFormulaRecognizer(
+    mode: AppConfig.spokenFormulaAsrMode,
+    senseVoiceBaseUrl: AppConfig.senseVoiceBaseUrl,
+  );
+  final speechFormulaSourceLabel = switch (AppConfig.spokenFormulaAsrMode) {
+    'browser' => '浏览器语音',
+    'sensevoiceLocal' => '本机 SenseVoice',
+    final mode => throw ArgumentError.value(
+      mode,
+      'SPOKEN_FORMULA_ASR_MODE',
+      '仅支持 browser 或 sensevoiceLocal',
+    ),
+  };
   if (AppConfig.practiceAssessmentRemote) {
     return PracticeAssessmentLabPage.remote(
       baseUrl: AppConfig.apiBaseUrl,
       bearerTokenProvider: () async => AuthService.instance.token,
+      speechFormulaRecognizer: speechFormulaRecognizer,
+      speechFormulaSourceLabel: speechFormulaSourceLabel,
     );
   }
   if (AppConfig.practiceSpokenFormulaRemote) {
@@ -17,9 +33,14 @@ Widget _buildPracticeAssessmentLabPage() {
     );
     return PracticeAssessmentLabPage.mock(
       spokenFormulaRepository: RemoteSpokenFormulaRepository(api),
+      speechFormulaRecognizer: speechFormulaRecognizer,
+      speechFormulaSourceLabel: speechFormulaSourceLabel,
     );
   }
-  return PracticeAssessmentLabPage.mock();
+  return PracticeAssessmentLabPage.mock(
+    speechFormulaRecognizer: speechFormulaRecognizer,
+    speechFormulaSourceLabel: speechFormulaSourceLabel,
+  );
 }
 
 /// 统一构造对话探索实验室，避免直达路由与开发工具入口的身份契约发生漂移。

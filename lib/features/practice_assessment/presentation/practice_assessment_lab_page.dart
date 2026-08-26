@@ -31,10 +31,18 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     Key? key,
     SpokenFormulaRepository spokenFormulaRepository =
         const DemoSpokenFormulaRepository(),
+    SpeechFormulaRecognizer? speechFormulaRecognizer,
+    String speechFormulaSourceLabel = '浏览器语音',
   }) {
     final speechController = SpeechFormulaController(
-      recognizer: createPlatformSpeechFormulaRecognizer(),
+      recognizer:
+          speechFormulaRecognizer ??
+          createPlatformSpeechFormulaRecognizer(
+            mode: 'browser',
+            senseVoiceBaseUrl: '',
+          ),
       repository: spokenFormulaRepository,
+      sourceLabel: speechFormulaSourceLabel,
     );
     return PracticeAssessmentLabPage(
       key: key,
@@ -51,6 +59,8 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     Key? key,
     required String baseUrl,
     Future<String?> Function()? bearerTokenProvider,
+    SpeechFormulaRecognizer? speechFormulaRecognizer,
+    String speechFormulaSourceLabel = '浏览器语音',
   }) {
     final api = PracticeApiClient(
       baseUrl: baseUrl,
@@ -64,8 +74,14 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
       ),
       disposeController: true,
       speechFormulaController: SpeechFormulaController(
-        recognizer: createPlatformSpeechFormulaRecognizer(),
+        recognizer:
+            speechFormulaRecognizer ??
+            createPlatformSpeechFormulaRecognizer(
+              mode: 'browser',
+              senseVoiceBaseUrl: '',
+            ),
         repository: RemoteSpokenFormulaRepository(api),
+        sourceLabel: speechFormulaSourceLabel,
       ),
       disposeSpeechFormulaController: true,
     );

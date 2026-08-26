@@ -30,6 +30,14 @@ abstract final class AppConfig {
     'PRACTICE_SPOKEN_FORMULA_REMOTE',
     defaultValue: false,
   );
+  static const spokenFormulaAsrMode = String.fromEnvironment(
+    'SPOKEN_FORMULA_ASR_MODE',
+    defaultValue: 'browser',
+  );
+  static const senseVoiceBaseUrl = String.fromEnvironment(
+    'SENSEVOICE_BASE_URL',
+    defaultValue: 'http://127.0.0.1:8000',
+  );
   static const _agentMockRequested = bool.fromEnvironment(
     'AGENT_MOCK_ENABLED',
     defaultValue: true,

@@ -16,6 +16,35 @@ void main() {
     page.controller.dispose();
   });
 
+  test('Mock 页面保留显式注入的识别器与来源标签', () {
+    final recognizer = _FakeRecognizer();
+
+    final page = PracticeAssessmentLabPage.mock(
+      speechFormulaRecognizer: recognizer,
+      speechFormulaSourceLabel: '本机 SenseVoice',
+    );
+
+    expect(page.speechFormulaController?.recognizer, same(recognizer));
+    expect(page.speechFormulaController?.sourceLabel, '本机 SenseVoice');
+    page.speechFormulaController?.dispose();
+    page.controller.dispose();
+  });
+
+  test('Remote 页面保留显式注入的识别器与来源标签', () {
+    final recognizer = _FakeRecognizer();
+
+    final page = PracticeAssessmentLabPage.remote(
+      baseUrl: 'https://example.invalid',
+      speechFormulaRecognizer: recognizer,
+      speechFormulaSourceLabel: '本机 SenseVoice',
+    );
+
+    expect(page.speechFormulaController?.recognizer, same(recognizer));
+    expect(page.speechFormulaController?.sourceLabel, '本机 SenseVoice');
+    page.speechFormulaController?.dispose();
+    page.controller.dispose();
+  });
+
   testWidgets('Mock 练习页面为填空题装配真实语音入口', (tester) async {
     tester.view.physicalSize = const Size(1200, 1000);
     tester.view.devicePixelRatio = 1;
@@ -36,6 +65,23 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+final class _FakeRecognizer implements SpeechFormulaRecognizer {
+  @override
+  Future<bool> initialize() async => true;
+
+  @override
+  Future<void> listen({
+    required SpeechFormulaResultCallback onResult,
+    SpeechFormulaErrorCallback? onError,
+  }) async {}
+
+  @override
+  Future<void> stop() async {}
+
+  @override
+  Future<void> cancel() async {}
 }
 
 final class _FakeSpokenFormulaRepository implements SpokenFormulaRepository {

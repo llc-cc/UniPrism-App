@@ -45,10 +45,15 @@ final class SpeechFormulaState {
 
 /// 串联权限、短句识别和公式转换；操作序号用于丢弃取消后的迟到回调。
 final class SpeechFormulaController extends ChangeNotifier {
-  SpeechFormulaController({required this.recognizer, required this.repository});
+  SpeechFormulaController({
+    required this.recognizer,
+    required this.repository,
+    this.sourceLabel = '浏览器语音',
+  });
 
   final SpeechFormulaRecognizer recognizer;
   final SpokenFormulaRepository repository;
+  final String sourceLabel;
 
   SpeechFormulaState _state = const SpeechFormulaState();
   SpeechFormulaState get state => _state;

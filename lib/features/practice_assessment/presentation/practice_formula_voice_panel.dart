@@ -39,14 +39,26 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
 
   Widget _content(BuildContext context, SpeechFormulaState state) {
     return switch (state.status) {
-      SpeechFormulaStatus.idle => Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton.icon(
-          key: const ValueKey('practice-formula-voice-start'),
-          onPressed: controller.startListening,
-          icon: const Icon(Icons.mic_none_rounded),
-          label: const Text('语音输入公式'),
-        ),
+      SpeechFormulaStatus.idle => Wrap(
+        alignment: WrapAlignment.start,
+        spacing: 10,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          OutlinedButton.icon(
+            key: const ValueKey('practice-formula-voice-start'),
+            onPressed: controller.startListening,
+            icon: const Icon(Icons.mic_none_rounded),
+            label: const Text('语音输入公式'),
+          ),
+          Text(
+            '识别方式：${controller.sourceLabel}',
+            style: const TextStyle(
+              color: Color(0xFF6D6875),
+              fontSize: 12,
+            ),
+          ),
+        ],
       ),
       SpeechFormulaStatus.requestingPermission => const _ProgressMessage(
         message: '正在请求麦克风权限…',

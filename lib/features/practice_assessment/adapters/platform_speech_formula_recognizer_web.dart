@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:speech_to_text/speech_to_text.dart';
 
 import '../core/spoken_formula.dart';
+import 'local_sensevoice_speech_formula_recognizer.dart';
+import 'record_speech_audio_capture.dart';
+import 'sensevoice_asr_client.dart';
 
 typedef WebSpeechResultCallback =
     void Function(String words, {required bool isFinal});
@@ -23,8 +26,22 @@ abstract interface class WebSpeechRecognitionDriver {
   Future<void> cancel();
 }
 
-SpeechFormulaRecognizer createPlatformSpeechFormulaRecognizer() =>
-    WebSpeechFormulaRecognizer();
+/// 根据开发期编译配置显式选择 Web 语音识别链路；非法值不得回退到浏览器能力。
+SpeechFormulaRecognizer createPlatformSpeechFormulaRecognizer({
+  required String mode,
+  required String senseVoiceBaseUrl,
+}) => switch (mode) {
+  'browser' => WebSpeechFormulaRecognizer(),
+  'sensevoiceLocal' => LocalSenseVoiceSpeechFormulaRecognizer(
+    RecordSpeechAudioCapture(),
+    SenseVoiceAsrClient(baseUrl: senseVoiceBaseUrl),
+  ),
+  _ => throw ArgumentError.value(
+    mode,
+    'mode',
+    '仅支持 browser 或 sensevoiceLocal',
+  ),
+};
 
 /// Chrome/Edge 短句识别适配器；只向上层暴露普通文本、最终态和安全错误。
 final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
