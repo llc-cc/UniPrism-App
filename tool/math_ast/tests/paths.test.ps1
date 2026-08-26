@@ -101,3 +101,6 @@ if (-not ([string]$setup.llamaArchiveUrl).StartsWith('https://github.com/ggml-or
 if (-not ([string]$setup.modelUrl).StartsWith('https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/')) {
   throw 'Model URL must use the selected repository'
 }
+if (-not ([string]$setup.modelUrl).EndsWith('/Qwen3-1.7B-Q4_K_M.gguf?download=true')) {
+  throw "Model URL lost the filename before the query string: $($setup.modelUrl)"
+}
