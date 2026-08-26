@@ -12,6 +12,7 @@ void main() {
     expect(data.getUint32(4, Endian.little), 40);
     expect(String.fromCharCodes(wav.sublist(8, 12)), 'WAVE');
     expect(String.fromCharCodes(wav.sublist(12, 16)), 'fmt ');
+    expect(data.getUint32(16, Endian.little), 16);
     expect(data.getUint16(20, Endian.little), 1);
     expect(data.getUint32(24, Endian.little), 16000);
     expect(data.getUint32(28, Endian.little), 32000);

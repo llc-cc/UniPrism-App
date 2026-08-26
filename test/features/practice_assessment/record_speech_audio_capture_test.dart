@@ -51,12 +51,42 @@ void main() {
     expect(driver.requestedConfig?.noiseSuppress, isTrue);
   });
 
-  test('有效配置变为 48kHz 双声道时取消且不交付流', () async {
+  test('有效配置为 PCM16 48kHz 单声道时取消且不交付流', () async {
     final driver = _FakeSpeechRecordDriver(
       effectiveConfigOnStart: const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 48000,
+        numChannels: 1,
+      ),
+    );
+    final capture = RecordSpeechAudioCapture(driver: driver);
+
+    await expectLater(capture.start(), throwsA(isA<StateError>()));
+    expect(driver.cancelCalls, 1);
+    expect(driver.stopCalls, 0);
+  });
+
+  test('有效配置为 PCM16 16kHz 双声道时取消且不交付流', () async {
+    final driver = _FakeSpeechRecordDriver(
+      effectiveConfigOnStart: const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: 16000,
         numChannels: 2,
+      ),
+    );
+    final capture = RecordSpeechAudioCapture(driver: driver);
+
+    await expectLater(capture.start(), throwsA(isA<StateError>()));
+    expect(driver.cancelCalls, 1);
+    expect(driver.stopCalls, 0);
+  });
+
+  test('有效配置为非 PCM16 的 16kHz 单声道时取消且不交付流', () async {
+    final driver = _FakeSpeechRecordDriver(
+      effectiveConfigOnStart: const RecordConfig(
+        encoder: AudioEncoder.wav,
+        sampleRate: 16000,
+        numChannels: 1,
       ),
     );
     final capture = RecordSpeechAudioCapture(driver: driver);
