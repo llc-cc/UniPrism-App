@@ -1,11 +1,19 @@
 import 'dart:typed_data';
 
+/// 在 RIFF 的 32 位 chunkSize 中可写入的最大偶数 PCM16 负载字节数。
+const maxPcm16MonoWavLength = 0xffffffda;
+
+/// 校验 PCM16 负载既能构成完整采样，也能在不分配大数组时安全写入 RIFF 头。
+void validatePcm16MonoWavLength(int pcmLength) {
+  if (pcmLength < 0 || pcmLength.isOdd || pcmLength > maxPcm16MonoWavLength) {
+    throw ArgumentError.value(pcmLength, 'pcm.length', '无法写入 PCM16 WAV');
+  }
+}
+
 /// 将单声道 PCM16 字节流封装为确定性的 RIFF/WAV；PCM 必须保持完整 16 位采样，
 /// 以免最后半个采样被错误地解释为音频数据。
 Uint8List encodePcm16MonoWav(Uint8List pcm, {int sampleRate = 16000}) {
-  if (pcm.length.isOdd) {
-    throw ArgumentError.value(pcm.length, 'pcm.length', '必须是完整的 PCM16 采样');
-  }
+  validatePcm16MonoWavLength(pcm.length);
   // RIFF 头的 byteRate 是无符号 32 位字段，单声道 PCM16 每秒固定两个字节。
   if (sampleRate <= 0 || sampleRate > 0x7fffffff) {
     throw ArgumentError.value(sampleRate, 'sampleRate', '无法写入 WAV 字节率字段');

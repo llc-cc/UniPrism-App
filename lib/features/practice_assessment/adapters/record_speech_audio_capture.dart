@@ -10,6 +10,9 @@ abstract interface class SpeechRecordDriver {
 
   Future<bool> isEncoderSupported(AudioEncoder encoder);
 
+  /// 插件在硬件或浏览器调整录音参数时报告最终生效的配置。
+  Future<void> setOnConfigChanged(void Function(RecordConfig)? callback);
+
   Future<Stream<Uint8List>> startStream(RecordConfig config);
 
   Future<void> stop();
@@ -17,34 +20,124 @@ abstract interface class SpeechRecordDriver {
   Future<void> cancel();
 }
 
+enum _CaptureState { idle, starting, recording, stopping }
+
+enum _FinishAction { stop, cancel }
+
 /// 使用 record 插件捕获 SenseVoice 所需的单声道 PCM16 数据流。
 final class RecordSpeechAudioCapture implements SpeechAudioCapture {
   RecordSpeechAudioCapture({SpeechRecordDriver? driver})
     : _driver = driver ?? _PluginRecordDriver();
 
   final SpeechRecordDriver _driver;
+  Future<void> _serialOperation = Future<void>.value();
+  Future<Stream<Uint8List>>? _startOperation;
+  _CaptureState _state = _CaptureState.idle;
+  int _generation = 0;
 
   @override
   Future<bool> requestPermission() => _driver.hasPermission();
 
   @override
-  Future<Stream<Uint8List>> start() async {
-    final isPcm16Supported = await _driver.isEncoderSupported(
-      AudioEncoder.pcm16bits,
-    );
-    if (!isPcm16Supported) {
-      throw StateError('当前平台不支持 PCM16 音频流录制');
+  Future<Stream<Uint8List>> start() {
+    switch (_state) {
+      case _CaptureState.idle:
+        final generation = ++_generation;
+        _state = _CaptureState.starting;
+        final startOperation = _enqueue(() => _startRecording(generation));
+        _startOperation = startOperation;
+        return startOperation;
+      case _CaptureState.starting:
+        return _startOperation!;
+      case _CaptureState.recording:
+      case _CaptureState.stopping:
+        return Future<Stream<Uint8List>>.error(StateError('当前录音尚未结束，不能重复启动'));
     }
-    return _driver.startStream(_config);
   }
 
   @override
-  Future<void> stop() => _driver.stop();
+  Future<void> stop() => _finishRecording(_FinishAction.stop);
 
   @override
-  Future<void> cancel() {
-    // 取消与停止语义不同：调用方会丢弃这次采集，不能将残留音频当作完成录音。
-    return _driver.cancel();
+  Future<void> cancel() => _finishRecording(_FinishAction.cancel);
+
+  Future<Stream<Uint8List>> _startRecording(int generation) async {
+    var effectiveConfig = _config;
+    try {
+      await _driver.setOnConfigChanged((config) {
+        effectiveConfig = config;
+      });
+      final isPcm16Supported = await _driver.isEncoderSupported(
+        AudioEncoder.pcm16bits,
+      );
+      if (!isPcm16Supported) {
+        throw StateError('当前平台不支持 PCM16 音频流录制');
+      }
+      final stream = await _driver.startStream(_config);
+      if (!_isCurrentStart(generation)) {
+        throw StateError('录音启动已被停止或取消');
+      }
+      if (!_isExpectedPcm16Config(effectiveConfig)) {
+        // record_web 会在 startStream 完成前同步报告浏览器实际配置；此处取消后才报错，
+        // 避免将已知不符合 SenseVoice 输入约束的数据流交给调用方。
+        await _driver.cancel();
+        throw StateError('当前设备无法提供 16kHz 单声道 PCM16 音频流');
+      }
+      _state = _CaptureState.recording;
+      return stream;
+    } catch (_) {
+      if (_isCurrentStart(generation)) {
+        _state = _CaptureState.idle;
+        _startOperation = null;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _finishRecording(_FinishAction action) {
+    final startOperation = _startOperation;
+    final generation = ++_generation;
+    _state = _CaptureState.stopping;
+
+    return _enqueue(() async {
+      try {
+        if (startOperation != null) {
+          try {
+            await startOperation;
+          } catch (_) {
+            // 启动失败后仍需执行用户已发出的停止或取消，确保插件会话不会残留。
+          }
+        }
+        if (action == _FinishAction.stop) {
+          await _driver.stop();
+        } else {
+          await _driver.cancel();
+        }
+      } finally {
+        // 即使插件停止失败也要离开 stopping，下一次用户操作才能恢复并决定是否重试。
+        if (_generation == generation) {
+          _state = _CaptureState.idle;
+          _startOperation = null;
+        }
+      }
+    });
+  }
+
+  bool _isCurrentStart(int generation) =>
+      _generation == generation && _state == _CaptureState.starting;
+
+  bool _isExpectedPcm16Config(RecordConfig config) =>
+      config.encoder == AudioEncoder.pcm16bits &&
+      config.sampleRate == 16000 &&
+      config.numChannels == 1;
+
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final result = _serialOperation.then<T>((_) => operation());
+    _serialOperation = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
   }
 
   static const RecordConfig _config = RecordConfig(
@@ -69,6 +162,10 @@ final class _PluginRecordDriver implements SpeechRecordDriver {
   @override
   Future<bool> isEncoderSupported(AudioEncoder encoder) =>
       _recorder.isEncoderSupported(encoder);
+
+  @override
+  Future<void> setOnConfigChanged(void Function(RecordConfig)? callback) =>
+      _recorder.setOnConfigChanged(callback);
 
   @override
   Future<Stream<Uint8List>> startStream(RecordConfig config) =>
