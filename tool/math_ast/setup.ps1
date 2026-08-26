@@ -15,12 +15,16 @@ $modelFileName = 'Qwen3-1.7B-Q4_K_M.gguf'
 $modelUrl = "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/$modelFileName?download=true"
 $modelSha256 = 'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5'
 $paths = Get-MathAstPaths -Root $Root
+$archiveDownload = Join-Path $paths.Temp "download-$llamaArchiveName"
+$extractDirectory = Join-Path $paths.Temp 'llama-b10516-extract'
+$modelDownload = Join-Path $paths.Temp "$modelFileName.download"
 
 $configuration = [pscustomobject][ordered]@{
   root = $paths.Root
   llamaRelease = $llamaRelease
   llamaArchiveUrl = $llamaArchiveUrl
   llamaArchiveSha256 = $llamaArchiveSha256
+  llamaArchiveDownload = $archiveDownload
   modelUrl = $modelUrl
   modelSha256 = $modelSha256
   serverExe = $paths.ServerExe
@@ -41,10 +45,6 @@ foreach ($directory in @(
   New-Item -ItemType Directory -Force -Path $directory | Out-Null
 }
 Set-MathAstProcessEnvironment -Paths $paths
-
-$archiveDownload = Join-Path $paths.Temp "$llamaArchiveName.download"
-$extractDirectory = Join-Path $paths.Temp 'llama-b10516-extract'
-$modelDownload = Join-Path $paths.Temp "$modelFileName.download"
 
 function Assert-DownloadedHash {
   param(

@@ -86,6 +86,9 @@ if ($setup.llamaArchiveSha256 -ne 'fbbbc55e0eb2e1b07f9dcb9488616c98ed47d9003b90e
 if ($setup.modelSha256 -ne 'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5') {
   throw 'Qwen model hash mismatch'
 }
+if (-not ([string]$setup.llamaArchiveDownload).EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
+  throw "Expand-Archive requires a .zip temporary path: $($setup.llamaArchiveDownload)"
+}
 if (-not ([string]$setup.llamaArchiveUrl).StartsWith('https://github.com/ggml-org/llama.cpp/releases/download/')) {
   throw 'llama.cpp URL must use the official release host'
 }
