@@ -13,6 +13,16 @@ const _timeoutMessage = '本机语音识别超时，请重新说一次。';
 const _unavailableMessage = '本地语音识别暂时不可用，请稍后重试。';
 const _tooLargeMessage = '录音文件过大，请重新录制。';
 
+/// 为请求 deadline 提供可替换调度器；默认实现使用系统 Timer。
+abstract interface class SenseVoiceDeadlineScheduler {
+  Timer schedule(Duration delay, void Function() callback);
+}
+
+final class _TimerDeadlineScheduler implements SenseVoiceDeadlineScheduler {
+  @override
+  Timer schedule(Duration delay, void Function() callback) => Timer(delay, callback);
+}
+
 /// 为页面提供可安全展示的语音识别失败原因，不携带服务端或网络内部信息。
 final class SenseVoiceAsrException implements Exception {
   const SenseVoiceAsrException(this.message);
@@ -26,38 +36,53 @@ final class SenseVoiceAsrClient {
     required String baseUrl,
     http.Client? client,
     this.timeout = const Duration(seconds: 15),
+    SenseVoiceDeadlineScheduler? deadlineScheduler,
   }) : _baseUrl = baseUrl.endsWith('/')
            ? baseUrl.substring(0, baseUrl.length - 1)
            : baseUrl,
-       _client = client ?? http.Client();
+       _client = client ?? http.Client(),
+       _deadlineScheduler = deadlineScheduler ?? _TimerDeadlineScheduler();
 
   final String _baseUrl;
   final http.Client _client;
+  final SenseVoiceDeadlineScheduler _deadlineScheduler;
   /// 单次转写操作的总时限；计时同时覆盖上传、等待响应头和读取响应体。
   final Duration timeout;
 
   /// 健康检查仅用于决定是否显示本地服务可用；所有失败统一降级为 false。
   Future<bool> isHealthy() async {
+    final deadline = Completer<void>();
+    final timer = _deadlineScheduler.schedule(_healthTimeout, deadline.complete);
     try {
-      final response = await _client
-          .get(Uri.parse('$_baseUrl/health'))
-          .timeout(_healthTimeout);
+      final response = await Future.any<http.Response>([
+        _client.get(Uri.parse('$_baseUrl/health')),
+        deadline.future.then<http.Response>(
+          (_) => throw TimeoutException('SenseVoice health deadline exceeded'),
+        ),
+      ]);
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (_) {
       return false;
+    } finally {
+      timer.cancel();
     }
   }
 
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
   Future<String> transcribe(Uint8List wavBytes) async {
     final abortCompleter = Completer<void>();
-    final deadline = Timer(timeout, () {
+    final deadline = _deadlineScheduler.schedule(timeout, () {
       if (!abortCompleter.isCompleted) {
         abortCompleter.complete();
       }
     });
     try {
-      return await _transcribe(wavBytes, abortCompleter);
+      return await Future.any<String>([
+        _transcribe(wavBytes, abortCompleter),
+        abortCompleter.future.then<String>(
+          (_) => throw TimeoutException('SenseVoice request deadline exceeded'),
+        ),
+      ]);
     } on TimeoutException {
       throw const SenseVoiceAsrException(_timeoutMessage);
     } on http.RequestAbortedException {
@@ -127,9 +152,8 @@ final class SenseVoiceAsrClient {
       }
       isFinished = true;
       // 达到上限或 deadline 时主动取消订阅，不能只让外部 Future 脱离等待。
-      unawaited(subscription.cancel().whenComplete(() {
-        result.completeError(error, stackTrace);
-      }));
+      result.completeError(error, stackTrace);
+      unawaited(subscription.cancel().catchError((Object _) {}));
     }
 
     subscription = stream.listen(

@@ -320,9 +320,9 @@ void main() {
 
   test('invalid UTF-8, non-object JSON, non-string text and sync failures stay safe', () async {
     for (final client in <http.Client>[
-      MockClient.streaming((_, __) async => http.StreamedResponse(Stream.value(<int>[0xff]), 200)),
-      MockClient((_) async => http.Response('[]', 200)),
-      MockClient((_) async => http.Response('{"text":1}', 200)),
+      MockClient.streaming((request, bodyStream) async => http.StreamedResponse(Stream.value(<int>[0xff]), 200)),
+      MockClient((request) async => http.Response('[]', 200)),
+      MockClient((request) async => http.Response('{"text":1}', 200)),
       _ThrowingClient(),
     ]) {
       await _expectSafe(clientAsr(client).transcribe(_canonicalWav()));
@@ -337,6 +337,68 @@ void main() {
     expect(client.sent, 2);
     expect(client.closed, isFalse);
   });
+
+  test('ignoring abortTrigger still returns timeout without closing client', () async {
+    final client = _IgnoringAbortClient();
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: client,
+      deadlineScheduler: _ImmediateDeadlineScheduler(),
+    );
+
+    await _expectTimeout(asr.transcribe(_canonicalWav()));
+    expect(client.closed, isFalse);
+  });
+
+  test('pending cancel does not delay deadline result and cancel is initiated', () async {
+    final cancelStarted = Completer<void>();
+    final controller = StreamController<List<int>>(
+      onCancel: () {
+        cancelStarted.complete();
+        return Completer<void>().future;
+      },
+    );
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      deadlineScheduler: _ImmediateDeadlineScheduler(),
+      client: _AbortObservingClient((request) async => http.StreamedResponse(controller.stream, 200)),
+    );
+
+    await _expectTimeout(asr.transcribe(_canonicalWav()));
+    await cancelStarted.future;
+  });
+
+  test('default transcription and fixed health deadlines are scheduled by behavior', () async {
+    final scheduler = _RecordingDeadlineScheduler();
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      deadlineScheduler: scheduler,
+      client: _IgnoringAbortClient(),
+    );
+
+    await _expectTimeout(asr.transcribe(_canonicalWav()));
+    expect(scheduler.delays.first, const Duration(seconds: 15));
+    expect(await asr.isHealthy(), isFalse);
+    expect(scheduler.delays.last, const Duration(seconds: 2));
+  });
+
+  for (final mutation in <String, void Function(Uint8List)>{
+    'riffSize': (wav) => ByteData.sublistView(wav).setUint32(4, 0, Endian.little),
+    'fmtSize': (wav) => ByteData.sublistView(wav).setUint32(16, 18, Endian.little),
+    'bits': (wav) => ByteData.sublistView(wav).setUint16(34, 8, Endian.little),
+    'dataMarker': (wav) => wav[36] = 0,
+    'oddDataLength': (wav) {},
+  }.entries) {
+    test('${mutation.key} mutation is rejected before transport', () async {
+      final client = _FailIfSentClient();
+      final wav = mutation.key == 'oddDataLength'
+          ? _canonicalWav(pcmLength: 1)
+          : _canonicalWav();
+      mutation.value(wav);
+      await expectLater(clientAsr(client).transcribe(wav), throwsA(isA<SenseVoiceAsrException>()));
+      expect(client.sent, isFalse);
+    });
+  }
 }
 
 Future<void> _expectTimeout(Future<String> transcription) async {
@@ -356,7 +418,28 @@ Future<void> _expectMessage(Future<String> future, String message) async {
 }
 
 Future<void> _expectSafe(Future<String> future) async {
-  try { await future; fail('expected SenseVoiceAsrException'); } on SenseVoiceAsrException catch (error) { expect(error.message, isNot(contains('127.0.0.1'))); expect(error.message, isNot(contains('Exception'))); }
+  try { await future; fail('expected SenseVoiceAsrException'); } on SenseVoiceAsrException catch (error) { expect(error.message, isNot(contains('127.0.0.1'))); expect(error.message, isNot(contains('private endpoint error'))); expect(error.message, isNot(contains('Exception'))); }
+}
+
+final class _IgnoringAbortClient extends http.BaseClient {
+  var closed = false;
+  @override Future<http.StreamedResponse> send(http.BaseRequest request) => Completer<http.StreamedResponse>().future;
+  @override void close() { closed = true; }
+}
+
+final class _ImmediateDeadlineScheduler implements SenseVoiceDeadlineScheduler {
+  @override Timer schedule(Duration delay, void Function() callback) { callback(); return _FakeTimer(); }
+}
+
+final class _RecordingDeadlineScheduler implements SenseVoiceDeadlineScheduler {
+  final delays = <Duration>[];
+  @override Timer schedule(Duration delay, void Function() callback) { delays.add(delay); callback(); return _FakeTimer(); }
+}
+
+final class _FakeTimer implements Timer {
+  @override bool get isActive => false;
+  @override int get tick => 0;
+  @override void cancel() {}
 }
 
 final class _FailIfSentClient extends http.BaseClient {
