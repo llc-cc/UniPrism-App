@@ -12,7 +12,10 @@ void main() {
     final client = SenseVoiceAsrClient(
       baseUrl: 'http://127.0.0.1:8000',
       client: MockClient(
-        (request) async => http.Response('{"status":"ok"}', 200),
+        (request) async {
+          expect(request.url, Uri.parse('http://127.0.0.1:8000/health'));
+          return http.Response('{"status":"ok"}', 200);
+        },
       ),
     );
 
@@ -184,11 +187,10 @@ void main() {
   });
 
   test('发送超时映射为安全的超时提示', () async {
-    final pendingResponse = Completer<http.Response>();
     final client = SenseVoiceAsrClient(
       baseUrl: 'http://127.0.0.1:8000',
       timeout: const Duration(milliseconds: 10),
-      client: MockClient((request) => pendingResponse.future),
+      client: _AbortObservingClient.pendingSend(),
     );
 
     await _expectTimeout(client.transcribe(_canonicalWav()));
@@ -207,6 +209,134 @@ void main() {
     await _expectTimeout(client.transcribe(_canonicalWav()));
     await responseController.close();
   });
+
+  test('multipart 精确传递三个协议部分和原始 WAV 字节', () async {
+    final wav = _canonicalWav();
+    final client = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000/',
+      client: MockClient.streaming((request, bodyStream) async {
+        expect(request.url, Uri.parse('http://127.0.0.1:8000/v1/audio/transcriptions'));
+        final parts = _parseMultipart(
+          await bodyStream.toBytes(),
+          request.headers['content-type']!,
+        );
+        expect(parts, hasLength(3));
+        expect(parts[0].name, 'model');
+        expect(utf8.decode(parts[0].body), 'sensevoice');
+        expect(parts[1].name, 'response_format');
+        expect(utf8.decode(parts[1].body), 'json');
+        expect(parts[2].name, 'file');
+        expect(parts[2].filename, 'formula.wav');
+        expect(parts[2].contentType, 'audio/wav');
+        expect(parts[2].body, wav);
+        return http.StreamedResponse(Stream.value(utf8.encode('{"text":"ok"}')), 200);
+      }),
+    );
+
+    expect(await client.transcribe(wav), 'ok');
+  });
+
+  test('5MB size guard emits its dedicated safe message before WAV validation', () async {
+    final client = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      client: _FailIfSentClient(),
+    );
+
+    await _expectMessage(
+      client.transcribe(Uint8List(5 * 1024 * 1024 + 1)),
+      '录音文件过大，请重新录制。',
+    );
+  });
+
+  test('deadline aborts an in-flight send without closing injected client', () async {
+    final client = _AbortObservingClient.pendingSend();
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      timeout: const Duration(milliseconds: 10),
+      client: client,
+    );
+
+    await _expectTimeout(asr.transcribe(_canonicalWav()));
+    expect(await client.abortObserved.future, isTrue);
+    expect(client.closed, isFalse);
+  });
+
+  test('deadline cancels the response subscription without closing injected client', () async {
+    final onCancel = Completer<void>();
+    final controller = StreamController<List<int>>(onCancel: onCancel.complete);
+    final client = _AbortObservingClient(
+      (request) async => http.StreamedResponse(controller.stream, 200),
+    );
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      timeout: const Duration(milliseconds: 10),
+      client: client,
+    );
+
+    await _expectTimeout(asr.transcribe(_canonicalWav()));
+    await onCancel.future;
+    expect(await client.abortObserved.future, isTrue);
+    expect(client.closed, isFalse);
+  });
+
+  test('64KB 加一个字节时立即取消响应订阅', () async {
+    final onCancel = Completer<void>();
+    final controller = StreamController<List<int>>(onCancel: onCancel.complete);
+    final client = _AbortObservingClient(
+      (request) async => http.StreamedResponse(controller.stream, 200),
+    );
+    final asr = SenseVoiceAsrClient(baseUrl: 'http://127.0.0.1:8000', client: client);
+    final transcription = asr.transcribe(_canonicalWav());
+    controller
+      ..add(List<int>.filled(64 * 1024, 1))
+      ..add(<int>[2]);
+
+    await expectLater(transcription, throwsA(isA<SenseVoiceAsrException>()));
+    await onCancel.future;
+    expect(client.closed, isFalse);
+  });
+
+  for (final mutation in <String, void Function(Uint8List)>{
+    'RIFF': (wav) => wav[0] = 0,
+    'WAVE': (wav) => wav[8] = 0,
+    'fmt': (wav) => wav[12] = 0,
+    'PCM': (wav) => ByteData.sublistView(wav).setUint16(20, 3, Endian.little),
+    'mono': (wav) => ByteData.sublistView(wav).setUint16(22, 2, Endian.little),
+    '16k': (wav) => ByteData.sublistView(wav).setUint32(24, 8000, Endian.little),
+    'byteRate': (wav) => ByteData.sublistView(wav).setUint32(28, 16000, Endian.little),
+    'blockAlign': (wav) => ByteData.sublistView(wav).setUint16(32, 4, Endian.little),
+    'dataLength': (wav) => ByteData.sublistView(wav).setUint32(40, 4, Endian.little),
+    'sampleCompleteness': (wav) => ByteData.sublistView(wav).setUint32(40, 1, Endian.little),
+  }.entries) {
+    test('${mutation.key} mutation is rejected before transport', () async {
+      final client = _FailIfSentClient();
+      final wav = _canonicalWav();
+      mutation.value(wav);
+
+      await expectLater(clientAsr(client).transcribe(wav), throwsA(isA<SenseVoiceAsrException>()));
+      expect(client.sent, isFalse);
+    });
+  }
+
+  test('invalid UTF-8, non-object JSON, non-string text and sync failures stay safe', () async {
+    for (final client in <http.Client>[
+      MockClient.streaming((_, __) async => http.StreamedResponse(Stream.value(<int>[0xff]), 200)),
+      MockClient((_) async => http.Response('[]', 200)),
+      MockClient((_) async => http.Response('{"text":1}', 200)),
+      _ThrowingClient(),
+    ]) {
+      await _expectSafe(clientAsr(client).transcribe(_canonicalWav()));
+    }
+  });
+
+  test('injected client remains reusable for a second request', () async {
+    final client = _CountingClient();
+    final asr = clientAsr(client);
+    expect(await asr.transcribe(_canonicalWav()), 'ok');
+    expect(await asr.transcribe(_canonicalWav()), 'ok');
+    expect(client.sent, 2);
+    expect(client.closed, isFalse);
+  });
 }
 
 Future<void> _expectTimeout(Future<String> transcription) async {
@@ -214,8 +344,75 @@ Future<void> _expectTimeout(Future<String> transcription) async {
     await transcription;
     fail('应抛出超时异常');
   } on SenseVoiceAsrException catch (error) {
-    expect(error.message, '本地语音识别超时，请重新说一次。');
+    expect(error.message, '本机语音识别超时，请重新说一次。');
   }
+}
+
+SenseVoiceAsrClient clientAsr(http.Client client) =>
+    SenseVoiceAsrClient(baseUrl: 'http://127.0.0.1:8000', client: client);
+
+Future<void> _expectMessage(Future<String> future, String message) async {
+  try { await future; fail('expected SenseVoiceAsrException'); } on SenseVoiceAsrException catch (error) { expect(error.message, message); }
+}
+
+Future<void> _expectSafe(Future<String> future) async {
+  try { await future; fail('expected SenseVoiceAsrException'); } on SenseVoiceAsrException catch (error) { expect(error.message, isNot(contains('127.0.0.1'))); expect(error.message, isNot(contains('Exception'))); }
+}
+
+final class _FailIfSentClient extends http.BaseClient {
+  var sent = false;
+  @override Future<http.StreamedResponse> send(http.BaseRequest request) async { sent = true; throw StateError('transport must not run'); }
+}
+
+final class _ThrowingClient extends http.BaseClient {
+  @override Future<http.StreamedResponse> send(http.BaseRequest request) => throw StateError('private endpoint error');
+}
+
+final class _CountingClient extends http.BaseClient {
+  var sent = 0;
+  var closed = false;
+  @override Future<http.StreamedResponse> send(http.BaseRequest request) async { sent += 1; await request.finalize().drain<void>(); return http.StreamedResponse(Stream.value(utf8.encode('{"text":"ok"}')), 200); }
+  @override void close() { closed = true; }
+}
+
+final class _AbortObservingClient extends http.BaseClient {
+  _AbortObservingClient(this._handler);
+  _AbortObservingClient.pendingSend() : _handler = null;
+  final Future<http.StreamedResponse> Function(http.BaseRequest)? _handler;
+  final abortObserved = Completer<bool>();
+  var closed = false;
+  @override Future<http.StreamedResponse> send(http.BaseRequest request) {
+    expect(request, isA<http.Abortable>());
+    final abortable = request as http.Abortable;
+    abortable.abortTrigger!.then((_) { if (!abortObserved.isCompleted) abortObserved.complete(true); });
+    if (_handler != null) return _handler(request);
+    final pending = Completer<http.StreamedResponse>();
+    abortable.abortTrigger!.then((_) => pending.completeError(http.RequestAbortedException()));
+    return pending.future;
+  }
+  @override void close() { closed = true; }
+}
+
+final class _MultipartPart {
+  _MultipartPart(this.name, this.body, {this.filename, this.contentType});
+  final String name; final List<int> body; final String? filename; final String? contentType;
+}
+
+List<_MultipartPart> _parseMultipart(List<int> bytes, String contentType) {
+  final boundary = RegExp('boundary=([^;]+)').firstMatch(contentType)!.group(1)!;
+  final parts = <_MultipartPart>[];
+  for (final rawPart in latin1.decode(bytes).split('--$boundary')) {
+    if (rawPart.isEmpty || rawPart == '--\r\n') {
+      continue;
+    }
+    final part = rawPart.substring(2, rawPart.length - 2);
+    final headerEnd = part.indexOf('\r\n\r\n');
+    final headers = part.substring(0, headerEnd);
+    final disposition = RegExp('name="([^"]+)"(?:; filename="([^"]+)")?').firstMatch(headers)!;
+    final mime = RegExp('content-type: ([^\r\n]+)').firstMatch(headers)?.group(1);
+    parts.add(_MultipartPart(disposition.group(1)!, latin1.encode(part.substring(headerEnd + 4)), filename: disposition.group(2), contentType: mime));
+  }
+  return parts;
 }
 
 Uint8List _canonicalWav({int pcmLength = 2}) {

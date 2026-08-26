@@ -9,8 +9,9 @@ const _maxRequestBytes = 5 * 1024 * 1024;
 const _maxResponseBytes = 64 * 1024;
 const _maxAudioDurationSeconds = 15;
 const _healthTimeout = Duration(seconds: 2);
-const _timeoutMessage = '本地语音识别超时，请重新说一次。';
+const _timeoutMessage = '本机语音识别超时，请重新说一次。';
 const _unavailableMessage = '本地语音识别暂时不可用，请稍后重试。';
+const _tooLargeMessage = '录音文件过大，请重新录制。';
 
 /// 为页面提供可安全展示的语音识别失败原因，不携带服务端或网络内部信息。
 final class SenseVoiceAsrException implements Exception {
@@ -24,16 +25,16 @@ final class SenseVoiceAsrClient {
   SenseVoiceAsrClient({
     required String baseUrl,
     http.Client? client,
-    Duration timeout = const Duration(seconds: 15),
+    this.timeout = const Duration(seconds: 15),
   }) : _baseUrl = baseUrl.endsWith('/')
            ? baseUrl.substring(0, baseUrl.length - 1)
            : baseUrl,
-       _client = client ?? http.Client(),
-       _timeout = timeout;
+       _client = client ?? http.Client();
 
   final String _baseUrl;
   final http.Client _client;
-  final Duration _timeout;
+  /// 单次转写操作的总时限；计时同时覆盖上传、等待响应头和读取响应体。
+  final Duration timeout;
 
   /// 健康检查仅用于决定是否显示本地服务可用；所有失败统一降级为 false。
   Future<bool> isHealthy() async {
@@ -49,24 +50,38 @@ final class SenseVoiceAsrClient {
 
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
   Future<String> transcribe(Uint8List wavBytes) async {
+    final abortCompleter = Completer<void>();
+    final deadline = Timer(timeout, () {
+      if (!abortCompleter.isCompleted) {
+        abortCompleter.complete();
+      }
+    });
     try {
-      return await _transcribe(wavBytes).timeout(_timeout);
+      return await _transcribe(wavBytes, abortCompleter);
     } on TimeoutException {
+      throw const SenseVoiceAsrException(_timeoutMessage);
+    } on http.RequestAbortedException {
       throw const SenseVoiceAsrException(_timeoutMessage);
     } on SenseVoiceAsrException {
       rethrow;
     } catch (_) {
       // URI、网络与 JSON 实现细节均不应进入 UI 可见的错误文本。
       throw const SenseVoiceAsrException(_unavailableMessage);
+    } finally {
+      deadline.cancel();
     }
   }
 
-  Future<String> _transcribe(Uint8List wavBytes) async {
+  Future<String> _transcribe(
+    Uint8List wavBytes,
+    Completer<void> abortCompleter,
+  ) async {
     _validateCanonicalWav(wavBytes);
 
-    final request = http.MultipartRequest(
+    final request = http.AbortableMultipartRequest(
       'POST',
       Uri.parse('$_baseUrl/v1/audio/transcriptions'),
+      abortTrigger: abortCompleter.future,
     )
       ..fields['model'] = 'sensevoice'
       ..fields['response_format'] = 'json'
@@ -78,9 +93,8 @@ final class SenseVoiceAsrClient {
           contentType: MediaType('audio', 'wav'),
         ),
       );
-    // 一个 15 秒时限同时覆盖请求发送与响应读取，避免分段计时放大总等待时间。
     final response = await _client.send(request);
-    final responseBody = await _readResponse(response.stream);
+    final responseBody = await _readResponse(response.stream, abortCompleter);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const SenseVoiceAsrException(_unavailableMessage);
@@ -97,22 +111,65 @@ final class SenseVoiceAsrClient {
     return text.trim();
   }
 
-  Future<String> _readResponse(Stream<List<int>> stream) async {
+  Future<String> _readResponse(
+    Stream<List<int>> stream,
+    Completer<void> abortCompleter,
+  ) {
     final bytes = BytesBuilder(copy: false);
     var length = 0;
-    await for (final chunk in stream) {
-      length += chunk.length;
-      // 达到硬上限后的后续字节无需再读取，避免异常响应占用更多内存。
-      if (length > _maxResponseBytes) {
-        throw const SenseVoiceAsrException(_unavailableMessage);
+    var isFinished = false;
+    final result = Completer<String>();
+    late final StreamSubscription<List<int>> subscription;
+
+    void finishError(Object error, [StackTrace? stackTrace]) {
+      if (isFinished) {
+        return;
       }
-      bytes.add(chunk);
+      isFinished = true;
+      // 达到上限或 deadline 时主动取消订阅，不能只让外部 Future 脱离等待。
+      unawaited(subscription.cancel().whenComplete(() {
+        result.completeError(error, stackTrace);
+      }));
     }
-    return utf8.decode(bytes.takeBytes());
+
+    subscription = stream.listen(
+      (chunk) {
+        if (isFinished) {
+          return;
+        }
+        length += chunk.length;
+        if (length > _maxResponseBytes) {
+          finishError(const SenseVoiceAsrException(_unavailableMessage));
+          return;
+        }
+        bytes.add(chunk);
+      },
+      onError: (Object error, StackTrace stackTrace) =>
+          finishError(error, stackTrace),
+      onDone: () {
+        if (isFinished) {
+          return;
+        }
+        isFinished = true;
+        try {
+          result.complete(utf8.decode(bytes.takeBytes()));
+        } catch (error, stackTrace) {
+          result.completeError(error, stackTrace);
+        }
+      },
+      cancelOnError: false,
+    );
+    abortCompleter.future.then((_) {
+      finishError(TimeoutException('SenseVoice request deadline exceeded'));
+    });
+    return result.future;
   }
 
   void _validateCanonicalWav(Uint8List wavBytes) {
-    if (wavBytes.length > _maxRequestBytes || wavBytes.length < 44) {
+    if (wavBytes.length > _maxRequestBytes) {
+      throw const SenseVoiceAsrException(_tooLargeMessage);
+    }
+    if (wavBytes.length < 44) {
       throw const SenseVoiceAsrException(_unavailableMessage);
     }
 
