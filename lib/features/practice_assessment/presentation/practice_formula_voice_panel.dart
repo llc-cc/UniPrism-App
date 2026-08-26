@@ -53,10 +53,7 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
           ),
           Text(
             '识别方式：${controller.sourceLabel}',
-            style: const TextStyle(
-              color: Color(0xFF6D6875),
-              fontSize: 12,
-            ),
+            style: const TextStyle(color: Color(0xFF6D6875), fontSize: 12),
           ),
         ],
       ),
@@ -187,6 +184,14 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (state.transcript.isNotEmpty) ...[
+          Text(
+            '识别内容：${state.transcript}',
+            key: const ValueKey('practice-formula-voice-error-transcript'),
+            style: const TextStyle(color: Color(0xFF5F5968)),
+          ),
+          const SizedBox(height: 6),
+        ],
         Text(
           state.errorMessage ?? '语音输入失败，请重试。',
           style: const TextStyle(color: Color(0xFF9A3412)),

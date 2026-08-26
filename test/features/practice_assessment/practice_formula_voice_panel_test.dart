@@ -97,6 +97,28 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('转换失败时保留并展示真实识别文本', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: _FailingRepository(),
+      sourceLabel: '本机 SenseVoice',
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await controller.startListening();
+    recognizer.emit('把 y 乘以它自己再减五倍 y', isFinal: true);
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.error);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-error-transcript')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('把 y 乘以它自己再减五倍 y'), findsOneWidget);
+  });
 }
 
 Widget _app(
@@ -160,4 +182,12 @@ final class _Repository implements SpokenFormulaRepository {
     alternatives: withAlternative ? const <String>[r'-2^2'] : const [],
     warnings: withAlternative ? const <String>['括号作用范围存在歧义'] : const [],
   );
+}
+
+final class _FailingRepository implements SpokenFormulaRepository {
+  @override
+  Future<SpokenFormulaConversion> convert({
+    required String text,
+    String locale = 'zh-CN',
+  }) => throw const SpokenFormulaConversionException('公式转换失败，请重试。');
 }

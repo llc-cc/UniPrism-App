@@ -337,12 +337,19 @@ void main() {
       const ValueKey('developer-tool-practice-assessment'),
     );
     expect(entry, findsOneWidget);
+    expect(find.textContaining('真实语音公式后端'), findsOneWidget);
 
     await tester.tap(entry);
     await tester.pumpAndSettle();
 
     expect(find.text('练习评分实验室'), findsOneWidget);
-    expect(find.textContaining('演示 Mock'), findsWidgets);
+    final page = tester.widget<PracticeAssessmentLabPage>(
+      find.byType(PracticeAssessmentLabPage),
+    );
+    expect(
+      page.speechFormulaController?.repository,
+      isA<RemoteSpokenFormulaRepository>(),
+    );
   });
 
   testWidgets('developer URL opens the practice assessment lab directly', (
@@ -357,7 +364,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('练习评分实验室'), findsOneWidget);
-    expect(find.textContaining('演示 Mock'), findsWidgets);
+    final page = tester.widget<PracticeAssessmentLabPage>(
+      find.byType(PracticeAssessmentLabPage),
+    );
+    expect(
+      page.speechFormulaController?.repository,
+      isA<RemoteSpokenFormulaRepository>(),
+    );
   });
 
   testWidgets('developer URL opens the dialogue exploration lab directly', (

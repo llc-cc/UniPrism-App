@@ -33,10 +33,6 @@ abstract final class AppConfig {
     'PRACTICE_ASSESSMENT_REMOTE',
     defaultValue: false,
   );
-  static const practiceSpokenFormulaRemote = bool.fromEnvironment(
-    'PRACTICE_SPOKEN_FORMULA_REMOTE',
-    defaultValue: false,
-  );
   static const spokenFormulaAsrMode = String.fromEnvironment(
     'SPOKEN_FORMULA_ASR_MODE',
     defaultValue: 'browser',

@@ -24,20 +24,14 @@ Widget _buildPracticeAssessmentLabPage() {
       speechFormulaSourceLabel: speechFormulaSourceLabel,
     );
   }
-  if (AppConfig.practiceSpokenFormulaRemote) {
-    // 练习题可继续使用本地 Mock，仅将语音公式交给共享后端，便于独立联调模型能力。
-    final api = PracticeApiClient(
-      baseUrl: AppConfig.apiBaseUrl,
-      participantTokenStore: NativePracticeParticipantTokenStore(),
-      bearerTokenProvider: () async => AuthService.instance.token,
-    );
-    return PracticeAssessmentLabPage.mock(
-      spokenFormulaRepository: RemoteSpokenFormulaRepository(api),
-      speechFormulaRecognizer: speechFormulaRecognizer,
-      speechFormulaSourceLabel: speechFormulaSourceLabel,
-    );
-  }
+  // Mock 只保留本地题目；真实麦克风转写必须始终进入共享公式后端，不能再退回固定演示映射。
+  final api = PracticeApiClient(
+    baseUrl: AppConfig.apiBaseUrl,
+    participantTokenStore: NativePracticeParticipantTokenStore(),
+    bearerTokenProvider: () async => AuthService.instance.token,
+  );
   return PracticeAssessmentLabPage.mock(
+    spokenFormulaRepository: RemoteSpokenFormulaRepository(api),
     speechFormulaRecognizer: speechFormulaRecognizer,
     speechFormulaSourceLabel: speechFormulaSourceLabel,
   );
@@ -102,9 +96,7 @@ class DeveloperToolsPage extends StatelessWidget {
             title: '练习评分实验室',
             description: AppConfig.practiceAssessmentRemote
                 ? '后端会话、规则判题与能力证据'
-                : AppConfig.practiceSpokenFormulaRemote
-                ? '本地 Mock 题目 + MiniMax 语音公式转换'
-                : '演示 Mock：19 题本地规则判题',
+                : '本地 Mock 题目 + 真实语音公式后端',
             onTap: () => _push(context, _buildPracticeAssessmentLabPage()),
           ),
           _DeveloperToolEntry(
