@@ -128,14 +128,15 @@ final class RecordSpeechAudioCapture implements SpeechAudioCapture {
       if (!_isCurrentStart(generation)) {
         throw StateError('录音启动已被停止或取消');
       }
-      if (!_isExpectedPcm16Config(effectiveConfig)) {
-        // record_web 会在 startStream 完成前同步报告浏览器实际配置；此处取消后才报错，
-        // 避免将已知不符合 SenseVoice 输入约束的数据流交给调用方。
+      if (!_isSupportedPcm16Config(effectiveConfig)) {
         await _driver.cancel();
-        throw StateError('当前设备无法提供 16kHz 单声道 PCM16 音频流');
+        throw StateError('当前设备返回了不受支持的 PCM16 音频格式');
       }
       _state = _CaptureState.recording;
-      return stream;
+      if (_isExpectedPcm16Config(effectiveConfig)) return stream;
+      // Chrome 通常忽略 16kHz 约束并返回设备原生 48kHz；在适配层统一降采样与混音，
+      // 使上层始终只接收 SenseVoice 约定的 16kHz 单声道 PCM16。
+      return _normalizePcm16Stream(stream, effectiveConfig);
     } catch (_) {
       if (_isCurrentStart(generation)) {
         _state = _CaptureState.idle;
@@ -182,6 +183,28 @@ final class RecordSpeechAudioCapture implements SpeechAudioCapture {
       config.sampleRate == 16000 &&
       config.numChannels == 1;
 
+  bool _isSupportedPcm16Config(RecordConfig config) =>
+      config.encoder == AudioEncoder.pcm16bits &&
+      config.sampleRate >= 16000 &&
+      config.sampleRate <= 96000 &&
+      config.numChannels >= 1 &&
+      config.numChannels <= 16;
+
+  Stream<Uint8List> _normalizePcm16Stream(
+    Stream<Uint8List> stream,
+    RecordConfig config,
+  ) async* {
+    final normalizer = _Pcm16StreamNormalizer(
+      inputSampleRate: config.sampleRate,
+      inputChannels: config.numChannels,
+    );
+    await for (final chunk in stream) {
+      final normalized = normalizer.add(chunk);
+      if (normalized.isNotEmpty) yield normalized;
+    }
+    normalizer.close();
+  }
+
   Future<T> _enqueue<T>(Future<T> Function() operation) {
     final result = _serialOperation.then<T>((_) => operation());
     _serialOperation = result.then<void>(
@@ -199,6 +222,84 @@ final class RecordSpeechAudioCapture implements SpeechAudioCapture {
     echoCancel: true,
     noiseSuppress: true,
   );
+}
+
+/// 将浏览器原生 PCM16 流按帧混音，再用面积加权降采样到 16kHz。
+///
+/// 状态保留了跨 chunk 的半帧和未满输出采样，避免插件分包边界导致丢帧或音频时长漂移。
+final class _Pcm16StreamNormalizer {
+  _Pcm16StreamNormalizer({
+    required this.inputSampleRate,
+    required this.inputChannels,
+  });
+
+  static const int _outputSampleRate = 16000;
+
+  final int inputSampleRate;
+  final int inputChannels;
+  Uint8List _pendingBytes = Uint8List(0);
+  int _outputWeight = 0;
+  int _weightedSampleSum = 0;
+
+  Uint8List add(Uint8List chunk) {
+    final bytes = _joinPending(chunk);
+    final frameBytes = inputChannels * 2;
+    final completeLength = bytes.length - (bytes.length % frameBytes);
+    _pendingBytes = Uint8List.fromList(bytes.sublist(completeLength));
+    if (completeLength == 0) return Uint8List(0);
+
+    final input = ByteData.sublistView(bytes, 0, completeLength);
+    final samples = <int>[];
+    for (var offset = 0; offset < completeLength; offset += frameBytes) {
+      var channelSum = 0;
+      for (var channel = 0; channel < inputChannels; channel += 1) {
+        channelSum += input.getInt16(offset + channel * 2, Endian.little);
+      }
+      _appendSample(channelSum ~/ inputChannels, samples);
+    }
+    return _encodeSamples(samples);
+  }
+
+  void close() {
+    if (_pendingBytes.isNotEmpty) {
+      throw const FormatException('麦克风 PCM16 音频流包含不完整帧');
+    }
+  }
+
+  Uint8List _joinPending(Uint8List chunk) {
+    if (_pendingBytes.isEmpty) return chunk;
+    final joined = Uint8List(_pendingBytes.length + chunk.length);
+    joined.setRange(0, _pendingBytes.length, _pendingBytes);
+    joined.setRange(_pendingBytes.length, joined.length, chunk);
+    return joined;
+  }
+
+  void _appendSample(int sample, List<int> output) {
+    var remainingWeight = _outputSampleRate;
+    while (remainingWeight > 0) {
+      final availableWeight = inputSampleRate - _outputWeight;
+      final consumedWeight = remainingWeight < availableWeight
+          ? remainingWeight
+          : availableWeight;
+      _weightedSampleSum += sample * consumedWeight;
+      _outputWeight += consumedWeight;
+      remainingWeight -= consumedWeight;
+      if (_outputWeight == inputSampleRate) {
+        output.add((_weightedSampleSum / inputSampleRate).round());
+        _outputWeight = 0;
+        _weightedSampleSum = 0;
+      }
+    }
+  }
+
+  Uint8List _encodeSamples(List<int> samples) {
+    final bytes = Uint8List(samples.length * 2);
+    final output = ByteData.sublistView(bytes);
+    for (var index = 0; index < samples.length; index += 1) {
+      output.setInt16(index * 2, samples[index], Endian.little);
+    }
+    return bytes;
+  }
 }
 
 /// 仅在适配器内部持有插件实例，避免插件异常被包装或吞掉，供上层决定提示与重试策略。

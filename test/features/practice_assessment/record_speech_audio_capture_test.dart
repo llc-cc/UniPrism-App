@@ -51,34 +51,49 @@ void main() {
     expect(driver.requestedConfig?.noiseSuppress, isTrue);
   });
 
-  test('有效配置为 PCM16 48kHz 单声道时取消且不交付流', () async {
+  test('浏览器返回 48kHz 单声道 PCM16 时降采样为 16kHz', () async {
     final driver = _FakeSpeechRecordDriver(
       effectiveConfigOnStart: const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 48000,
         numChannels: 1,
       ),
+      audioStream: Stream<Uint8List>.value(
+        _pcm16(<int>[3000, 6000, 9000, -3000, -6000, -9000]),
+      ),
     );
     final capture = RecordSpeechAudioCapture(driver: driver);
 
-    await expectLater(capture.start(), throwsA(isA<StateError>()));
-    expect(driver.cancelCalls, 1);
-    expect(driver.stopCalls, 0);
+    final stream = await capture.start();
+
+    expect(
+      await stream.expand((chunk) => chunk).toList(),
+      _pcm16(<int>[6000, -6000]),
+    );
+    expect(driver.cancelCalls, 0);
   });
 
-  test('有效配置为 PCM16 16kHz 双声道时取消且不交付流', () async {
+  test('浏览器返回 16kHz 双声道 PCM16 时混合为单声道', () async {
     final driver = _FakeSpeechRecordDriver(
       effectiveConfigOnStart: const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 2,
       ),
+      audioStream: Stream<Uint8List>.fromIterable(<Uint8List>[
+        _pcm16(<int>[1000, 3000, -3000]),
+        _pcm16(<int>[-1000]),
+      ]),
     );
     final capture = RecordSpeechAudioCapture(driver: driver);
 
-    await expectLater(capture.start(), throwsA(isA<StateError>()));
-    expect(driver.cancelCalls, 1);
-    expect(driver.stopCalls, 0);
+    final stream = await capture.start();
+
+    expect(
+      await stream.expand((chunk) => chunk).toList(),
+      _pcm16(<int>[2000, -2000]),
+    );
+    expect(driver.cancelCalls, 0);
   });
 
   test('有效配置为非 PCM16 的 16kHz 单声道时取消且不交付流', () async {
@@ -241,6 +256,15 @@ RecordConfig _pcm16Config() => const RecordConfig(
   noiseSuppress: true,
 );
 
+Uint8List _pcm16(List<int> samples) {
+  final bytes = Uint8List(samples.length * 2);
+  final data = ByteData.sublistView(bytes);
+  for (var index = 0; index < samples.length; index += 1) {
+    data.setInt16(index * 2, samples[index], Endian.little);
+  }
+  return bytes;
+}
+
 Future<void> _flushAsyncWork() async {
   await Future<void>.delayed(Duration.zero);
   await Future<void>.delayed(Duration.zero);
@@ -255,7 +279,9 @@ final class _FakeSpeechRecordDriver implements SpeechRecordDriver {
     this.hasPermissionError,
     this.stopError,
     this.cancelError,
-  }) : _pendingStart = null;
+    Stream<Uint8List>? audioStream,
+  }) : audioStream = audioStream ?? Stream<Uint8List>.empty(),
+       _pendingStart = null;
 
   _FakeSpeechRecordDriver.withPendingStart()
     : hasPermissionResult = true,
@@ -264,6 +290,7 @@ final class _FakeSpeechRecordDriver implements SpeechRecordDriver {
       hasPermissionError = null,
       stopError = null,
       cancelError = null,
+      audioStream = const Stream<Uint8List>.empty(),
       _pendingStart = Completer<Stream<Uint8List>>();
 
   final bool hasPermissionResult;
@@ -272,7 +299,7 @@ final class _FakeSpeechRecordDriver implements SpeechRecordDriver {
   final Object? hasPermissionError;
   Object? stopError;
   final Object? cancelError;
-  final Stream<Uint8List> audioStream = Stream<Uint8List>.empty();
+  final Stream<Uint8List> audioStream;
   final Completer<void> startRequested = Completer<void>();
   final Completer<Stream<Uint8List>>? _pendingStart;
 
