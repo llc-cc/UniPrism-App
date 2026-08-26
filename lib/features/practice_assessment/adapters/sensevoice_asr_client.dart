@@ -37,7 +37,8 @@ abstract interface class SenseVoiceAsrApi {
 
   Future<String> transcribe(Uint8List wavBytes);
 
-  /// 终止 owned 请求并释放 client 自己持有的传输资源；实现必须幂等。
+  /// 触发全部活动请求的 abort，并仅释放 API 自己创建的传输资源；实现必须幂等。
+  /// 外部注入 transport 的物理连接生命周期仍属于调用方。
   Future<void> dispose();
 }
 
@@ -59,6 +60,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
   final http.Client _client;
   final bool _ownsClient;
   final SenseVoiceDeadlineScheduler _deadlineScheduler;
+  final Set<_SenseVoiceOperation> _activeOperations = <_SenseVoiceOperation>{};
   bool _disposed = false;
   Future<void>? _disposeFuture;
 
@@ -68,41 +70,42 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
   /// 健康检查仅用于决定是否显示本地服务可用；所有失败统一降级为 false。
   @override
   Future<bool> isHealthy() async {
-    _ensureNotDisposed();
-    final deadline = Completer<void>();
-    final timer = _deadlineScheduler.schedule(
-      _healthTimeout,
-      deadline.complete,
-    );
+    final operation = _beginOperation();
+    final timer = _deadlineScheduler.schedule(_healthTimeout, operation.cancel);
     try {
-      final response = await Future.any<http.Response>([
-        _client.get(Uri.parse('$_baseUrl/health')),
-        deadline.future.then<http.Response>(
+      final request = http.AbortableRequest(
+        'GET',
+        Uri.parse('$_baseUrl/health'),
+        abortTrigger: operation.cancelSignal,
+      );
+      final response = await Future.any<http.StreamedResponse>([
+        _client.send(request),
+        operation.cancelSignal.then<http.StreamedResponse>(
           (_) => throw TimeoutException('SenseVoice health deadline exceeded'),
         ),
       ]);
+      // 健康检查只消费状态码，主动取消响应体以归还连接且避免无界 body 占用资源。
+      operation.cancelResponseStream(response.stream);
       return response.statusCode >= 200 && response.statusCode < 300;
     } catch (_) {
       return false;
     } finally {
       timer.cancel();
+      _finishOperation(operation);
     }
   }
 
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
   @override
   Future<String> transcribe(Uint8List wavBytes) async {
-    _ensureNotDisposed();
-    final abortCompleter = Completer<void>();
+    final operation = _beginOperation();
     final deadline = _deadlineScheduler.schedule(timeout, () {
-      if (!abortCompleter.isCompleted) {
-        abortCompleter.complete();
-      }
+      operation.cancel();
     });
     try {
       return await Future.any<String>([
-        _transcribe(wavBytes, abortCompleter),
-        abortCompleter.future.then<String>(
+        _transcribe(wavBytes, operation),
+        operation.cancelSignal.then<String>(
           (_) => throw TimeoutException('SenseVoice request deadline exceeded'),
         ),
       ]);
@@ -117,12 +120,13 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
       throw const SenseVoiceAsrException(_unavailableMessage);
     } finally {
       deadline.cancel();
+      _finishOperation(operation);
     }
   }
 
   Future<String> _transcribe(
     Uint8List wavBytes,
-    Completer<void> abortCompleter,
+    _SenseVoiceOperation operation,
   ) async {
     _validateCanonicalWav(wavBytes);
 
@@ -130,7 +134,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
         http.AbortableMultipartRequest(
             'POST',
             Uri.parse('$_baseUrl/v1/audio/transcriptions'),
-            abortTrigger: abortCompleter.future,
+            abortTrigger: operation.cancelSignal,
           )
           ..fields['model'] = 'sensevoice'
           ..fields['response_format'] = 'json'
@@ -143,7 +147,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
             ),
           );
     final response = await _client.send(request);
-    final responseBody = await _readResponse(response.stream, abortCompleter);
+    final responseBody = await _readResponse(response.stream, operation);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const SenseVoiceAsrException(_unavailableMessage);
@@ -162,7 +166,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
 
   Future<String> _readResponse(
     Stream<List<int>> stream,
-    Completer<void> abortCompleter,
+    _SenseVoiceOperation operation,
   ) {
     final bytes = BytesBuilder(copy: false);
     var length = 0;
@@ -170,14 +174,21 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
     final result = Completer<String>();
     late final StreamSubscription<List<int>> subscription;
 
-    void finishError(Object error, [StackTrace? stackTrace]) {
+    void finishError(
+      Object error, [
+      StackTrace? stackTrace,
+      bool cancelSubscription = true,
+    ]) {
       if (isFinished) {
         return;
       }
       isFinished = true;
       // 达到上限或 deadline 时主动取消订阅，不能只让外部 Future 脱离等待。
       result.completeError(error, stackTrace);
-      unawaited(subscription.cancel().catchError((Object _) {}));
+      operation.detachResponseSubscription(subscription);
+      if (cancelSubscription) {
+        unawaited(subscription.cancel().catchError((Object _) {}));
+      }
     }
 
     subscription = stream.listen(
@@ -199,6 +210,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
           return;
         }
         isFinished = true;
+        operation.detachResponseSubscription(subscription);
         try {
           result.complete(utf8.decode(bytes.takeBytes()));
         } catch (error, stackTrace) {
@@ -207,8 +219,13 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
       },
       cancelOnError: false,
     );
-    abortCompleter.future.then((_) {
-      finishError(TimeoutException('SenseVoice request deadline exceeded'));
+    operation.attachResponseSubscription(subscription);
+    operation.cancelSignal.then((_) {
+      finishError(
+        TimeoutException('SenseVoice request deadline exceeded'),
+        null,
+        false,
+      );
     });
     return result.future;
   }
@@ -263,6 +280,12 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
     final completer = Completer<void>();
     _disposeFuture = completer.future;
     try {
+      // 遍历快照，operation 的 finally 可同时从原集合移除，不能直接遍历活动集合。
+      for (final operation in List<_SenseVoiceOperation>.of(
+        _activeOperations,
+      )) {
+        operation.cancel();
+      }
       if (_ownsClient) _client.close();
       completer.complete();
     } catch (error, stackTrace) {
@@ -273,5 +296,62 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
 
   void _ensureNotDisposed() {
     if (_disposed) throw StateError('SenseVoiceAsrClient 已释放');
+  }
+
+  _SenseVoiceOperation _beginOperation() {
+    _ensureNotDisposed();
+    final operation = _SenseVoiceOperation();
+    _activeOperations.add(operation);
+    return operation;
+  }
+
+  void _finishOperation(_SenseVoiceOperation operation) {
+    _activeOperations.remove(operation);
+  }
+}
+
+/// 单次 HTTP 操作的取消上下文；传输 abort 与响应订阅共用同一幂等信号。
+final class _SenseVoiceOperation {
+  final Completer<void> _cancelSignal = Completer<void>();
+  StreamSubscription<List<int>>? _responseSubscription;
+
+  Future<void> get cancelSignal => _cancelSignal.future;
+
+  void attachResponseSubscription(StreamSubscription<List<int>> subscription) {
+    _responseSubscription = subscription;
+    if (_cancelSignal.isCompleted) {
+      _cancelResponseSubscription(subscription);
+    }
+  }
+
+  void detachResponseSubscription(StreamSubscription<List<int>> subscription) {
+    if (identical(_responseSubscription, subscription)) {
+      _responseSubscription = null;
+    }
+  }
+
+  void cancelResponseStream(Stream<List<int>> stream) {
+    final subscription = stream.listen(null);
+    _responseSubscription = subscription;
+    _cancelResponseSubscription(subscription);
+  }
+
+  void cancel() {
+    if (!_cancelSignal.isCompleted) {
+      _cancelSignal.complete();
+    }
+    final subscription = _responseSubscription;
+    if (subscription != null) {
+      _cancelResponseSubscription(subscription);
+    }
+  }
+
+  void _cancelResponseSubscription(StreamSubscription<List<int>> subscription) {
+    detachResponseSubscription(subscription);
+    try {
+      unawaited(subscription.cancel().catchError((Object _) {}));
+    } catch (_) {
+      // 第三方 stream 可能同步抛错；abort 信号已完成，不能让其阻断其它 operation 的释放。
+    }
   }
 }

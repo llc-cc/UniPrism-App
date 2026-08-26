@@ -457,6 +457,104 @@ void main() {
     expect(transport.closeCount, 1);
   });
 
+  test('dispose 触发外注 transport 的 abort 且不关闭 transport', () async {
+    final transport = _PendingOperationClient(
+      expectedOperations: 1,
+      honorAbort: true,
+    );
+    final asr = clientAsr(transport);
+    final transcription = asr.transcribe(_canonicalWav());
+    final transcriptionExpectation = expectLater(
+      transcription.timeout(const Duration(seconds: 1)),
+      throwsA(isA<SenseVoiceAsrException>()),
+    );
+    await transport.allStarted;
+
+    await asr.dispose();
+
+    await transcriptionExpectation;
+    expect(transport.abortCount, 1);
+    expect(transport.closeCount, 0);
+  });
+
+  test('外注 transport 忽略 abort 时 dispose 仍立即结束对外转写 Future', () async {
+    final transport = _PendingOperationClient(
+      expectedOperations: 1,
+      honorAbort: false,
+    );
+    final asr = clientAsr(transport);
+    final transcription = asr.transcribe(_canonicalWav());
+    final transcriptionExpectation = expectLater(
+      transcription.timeout(const Duration(seconds: 1)),
+      throwsA(isA<SenseVoiceAsrException>()),
+    );
+    await transport.allStarted;
+
+    await asr.dispose();
+
+    await transcriptionExpectation;
+    expect(transport.abortCount, 1);
+    expect(transport.closeCount, 0);
+  });
+
+  test('dispose 取消已返回响应头的 pending body 并立即结束转写', () async {
+    final transport = _PendingBodyClient();
+    final asr = clientAsr(transport);
+    final transcription = asr.transcribe(_canonicalWav());
+    final transcriptionExpectation = expectLater(
+      transcription.timeout(const Duration(seconds: 1)),
+      throwsA(isA<SenseVoiceAsrException>()),
+    );
+    await transport.bodyListened.future;
+
+    await asr.dispose();
+
+    await transcriptionExpectation;
+    await transport.bodyCanceled.future.timeout(const Duration(seconds: 1));
+    expect(transport.abortCount, 1);
+    expect(transport.closeCount, 0);
+  });
+
+  test('dispose 使 pending health 及时返回 false 并触发 abort', () async {
+    final transport = _PendingOperationClient(
+      expectedOperations: 1,
+      honorAbort: true,
+    );
+    final asr = clientAsr(transport);
+    final health = asr.isHealthy();
+    await transport.allStarted;
+
+    await asr.dispose();
+
+    expect(await health.timeout(const Duration(seconds: 1)), isFalse);
+    expect(transport.abortCount, 1);
+    expect(transport.closeCount, 0);
+  });
+
+  test('dispose 一次终止两个并发 operation 且后续请求仍被拒绝', () async {
+    final transport = _PendingOperationClient(
+      expectedOperations: 2,
+      honorAbort: false,
+    );
+    final asr = clientAsr(transport);
+    final health = asr.isHealthy();
+    final transcription = asr.transcribe(_canonicalWav());
+    final transcriptionExpectation = expectLater(
+      transcription.timeout(const Duration(seconds: 1)),
+      throwsA(isA<SenseVoiceAsrException>()),
+    );
+    await transport.allStarted;
+
+    await asr.dispose();
+
+    expect(await health.timeout(const Duration(seconds: 1)), isFalse);
+    await transcriptionExpectation;
+    expect(transport.abortCount, 2);
+    expect(transport.closeCount, 0);
+    await expectLater(asr.isHealthy(), throwsStateError);
+    await expectLater(asr.transcribe(_canonicalWav()), throwsStateError);
+  });
+
   test(
     'default transcription and fixed health deadlines are scheduled by behavior',
     () async {
@@ -620,6 +718,69 @@ final class _CloseCompletingClient extends http.BaseClient {
     if (!_response.isCompleted) {
       _response.completeError(StateError('transport closed'));
     }
+  }
+}
+
+final class _PendingOperationClient extends http.BaseClient {
+  _PendingOperationClient({
+    required this.expectedOperations,
+    required this.honorAbort,
+  });
+
+  final int expectedOperations;
+  final bool honorAbort;
+  final Completer<void> _allStarted = Completer<void>();
+  var sendCount = 0;
+  var abortCount = 0;
+  var closeCount = 0;
+
+  Future<void> get allStarted => _allStarted.future;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    sendCount += 1;
+    if (sendCount == expectedOperations && !_allStarted.isCompleted) {
+      _allStarted.complete();
+    }
+    final pending = Completer<http.StreamedResponse>();
+    if (request is http.Abortable && request.abortTrigger != null) {
+      request.abortTrigger!.then((_) {
+        abortCount += 1;
+        if (honorAbort && !pending.isCompleted) {
+          pending.completeError(http.RequestAbortedException());
+        }
+      });
+    }
+    return pending.future;
+  }
+
+  @override
+  void close() {
+    closeCount += 1;
+  }
+}
+
+final class _PendingBodyClient extends http.BaseClient {
+  final bodyListened = Completer<void>();
+  final bodyCanceled = Completer<void>();
+  var abortCount = 0;
+  var closeCount = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    if (request is http.Abortable && request.abortTrigger != null) {
+      request.abortTrigger!.then((_) => abortCount += 1);
+    }
+    final body = StreamController<List<int>>(
+      onListen: bodyListened.complete,
+      onCancel: bodyCanceled.complete,
+    );
+    return http.StreamedResponse(body.stream, 200);
+  }
+
+  @override
+  void close() {
+    closeCount += 1;
   }
 }
 
