@@ -86,6 +86,12 @@ if ($setup.llamaArchiveSha256 -ne 'fbbbc55e0eb2e1b07f9dcb9488616c98ed47d9003b90e
 if ($setup.modelSha256 -ne 'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5') {
   throw 'Qwen model hash mismatch'
 }
+if ($setup.modelRevision -ne 'daeb8e2d528a760970442092f6bf1e55c3b659eb') {
+  throw 'Qwen model revision must remain reproducible'
+}
+if ($setup.modelDownloadTool -ne 'curl.exe') {
+  throw 'Large Xet-backed model downloads must use redirect-capable curl.exe'
+}
 if (-not ([string]$setup.llamaArchiveDownload).EndsWith('.zip', [StringComparison]::OrdinalIgnoreCase)) {
   throw "Expand-Archive requires a .zip temporary path: $($setup.llamaArchiveDownload)"
 }

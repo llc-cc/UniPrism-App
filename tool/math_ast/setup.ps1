@@ -12,7 +12,9 @@ $llamaArchiveName = 'llama-b10516-bin-win-cpu-x64.zip'
 $llamaArchiveUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$llamaRelease/$llamaArchiveName"
 $llamaArchiveSha256 = 'fbbbc55e0eb2e1b07f9dcb9488616c98ed47d9003b90e15e7c8c7812c4307cd3'
 $modelFileName = 'Qwen3-1.7B-Q4_K_M.gguf'
-$modelUrl = "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/main/$modelFileName?download=true"
+$modelRevision = 'daeb8e2d528a760970442092f6bf1e55c3b659eb'
+$modelDownloadTool = 'curl.exe'
+$modelUrl = "https://huggingface.co/ggml-org/Qwen3-1.7B-GGUF/resolve/$modelRevision/$modelFileName?download=true"
 $modelSha256 = 'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5'
 $paths = Get-MathAstPaths -Root $Root
 $archiveDownload = Join-Path $paths.Temp "download-$llamaArchiveName"
@@ -26,6 +28,8 @@ $configuration = [pscustomobject][ordered]@{
   llamaArchiveSha256 = $llamaArchiveSha256
   llamaArchiveDownload = $archiveDownload
   modelUrl = $modelUrl
+  modelRevision = $modelRevision
+  modelDownloadTool = $modelDownloadTool
   modelSha256 = $modelSha256
   serverExe = $paths.ServerExe
   modelFile = $paths.ModelFile
@@ -59,6 +63,26 @@ function Assert-DownloadedHash {
   }
 }
 
+function Invoke-LargeModelDownload {
+  param(
+    [Parameter(Mandatory)][string] $Uri,
+    [Parameter(Mandatory)][string] $Destination
+  )
+  & $modelDownloadTool `
+    --fail `
+    --location `
+    --silent `
+    --show-error `
+    --retry 3 `
+    --retry-all-errors `
+    --connect-timeout 20 `
+    --output $Destination `
+    $Uri
+  if ($LASTEXITCODE -ne 0) {
+    throw "Qwen model download failed with curl exit code $LASTEXITCODE"
+  }
+}
+
 try {
   if (-not (Test-Path -LiteralPath $paths.ServerExe -PathType Leaf)) {
     Invoke-WebRequest -Uri $llamaArchiveUrl -OutFile $archiveDownload -UseBasicParsing
@@ -81,7 +105,7 @@ try {
       throw 'Existing Qwen model hash mismatch; preserve or remove it manually before setup'
     }
   } else {
-    Invoke-WebRequest -Uri $modelUrl -OutFile $modelDownload -UseBasicParsing
+    Invoke-LargeModelDownload -Uri $modelUrl -Destination $modelDownload
     Assert-DownloadedHash -Path $modelDownload -ExpectedSha256 $modelSha256 -Label 'Qwen model'
     Move-Item -LiteralPath $modelDownload -Destination $paths.ModelFile
   }
