@@ -34,6 +34,7 @@ final class TeachingModeSelectionStage extends StatefulWidget {
     this.isReviewingHistory = false,
     this.onReturnToCurrent,
     this.onFunctionAreaATap,
+    this.onFunctionAreaBTap,
   });
 
   final String topicLabel;
@@ -70,6 +71,9 @@ final class TeachingModeSelectionStage extends StatefulWidget {
 
   /// 功能区 A 由页面层注入导航，侧栏只负责呈现入口。
   final VoidCallback? onFunctionAreaATap;
+
+  /// 功能区 B 由页面层注入知识图谱导航，避免侧栏依赖具体页面。
+  final VoidCallback? onFunctionAreaBTap;
 
   @override
   State<TeachingModeSelectionStage> createState() =>
@@ -154,6 +158,7 @@ final class _TeachingModeSelectionStageState
             selectedBoardId: widget.selectedHistoryBoardId,
             selectedNodeId: widget.selectedHistoryNodeId,
             onFunctionAreaATap: widget.onFunctionAreaATap,
+            onFunctionAreaBTap: widget.onFunctionAreaBTap,
           ),
         Expanded(
           child: Column(
@@ -772,6 +777,7 @@ final class ModeSelectionSidebar extends StatefulWidget {
     this.selectedBoardId,
     this.selectedNodeId,
     this.onFunctionAreaATap,
+    this.onFunctionAreaBTap,
   });
 
   final List<TeachingModeHistoryEntry> entries;
@@ -782,6 +788,7 @@ final class ModeSelectionSidebar extends StatefulWidget {
   final String? selectedBoardId;
   final String? selectedNodeId;
   final VoidCallback? onFunctionAreaATap;
+  final VoidCallback? onFunctionAreaBTap;
 
   static const _functionAreas = [
     (
@@ -789,7 +796,11 @@ final class ModeSelectionSidebar extends StatefulWidget {
       label: '功能区A · 数学实验',
       color: Color(0xFF3B82F6),
     ),
-    (icon: Icons.menu_book_rounded, label: '功能区B', color: Color(0xFF8B5CF6)),
+    (
+      icon: Icons.account_tree_outlined,
+      label: '功能区B · 知识图谱',
+      color: Color(0xFF8B5CF6),
+    ),
     (icon: Icons.bar_chart_rounded, label: '功能区C', color: Color(0xFF22C55E)),
     (icon: Icons.star_rounded, label: '功能区D', color: Color(0xFFF59E0B)),
   ];
@@ -1032,6 +1043,8 @@ final class _ModeSelectionSidebarState extends State<ModeSelectionSidebar> {
                       InkWell(
                         onTap: area.label.startsWith('功能区A')
                             ? widget.onFunctionAreaATap
+                            : area.label.startsWith('功能区B')
+                            ? widget.onFunctionAreaBTap
                             : null,
                         child: Padding(
                           padding: const EdgeInsets.symmetric(

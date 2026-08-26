@@ -124,4 +124,22 @@ void main() {
     await tester.tap(find.text('功能区A · 数学实验'));
     expect(opened, isTrue);
   });
+
+  testWidgets('侧边栏的知识图谱入口调用页面层回调', (tester) async {
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ModeSelectionSidebar(
+            entries: const [],
+            mobile: false,
+            onFunctionAreaBTap: () => opened = true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('功能区B · 知识图谱'));
+    expect(opened, isTrue);
+  });
 }

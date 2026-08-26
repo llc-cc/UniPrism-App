@@ -281,6 +281,7 @@ void main() {
     );
 
     expect(find.text('真实内容入库预览'), findsOneWidget);
+    expect(find.text('高中数学知识图谱'), findsOneWidget);
     expect(find.text('推荐专业 × 知乎真实性测试'), findsOneWidget);
     expect(find.text('推荐专业 × GitHub真实性测试'), findsOneWidget);
     expect(find.text('推荐专业 × Agent统一回答测试'), findsOneWidget);
@@ -326,6 +327,21 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
     expect(tester.takeException(), isNull);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('developer tools opens the high school math knowledge map', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 1000), const DeveloperToolsPage());
+
+    final entry = find.byKey(const ValueKey('developer-tool-knowledge-map'));
+    expect(entry, findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('高中数学知识点总览'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

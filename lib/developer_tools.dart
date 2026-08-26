@@ -60,6 +60,13 @@ class DeveloperToolsPage extends StatelessWidget {
             ),
           ),
           _DeveloperToolEntry(
+            key: const ValueKey('developer-tool-knowledge-map'),
+            icon: Icons.hub_outlined,
+            title: '高中数学知识图谱',
+            description: '验证模块、主题与知识点的分层浏览和响应式交互',
+            onTap: () => _push(context, const HighSchoolMathKnowledgeMapPage()),
+          ),
+          _DeveloperToolEntry(
             key: const ValueKey('developer-tool-content-ingestion'),
             icon: Icons.storage_rounded,
             title: '真实内容入库预览',

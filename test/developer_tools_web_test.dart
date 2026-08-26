@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/dialogue_exploration/adapters/remote_exploration_api.dart';
+import 'package:uniprism_app/features/dialogue_exploration/presentation/knowledge_map/high_school_math_knowledge_map_page.dart';
 import 'package:uniprism_app/features/dialogue_exploration/presentation/remote_exploration_page.dart';
 import 'package:uniprism_app/main.dart' as app;
 
@@ -37,6 +38,19 @@ void main() {
     expect(
       routeBuilder!(tester.element(find.byType(MaterialApp))),
       isA<RemoteExplorationLabPage>(),
+    );
+  });
+
+  testWidgets('开发构建可通过稳定路由直接打开知识图谱', (tester) async {
+    await tester.pumpWidget(const app.UniPrismApp());
+
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    final routeBuilder = materialApp.routes!['/knowledge-map-lab'];
+
+    expect(routeBuilder, isNotNull);
+    expect(
+      routeBuilder!(tester.element(find.byType(MaterialApp))),
+      isA<HighSchoolMathKnowledgeMapPage>(),
     );
   });
 }

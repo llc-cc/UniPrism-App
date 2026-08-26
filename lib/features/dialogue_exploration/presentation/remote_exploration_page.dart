@@ -24,6 +24,7 @@ import 'classroom_remediation_panel.dart';
 import 'inline_practice_panel.dart';
 import '../adapters/teaching_architecture_dto.dart';
 import 'intro_chat_messages.dart';
+import 'knowledge_map/high_school_math_knowledge_map_page.dart';
 import 'math_interaction_lab_page.dart';
 import 'teaching_mode_selection_stage.dart';
 
@@ -919,6 +920,11 @@ final class _RemoteLearningSessionPageState
       onFunctionAreaATap: () => Navigator.of(context).push(
         MaterialPageRoute<void>(builder: (_) => const MathInteractionLabPage()),
       ),
+      onFunctionAreaBTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const HighSchoolMathKnowledgeMapPage(),
+        ),
+      ),
       mobile: mobile,
       guidedPanel: isReviewingHistory
           ? Padding(
@@ -1103,6 +1109,11 @@ final class _RemoteLearningSessionPageState
         onFunctionAreaATap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) => const MathInteractionLabPage(),
+          ),
+        ),
+        onFunctionAreaBTap: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => const HighSchoolMathKnowledgeMapPage(),
           ),
         ),
         mobile: mobile,

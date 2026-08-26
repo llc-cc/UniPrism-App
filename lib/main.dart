@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:reactive_mind_map/reactive_mind_map.dart';
 
 import 'features/dialogue_exploration/adapters/remote_exploration_api.dart';
+import 'features/dialogue_exploration/presentation/knowledge_map/high_school_math_knowledge_map_page.dart';
 import 'features/dialogue_exploration/presentation/remote_exploration_page.dart';
 
 part 'app_config.dart';
@@ -119,6 +120,8 @@ class UniPrismApp extends StatelessWidget {
         if (!AppConfig.isProduction && !kReleaseMode)
           '/dialogue-exploration-lab': (_) =>
               _buildDialogueExplorationLabPage(),
+        if (!AppConfig.isProduction && !kReleaseMode)
+          '/knowledge-map-lab': (_) => const HighSchoolMathKnowledgeMapPage(),
         if (AppConfig.developerToolsEnabled) ...{
           '/content-source-test': (_) => const ZhihuContentTestPage(),
           '/github-content-source-test': (_) => const GitHubContentTestPage(),
