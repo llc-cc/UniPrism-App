@@ -16,6 +16,8 @@ function New-MathAstServiceInvocation {
     '--host', '127.0.0.1',
     '--port', [string]$Port,
     '--threads', [string]$Threads,
+    # One local slot keeps the fixed prompt KV cache hot for interactive use.
+    '--parallel', '1',
     '--ctx-size', '2048',
     '--n-predict', '512',
     '--batch-size', '128',

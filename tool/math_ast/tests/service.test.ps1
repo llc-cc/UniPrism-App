@@ -17,6 +17,7 @@ $expectedArguments = @(
   '--host', '127.0.0.1',
   '--port', '8081',
   '--threads', '8',
+  '--parallel', '1',
   '--ctx-size', '2048',
   '--n-predict', '512',
   '--batch-size', '128',
