@@ -10,7 +10,10 @@ final class _UnsupportedSpeechFormulaRecognizer
   Future<bool> initialize() async => false;
 
   @override
-  Future<void> listen({required SpeechFormulaResultCallback onResult}) async {}
+  Future<void> listen({
+    required SpeechFormulaResultCallback onResult,
+    SpeechFormulaErrorCallback? onError,
+  }) async {}
 
   @override
   Future<void> stop() async {}

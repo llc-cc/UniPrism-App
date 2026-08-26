@@ -20,7 +20,8 @@ abstract interface class SenseVoiceDeadlineScheduler {
 
 final class _TimerDeadlineScheduler implements SenseVoiceDeadlineScheduler {
   @override
-  Timer schedule(Duration delay, void Function() callback) => Timer(delay, callback);
+  Timer schedule(Duration delay, void Function() callback) =>
+      Timer(delay, callback);
 }
 
 /// 为页面提供可安全展示的语音识别失败原因，不携带服务端或网络内部信息。
@@ -30,8 +31,15 @@ final class SenseVoiceAsrException implements Exception {
   final String message;
 }
 
+/// SenseVoice 识别边界，便于本地录音状态机与具体 HTTP 生命周期解耦。
+abstract interface class SenseVoiceAsrApi {
+  Future<bool> isHealthy();
+
+  Future<String> transcribe(Uint8List wavBytes);
+}
+
 /// 本地 SenseVoice HTTP 适配器，负责协议封装及上传、响应的资源边界校验。
-final class SenseVoiceAsrClient {
+final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
   SenseVoiceAsrClient({
     required String baseUrl,
     http.Client? client,
@@ -46,13 +54,18 @@ final class SenseVoiceAsrClient {
   final String _baseUrl;
   final http.Client _client;
   final SenseVoiceDeadlineScheduler _deadlineScheduler;
+
   /// 单次转写操作的总时限；计时同时覆盖上传、等待响应头和读取响应体。
   final Duration timeout;
 
   /// 健康检查仅用于决定是否显示本地服务可用；所有失败统一降级为 false。
+  @override
   Future<bool> isHealthy() async {
     final deadline = Completer<void>();
-    final timer = _deadlineScheduler.schedule(_healthTimeout, deadline.complete);
+    final timer = _deadlineScheduler.schedule(
+      _healthTimeout,
+      deadline.complete,
+    );
     try {
       final response = await Future.any<http.Response>([
         _client.get(Uri.parse('$_baseUrl/health')),
@@ -69,6 +82,7 @@ final class SenseVoiceAsrClient {
   }
 
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
+  @override
   Future<String> transcribe(Uint8List wavBytes) async {
     final abortCompleter = Completer<void>();
     final deadline = _deadlineScheduler.schedule(timeout, () {
@@ -103,21 +117,22 @@ final class SenseVoiceAsrClient {
   ) async {
     _validateCanonicalWav(wavBytes);
 
-    final request = http.AbortableMultipartRequest(
-      'POST',
-      Uri.parse('$_baseUrl/v1/audio/transcriptions'),
-      abortTrigger: abortCompleter.future,
-    )
-      ..fields['model'] = 'sensevoice'
-      ..fields['response_format'] = 'json'
-      ..files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          wavBytes,
-          filename: 'formula.wav',
-          contentType: MediaType('audio', 'wav'),
-        ),
-      );
+    final request =
+        http.AbortableMultipartRequest(
+            'POST',
+            Uri.parse('$_baseUrl/v1/audio/transcriptions'),
+            abortTrigger: abortCompleter.future,
+          )
+          ..fields['model'] = 'sensevoice'
+          ..fields['response_format'] = 'json'
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              wavBytes,
+              filename: 'formula.wav',
+              contentType: MediaType('audio', 'wav'),
+            ),
+          );
     final response = await _client.send(request);
     final responseBody = await _readResponse(response.stream, abortCompleter);
 

@@ -20,6 +20,7 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.preview);
     expect(controller.state.transcript, 'x 的平方');
     expect(controller.state.selectedLatex, 'x^2');
+    expect(recognizer.stopCount, 0);
   });
 
   test('浏览器不支持语音时保留可恢复错误状态', () async {
@@ -74,6 +75,82 @@ void main() {
 
     expect(repository.callCount, 1);
   });
+
+  test('旧 operation 的 typed error 不能覆盖新一轮监听状态', () async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: _ImmediateRepository(),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startListening();
+    await controller.reset();
+    await controller.startListening();
+    recognizer.emitError(
+      const SpokenFormulaRecognitionException('旧错误'),
+      listenIndex: 0,
+    );
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(controller.state.errorMessage, isNull);
+  });
+
+  test('manual stop 没有 final 时不转换 partial 并报告无识别结果', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _CountingRepository();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('partial', isFinal: false);
+
+    await controller.stopListening();
+
+    expect(controller.state.status, SpeechFormulaStatus.error);
+    expect(controller.state.errorMessage, contains('没有识别到语音'));
+    expect(repository.callCount, 0);
+  });
+
+  test('manual stop 内同步发出的 final 只转换一次', () async {
+    final recognizer = _FakeRecognizer(finalWordsOnStop: 'x 的平方');
+    final repository = _CountingRepository();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    await controller.stopListening();
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.preview);
+    expect(repository.callCount, 1);
+    expect(recognizer.stopCount, 1);
+  });
+
+  test(
+    '当前 operation 的 typed recognition error 保留 partial transcript',
+    () async {
+      final recognizer = _FakeRecognizer();
+      final controller = SpeechFormulaController(
+        recognizer: recognizer,
+        repository: _ImmediateRepository(),
+      );
+      addTearDown(controller.dispose);
+      await controller.startListening();
+      recognizer.emit('x partial', isFinal: false);
+
+      recognizer.emitError(const SpokenFormulaRecognitionException('安全错误'));
+
+      expect(controller.state.status, SpeechFormulaStatus.error);
+      expect(controller.state.transcript, 'x partial');
+      expect(controller.state.errorMessage, '安全错误');
+    },
+  );
 }
 
 SpokenFormulaConversion _conversion() => const SpokenFormulaConversion(
@@ -90,25 +167,44 @@ Future<void> _flushAsyncWork() async {
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
-  _FakeRecognizer({this.isAvailable = true});
+  _FakeRecognizer({this.isAvailable = true, this.finalWordsOnStop});
 
   final bool isAvailable;
-  SpeechFormulaResultCallback? _onResult;
+  final String? finalWordsOnStop;
+  final List<SpeechFormulaResultCallback> _resultCallbacks = [];
+  final List<SpeechFormulaErrorCallback?> _errorCallbacks = [];
+  int stopCount = 0;
 
   @override
   Future<bool> initialize() async => isAvailable;
 
   @override
-  Future<void> listen({required SpeechFormulaResultCallback onResult}) async {
-    _onResult = onResult;
+  Future<void> listen({
+    required SpeechFormulaResultCallback onResult,
+    SpeechFormulaErrorCallback? onError,
+  }) async {
+    _resultCallbacks.add(onResult);
+    _errorCallbacks.add(onError);
   }
 
-  void emit(String words, {required bool isFinal}) {
-    _onResult?.call(words, isFinal: isFinal);
+  void emit(String words, {required bool isFinal, int? listenIndex}) {
+    _resultCallbacks[listenIndex ?? _resultCallbacks.length - 1](
+      words,
+      isFinal: isFinal,
+    );
+  }
+
+  void emitError(SpokenFormulaRecognitionException error, {int? listenIndex}) {
+    _errorCallbacks[listenIndex ?? _errorCallbacks.length - 1]?.call(error);
   }
 
   @override
-  Future<void> stop() async {}
+  Future<void> stop() async {
+    stopCount += 1;
+    if (finalWordsOnStop case final words?) {
+      emit(words, isFinal: true);
+    }
+  }
 
   @override
   Future<void> cancel() async {}

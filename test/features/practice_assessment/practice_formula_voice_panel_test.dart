@@ -97,7 +97,10 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<bool> initialize() async => true;
 
   @override
-  Future<void> listen({required SpeechFormulaResultCallback onResult}) async {
+  Future<void> listen({
+    required SpeechFormulaResultCallback onResult,
+    SpeechFormulaErrorCallback? onError,
+  }) async {
     _onResult = onResult;
   }
 

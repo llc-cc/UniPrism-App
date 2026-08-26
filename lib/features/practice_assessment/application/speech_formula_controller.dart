@@ -80,12 +80,16 @@ final class SpeechFormulaController extends ChangeNotifier {
         }
         _initialized = true;
       }
+      if (!_isCurrent(operationId)) return;
       _setState(
         const SpeechFormulaState(status: SpeechFormulaStatus.listening),
       );
       await recognizer.listen(
         onResult: (words, {required isFinal}) {
           _handleRecognition(operationId, words, isFinal: isFinal);
+        },
+        onError: (error) {
+          _handleRecognitionError(operationId, error);
         },
       );
     } catch (_) {
@@ -96,17 +100,21 @@ final class SpeechFormulaController extends ChangeNotifier {
 
   Future<void> stopListening() async {
     final operationId = _operationId;
-    await recognizer.stop();
+    try {
+      await recognizer.stop();
+    } catch (_) {
+      if (_isCurrent(operationId)) {
+        _showError('无法结束语音识别，请重新说一次。', _state.transcript.trim());
+      }
+      return;
+    }
     if (!_isCurrent(operationId) ||
         _state.status != SpeechFormulaStatus.listening) {
       return;
     }
     final transcript = _state.transcript.trim();
-    if (transcript.isEmpty) {
-      _showError('没有识别到语音，请靠近麦克风后重试。');
-      return;
-    }
-    await _convert(operationId, transcript);
+    // 只有 recognizer 的 final 回调能启动转换；手动 stop 无 final 时 partial 不可冒充完整结果。
+    _showError('没有识别到语音，请靠近麦克风后重试。', transcript);
   }
 
   Future<void> retryConversion() async {
@@ -173,16 +181,18 @@ final class SpeechFormulaController extends ChangeNotifier {
         transcript: transcript,
       ),
     );
-    unawaited(_finishFinalRecognition(operationId, transcript));
+    unawaited(_convert(operationId, transcript));
   }
 
-  Future<void> _finishFinalRecognition(
+  void _handleRecognitionError(
     int operationId,
-    String transcript,
-  ) async {
-    await recognizer.stop();
-    if (!_isCurrent(operationId)) return;
-    await _convert(operationId, transcript);
+    SpokenFormulaRecognitionException error,
+  ) {
+    if (!_isCurrent(operationId) ||
+        _state.status != SpeechFormulaStatus.listening) {
+      return;
+    }
+    _showError(error.message, _state.transcript.trim());
   }
 
   Future<void> _convert(int operationId, String transcript) async {
