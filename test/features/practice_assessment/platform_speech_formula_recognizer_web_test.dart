@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:uniprism_app/features/practice_assessment/adapters/platform_speech_formula_recognizer_web.dart';
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
@@ -15,7 +18,9 @@ void main() {
     driver.emit('first partial', isFinal: false);
     driver.emit('last partial', isFinal: false);
 
-    await recognizer.stop();
+    final stopping = recognizer.stop();
+    driver.emitStatus(SpeechToText.doneStatus);
+    await stopping;
     await recognizer.stop();
 
     expect(results, <({String words, bool isFinal})>[
@@ -36,7 +41,9 @@ void main() {
     );
     driver.emit('partial', isFinal: false);
 
-    await recognizer.cancel();
+    final cancelling = recognizer.cancel();
+    driver.emitStatus(SpeechToText.doneStatus);
+    await cancelling;
     driver.emit('late final', isFinal: true);
 
     expect(results, <({String words, bool isFinal})>[
@@ -56,6 +63,9 @@ void main() {
     );
     driver.emit('old partial', isFinal: false, listenIndex: 0);
     driver.emit('old final', isFinal: true, listenIndex: 0);
+    final firstStopping = recognizer.stop();
+    driver.emitStatus(SpeechToText.doneStatus);
+    await firstStopping;
 
     await recognizer.listen(
       onResult: (words, {required isFinal}) =>
@@ -63,7 +73,9 @@ void main() {
     );
     driver.emit('late old mutation', isFinal: false, listenIndex: 0);
     driver.emit('new partial', isFinal: false, listenIndex: 1);
-    await recognizer.stop();
+    final secondStopping = recognizer.stop();
+    driver.emitStatus(SpeechToText.doneStatus);
+    await secondStopping;
 
     expect(results, <({String words, bool isFinal})>[
       (words: 'old partial', isFinal: false),
@@ -90,7 +102,7 @@ void main() {
     expect(errors.single.message, isNot(contains('browser internals')));
   });
 
-  test('relisten 后旧 session error 不能进入新 session onError', () async {
+  test('旧 session 排空前 relisten 被拒绝且全局 error 仍归旧 session', () async {
     final driver = _FakeWebSpeechDriver();
     final recognizer = WebSpeechFormulaRecognizer(driver: driver);
     final oldErrors = <SpokenFormulaRecognitionException>[];
@@ -100,18 +112,86 @@ void main() {
       onResult: (_, {required isFinal}) {},
       onError: oldErrors.add,
     );
+    var stopCompleted = false;
+    final stopping = recognizer.stop().then((_) => stopCompleted = true);
+    driver.emitStatus(SpeechToText.notListeningStatus);
+    await Future<void>.delayed(Duration.zero);
+    expect(stopCompleted, isFalse);
+
+    await expectLater(
+      recognizer.listen(
+        onResult: (_, {required isFinal}) {},
+        onError: newErrors.add,
+      ),
+      throwsStateError,
+    );
+    driver.emitError(StateError('late old error'));
+    expect(oldErrors, hasLength(1));
+    expect(newErrors, isEmpty);
+
+    driver.emitStatus(SpeechToText.doneStatus);
+    await stopping;
+
     await recognizer.listen(
       onResult: (_, {required isFinal}) {},
       onError: newErrors.add,
     );
 
-    driver.emitError(StateError('late old error'), listenIndex: 0);
-    expect(oldErrors, isEmpty);
-    expect(newErrors, isEmpty);
-
-    driver.emitError(StateError('current error'), listenIndex: 1);
-    expect(oldErrors, isEmpty);
+    driver.emitError(StateError('current error'));
+    expect(oldErrors, hasLength(1));
     expect(newErrors, hasLength(1));
+  });
+
+  test('gated stop 期间到达 final 只转发一次且不再 fallback', () async {
+    final driver = _FakeWebSpeechDriver()..stopGate = Completer<void>();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final results = <({String words, bool isFinal})>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (words, {required isFinal}) =>
+          results.add((words: words, isFinal: isFinal)),
+    );
+    driver.emit('partial', isFinal: false);
+
+    var stopCompleted = false;
+    final stopping = recognizer.stop().then((_) => stopCompleted = true);
+    driver.emit('native final', isFinal: true);
+    driver.emitStatus(SpeechToText.doneStatus);
+    await Future<void>.delayed(Duration.zero);
+    expect(stopCompleted, isFalse);
+
+    driver.stopGate!.complete();
+    await stopping;
+    expect(results, <({String words, bool isFinal})>[
+      (words: 'partial', isFinal: false),
+      (words: 'native final', isFinal: true),
+    ]);
+  });
+
+  test('gated cancel 期间到达的 partial/final 都不会转成 final', () async {
+    final driver = _FakeWebSpeechDriver()..cancelGate = Completer<void>();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final results = <({String words, bool isFinal})>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (words, {required isFinal}) =>
+          results.add((words: words, isFinal: isFinal)),
+    );
+    driver.emit('partial', isFinal: false);
+
+    var cancelCompleted = false;
+    final cancelling = recognizer.cancel().then((_) => cancelCompleted = true);
+    driver.emit('late partial', isFinal: false);
+    driver.emit('late final', isFinal: true);
+    driver.emitStatus(SpeechToText.doneStatus);
+    await Future<void>.delayed(Duration.zero);
+    expect(cancelCompleted, isFalse);
+
+    driver.cancelGate!.complete();
+    await cancelling;
+    expect(results, <({String words, bool isFinal})>[
+      (words: 'partial', isFinal: false),
+    ]);
   });
 
   test('browser final onResult 抛错不逃逸且不会再发 terminal error', () async {
@@ -130,7 +210,9 @@ void main() {
 
     driver.emit('final', isFinal: true);
     driver.emitError(StateError('late error'));
-    await recognizer.stop();
+    final stopping = recognizer.stop();
+    driver.emitStatus(SpeechToText.doneStatus);
+    await stopping;
 
     expect(resultCalls, 1);
     expect(errorCalls, 0);
@@ -159,37 +241,45 @@ void main() {
 
 final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   final List<WebSpeechResultCallback> _callbacks = [];
-  final List<WebSpeechDriverErrorCallback> _errorCallbacks = [];
+  WebSpeechDriverErrorCallback? _errorListener;
+  WebSpeechDriverStatusCallback? _statusListener;
+  Completer<void>? stopGate;
+  Completer<void>? cancelGate;
   int stopCount = 0;
   int cancelCount = 0;
 
   @override
-  Future<bool> initialize() async => true;
+  Future<bool> initialize({
+    required WebSpeechDriverErrorCallback onError,
+    required WebSpeechDriverStatusCallback onStatus,
+  }) async {
+    _errorListener = onError;
+    _statusListener = onStatus;
+    return true;
+  }
 
   @override
-  Future<void> listen({
-    required WebSpeechResultCallback onResult,
-    required WebSpeechDriverErrorCallback onError,
-  }) async {
+  Future<void> listen({required WebSpeechResultCallback onResult}) async {
     _callbacks.add(onResult);
-    _errorCallbacks.add(onError);
   }
 
   void emit(String words, {required bool isFinal, int? listenIndex}) {
     _callbacks[listenIndex ?? _callbacks.length - 1](words, isFinal: isFinal);
   }
 
-  void emitError(Object error, {int? listenIndex}) {
-    _errorCallbacks[listenIndex ?? _errorCallbacks.length - 1](error);
-  }
+  void emitError(Object error) => _errorListener!(error);
+
+  void emitStatus(String status) => _statusListener!(status);
 
   @override
   Future<void> stop() async {
     stopCount += 1;
+    await stopGate?.future;
   }
 
   @override
   Future<void> cancel() async {
     cancelCount += 1;
+    await cancelGate?.future;
   }
 }
