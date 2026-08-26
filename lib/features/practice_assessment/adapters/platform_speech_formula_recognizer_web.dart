@@ -70,18 +70,41 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     _onResult = onResult;
     _onError = onError;
     _terminalStatus = Completer<void>();
-    await _driver.listen(
-      onResult: (words, {required isFinal}) {
-        if (generation != _generation || _hasTerminalCallback) return;
-        final normalized = words.trim();
-        if (isFinal) {
-          _hasTerminalCallback = true;
-        } else if (normalized.isNotEmpty) {
-          _lastPartialWords = normalized;
-        }
-        _invokeResultSafely(onResult, words, isFinal: isFinal);
-      },
-    );
+    try {
+      await _driver.listen(
+        onResult: (words, {required isFinal}) {
+          if (generation != _generation || _hasTerminalCallback) return;
+          final normalized = words.trim();
+          if (isFinal) {
+            _hasTerminalCallback = true;
+          } else if (normalized.isNotEmpty) {
+            _lastPartialWords = normalized;
+          }
+          _invokeResultSafely(onResult, words, isFinal: isFinal);
+        },
+      );
+    } catch (_) {
+      if (generation != _generation) return;
+      final finishing = _finishingFuture;
+      if (finishing != null) {
+        await finishing;
+        return;
+      }
+      _hasTerminalCallback = true;
+      final rollbackGeneration = ++_generation;
+      _state = _WebSpeechSessionState.stopping;
+      final rollback = _beginFinishing(
+        () => _rollbackFailedListen(rollbackGeneration),
+      );
+      _invokeErrorSafely();
+      await rollback;
+    }
+  }
+
+  Future<void> _rollbackFailedListen(int generation) async {
+    // Web driver 只有 SpeechRecognition.start() 返回后才算启动成功；throw 时先失效闭包并排空事件即可释放。
+    await Future<void>.delayed(Duration.zero);
+    _releaseSession(generation);
   }
 
   @override
@@ -176,6 +199,20 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
       return;
     }
     _hasTerminalCallback = true;
+    if (_finishingFuture == null) {
+      final generation = _generation;
+      _state = _WebSpeechSessionState.stopping;
+      final draining = _beginFinishing(() async {
+        await _awaitTerminalDrain();
+        _releaseSession(generation);
+      });
+      // Web onerror 紧接着发送 done；内部 drain 无外部 I/O，但仍收敛 fire-and-forget Future。
+      unawaited(draining.catchError((Object _) {}));
+    }
+    _invokeErrorSafely();
+  }
+
+  void _invokeErrorSafely() {
     try {
       _onError?.call(
         const SpokenFormulaRecognitionException('浏览器语音识别暂时不可用，请重新说一次。'),

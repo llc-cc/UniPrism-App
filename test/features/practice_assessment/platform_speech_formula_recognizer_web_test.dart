@@ -102,6 +102,120 @@ void main() {
     expect(errors.single.message, isNot(contains('browser internals')));
   });
 
+  test('current error 在 done 排空前拒绝 relisten，排空后新 error 只归新会话', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final oldErrors = <SpokenFormulaRecognitionException>[];
+    final newErrors = <SpokenFormulaRecognitionException>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: oldErrors.add,
+    );
+
+    driver.emitError(StateError('current old error'));
+    expect(oldErrors, hasLength(1));
+    await expectLater(
+      recognizer.listen(
+        onResult: (_, {required isFinal}) {},
+        onError: newErrors.add,
+      ),
+      throwsStateError,
+    );
+
+    driver.emitStatus(SpeechToText.doneStatus);
+    await expectLater(
+      recognizer.listen(
+        onResult: (_, {required isFinal}) {},
+        onError: newErrors.add,
+      ),
+      throwsStateError,
+    );
+    await pumpEventQueue(times: 2);
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: newErrors.add,
+    );
+
+    driver.emitError(StateError('current new error'));
+    expect(oldErrors, hasLength(1));
+    expect(newErrors, hasLength(1));
+    driver.emitStatus(SpeechToText.doneStatus);
+    await pumpEventQueue(times: 2);
+  });
+
+  test('error 与同步 manual stop/cancel 复用同一 finishing 且不重复终止 driver', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    late Future<void> stopping;
+    late Future<void> cancelling;
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: (_) {
+        stopping = recognizer.stop();
+        cancelling = recognizer.cancel();
+      },
+    );
+
+    driver.emitError(StateError('current error'));
+    expect(identical(stopping, cancelling), isTrue);
+    expect(driver.stopCount, 0);
+    expect(driver.cancelCount, 0);
+
+    driver.emitStatus(SpeechToText.doneStatus);
+    await Future.wait(<Future<void>>[stopping, cancelling]);
+    await recognizer.listen(onResult: (_, {required isFinal}) {});
+  });
+
+  test('pending manual stop 中到达 error 不覆盖已有 finishing', () async {
+    final driver = _FakeWebSpeechDriver()..stopGate = Completer<void>();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final errors = <SpokenFormulaRecognitionException>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: errors.add,
+    );
+
+    final stopping = recognizer.stop();
+    driver.emitError(StateError('error during stop'));
+    final repeatedStop = recognizer.stop();
+    final cancelling = recognizer.cancel();
+    expect(identical(stopping, repeatedStop), isTrue);
+    expect(identical(stopping, cancelling), isTrue);
+    expect(errors, hasLength(1));
+    expect(driver.stopCount, 1);
+    expect(driver.cancelCount, 0);
+
+    driver.emitStatus(SpeechToText.doneStatus);
+    driver.stopGate!.complete();
+    await Future.wait(<Future<void>>[stopping, repeatedStop, cancelling]);
+  });
+
+  test('driver.listen throw 只发一次 typed error，排空后可 relisten', () async {
+    final driver = _FakeWebSpeechDriver()
+      ..listenError = StateError('browser start failure');
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final oldErrors = <SpokenFormulaRecognitionException>[];
+    final newResults = <String>[];
+    await recognizer.initialize();
+
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('失败会话不应发出结果'),
+      onError: oldErrors.add,
+    );
+    expect(oldErrors, hasLength(1));
+    expect(oldErrors.single.message, isNot(contains('browser start failure')));
+
+    await recognizer.listen(
+      onResult: (words, {required isFinal}) => newResults.add(words),
+    );
+    driver.emit('late failed result', isFinal: true, listenIndex: 0);
+    driver.emit('new result', isFinal: false, listenIndex: 1);
+    expect(newResults, <String>['new result']);
+  });
+
   test('旧 session 排空前 relisten 被拒绝且全局 error 仍归旧 session', () async {
     final driver = _FakeWebSpeechDriver();
     final recognizer = WebSpeechFormulaRecognizer(driver: driver);
@@ -245,6 +359,7 @@ final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   WebSpeechDriverStatusCallback? _statusListener;
   Completer<void>? stopGate;
   Completer<void>? cancelGate;
+  Object? listenError;
   int stopCount = 0;
   int cancelCount = 0;
 
@@ -261,6 +376,9 @@ final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   @override
   Future<void> listen({required WebSpeechResultCallback onResult}) async {
     _callbacks.add(onResult);
+    final error = listenError;
+    listenError = null;
+    if (error != null) throw error;
   }
 
   void emit(String words, {required bool isFinal, int? listenIndex}) {
