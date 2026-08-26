@@ -213,6 +213,23 @@ void main() {
 
     await expectLater(capture.cancel(), throwsA(same(error)));
   });
+
+  test('重复 dispose 活跃采集只取消一次、转发 driver dispose 并拒绝新启动', () async {
+    final driver = _FakeSpeechRecordDriver(
+      effectiveConfigOnStart: _pcm16Config(),
+    );
+    final capture = RecordSpeechAudioCapture(driver: driver);
+    await capture.start();
+
+    await Future.wait<void>(<Future<void>>[
+      capture.dispose(),
+      capture.dispose(),
+    ]);
+
+    expect(driver.cancelCalls, 1);
+    expect(driver.disposeCalls, 1);
+    await expectLater(capture.start(), throwsStateError);
+  });
 }
 
 RecordConfig _pcm16Config() => const RecordConfig(
@@ -268,6 +285,7 @@ final class _FakeSpeechRecordDriver implements SpeechRecordDriver {
   int startStreamCalls = 0;
   int stopCalls = 0;
   int cancelCalls = 0;
+  int disposeCalls = 0;
 
   @override
   Future<bool> hasPermission() async {
@@ -315,5 +333,10 @@ final class _FakeSpeechRecordDriver implements SpeechRecordDriver {
     cancelCalls += 1;
     final error = cancelError;
     if (error != null) throw error;
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCalls += 1;
   }
 }

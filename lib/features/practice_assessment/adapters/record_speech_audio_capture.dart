@@ -18,6 +18,8 @@ abstract interface class SpeechRecordDriver {
   Future<void> stop();
 
   Future<void> cancel();
+
+  Future<void> dispose();
 }
 
 enum _CaptureState { idle, starting, recording, stopping }
@@ -34,12 +36,20 @@ final class RecordSpeechAudioCapture implements SpeechAudioCapture {
   Future<Stream<Uint8List>>? _startOperation;
   _CaptureState _state = _CaptureState.idle;
   int _generation = 0;
+  bool _disposed = false;
+  Future<void>? _disposeFuture;
 
   @override
-  Future<bool> requestPermission() => _driver.hasPermission();
+  Future<bool> requestPermission() {
+    if (_disposed) return Future<bool>.error(StateError('录音采集器已释放'));
+    return _driver.hasPermission();
+  }
 
   @override
   Future<Stream<Uint8List>> start() {
+    if (_disposed) {
+      return Future<Stream<Uint8List>>.error(StateError('录音采集器已释放'));
+    }
     switch (_state) {
       case _CaptureState.idle:
         final generation = ++_generation;
@@ -56,10 +66,51 @@ final class RecordSpeechAudioCapture implements SpeechAudioCapture {
   }
 
   @override
-  Future<void> stop() => _finishRecording(_FinishAction.stop);
+  Future<void> stop() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
+    return _finishRecording(_FinishAction.stop);
+  }
 
   @override
-  Future<void> cancel() => _finishRecording(_FinishAction.cancel);
+  Future<void> cancel() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
+    return _finishRecording(_FinishAction.cancel);
+  }
+
+  @override
+  Future<void> dispose() {
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
+    final hasActiveSession =
+        _state != _CaptureState.idle || _startOperation != null;
+    _disposed = true;
+    final canceling = hasActiveSession
+        ? _finishRecording(_FinishAction.cancel)
+        : Future<void>.value();
+    final operation = _disposeAfter(canceling);
+    _disposeFuture = operation;
+    return operation;
+  }
+
+  Future<void> _disposeAfter(Future<void> canceling) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    try {
+      await canceling;
+    } catch (error, stackTrace) {
+      firstError = error;
+      firstStackTrace = stackTrace;
+    }
+    try {
+      await _driver.dispose();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+    if (firstError case final error?) {
+      Error.throwWithStackTrace(error, firstStackTrace!);
+    }
+  }
 
   Future<Stream<Uint8List>> _startRecording(int generation) async {
     var effectiveConfig = _config;
@@ -178,4 +229,7 @@ final class _PluginRecordDriver implements SpeechRecordDriver {
 
   @override
   Future<void> cancel() => _recorder.cancel();
+
+  @override
+  Future<void> dispose() => _recorder.dispose();
 }

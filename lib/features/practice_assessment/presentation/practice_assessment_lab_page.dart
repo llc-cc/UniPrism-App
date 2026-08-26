@@ -26,7 +26,7 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     this.disposeSpeechFormulaController = false,
   });
 
-  /// 创建供开发者工具使用的自造题内存版本。
+  /// 创建供开发者工具使用的自造题内存版本；注入 recognizer 后其所有权转移给页面 controller。
   factory PracticeAssessmentLabPage.mock({
     Key? key,
     SpokenFormulaRepository spokenFormulaRepository =
@@ -55,6 +55,7 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
     );
   }
 
+  /// 创建远程练习版本；注入 recognizer 后其所有权转移给页面 controller。
   factory PracticeAssessmentLabPage.remote({
     Key? key,
     required String baseUrl,

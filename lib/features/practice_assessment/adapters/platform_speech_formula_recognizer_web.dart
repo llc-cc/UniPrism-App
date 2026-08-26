@@ -36,11 +36,7 @@ SpeechFormulaRecognizer createPlatformSpeechFormulaRecognizer({
     RecordSpeechAudioCapture(),
     SenseVoiceAsrClient(baseUrl: senseVoiceBaseUrl),
   ),
-  _ => throw ArgumentError.value(
-    mode,
-    'mode',
-    '仅支持 browser 或 sensevoiceLocal',
-  ),
+  _ => throw ArgumentError.value(mode, 'mode', '仅支持 browser 或 sensevoiceLocal'),
 };
 
 /// Chrome/Edge 短句识别适配器；只向上层暴露普通文本、最终态和安全错误。
@@ -58,14 +54,32 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
   SpeechFormulaErrorCallback? _onError;
   Completer<void>? _terminalStatus;
   Future<void>? _finishingFuture;
+  SpokenFormulaRecognitionException? _initializationError;
+  bool _disposed = false;
+  Future<void>? _disposeFuture;
+
+  @override
+  SpokenFormulaRecognitionException? get initializationError =>
+      _initializationError;
 
   @override
   Future<bool> initialize() async {
+    _ensureNotDisposed();
+    _initializationError = null;
     if (_initialized) return true;
-    _initialized = await _driver.initialize(
-      onError: _handleDriverError,
-      onStatus: _handleDriverStatus,
-    );
+    try {
+      _initialized = await _driver.initialize(
+        onError: _handleDriverError,
+        onStatus: _handleDriverStatus,
+      );
+    } catch (_) {
+      _initialized = false;
+    }
+    if (!_initialized) {
+      _initializationError = const SpokenFormulaRecognitionException(
+        '当前浏览器无法使用语音识别，请改用最新版 Chrome 或 Edge。',
+      );
+    }
     return _initialized;
   }
 
@@ -74,6 +88,7 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
   }) async {
+    _ensureNotDisposed();
     if (!_initialized) {
       throw StateError('语音识别器尚未初始化');
     }
@@ -126,6 +141,7 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
 
   @override
   Future<void> stop() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
     if (!_initialized || _state == _WebSpeechSessionState.idle) {
       return Future<void>.value();
     }
@@ -155,6 +171,7 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
 
   @override
   Future<void> cancel() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
     if (!_initialized || _state == _WebSpeechSessionState.idle) {
       return Future<void>.value();
     }
@@ -168,6 +185,32 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     _onResult = null;
     _onError = null;
     return _beginFinishing(() => _cancelSession(generation));
+  }
+
+  @override
+  Future<void> dispose() {
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
+    _disposed = true;
+    final generation = ++_generation;
+    _lastPartialWords = '';
+    _hasTerminalCallback = true;
+    _onResult = null;
+    _onError = null;
+
+    final finishing = _finishingFuture;
+    late final Future<void> operation;
+    if (finishing != null) {
+      operation = finishing.whenComplete(() => _releaseSession(generation));
+    } else if (!_initialized || _state == _WebSpeechSessionState.idle) {
+      _releaseSession(generation);
+      operation = Future<void>.value();
+    } else {
+      _state = _WebSpeechSessionState.cancelling;
+      operation = _beginFinishing(() => _cancelSession(generation));
+    }
+    _disposeFuture = operation;
+    return operation;
   }
 
   Future<void> _cancelSession(int generation) async {
@@ -210,7 +253,8 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
   }
 
   void _handleDriverError(Object _) {
-    if (_state == _WebSpeechSessionState.idle ||
+    if (_disposed ||
+        _state == _WebSpeechSessionState.idle ||
         _state == _WebSpeechSessionState.cancelling ||
         _hasTerminalCallback) {
       return;
@@ -227,6 +271,10 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
       unawaited(draining.catchError((Object _) {}));
     }
     _invokeErrorSafely();
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) throw StateError('浏览器语音识别器已释放');
   }
 
   void _invokeErrorSafely() {

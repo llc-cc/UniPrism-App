@@ -75,10 +75,11 @@ final class SpeechFormulaController extends ChangeNotifier {
         if (!_isCurrent(operationId)) return;
         if (!available) {
           _setState(
-            const SpeechFormulaState(
+            SpeechFormulaState(
               status: SpeechFormulaStatus.error,
               isSupported: false,
-              errorMessage: '当前浏览器无法使用语音识别，请改用最新版 Chrome 或 Edge。',
+              errorMessage:
+                  recognizer.initializationError?.message ?? '语音识别暂时不可用，请稍后重试。',
             ),
           );
           return;
@@ -250,8 +251,8 @@ final class SpeechFormulaController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     ++_operationId;
-    // dispose 无法 await 插件清理；错误必须在此收敛，不能泄漏为未处理异步异常。
-    unawaited(recognizer.cancel().catchError((Object _) {}));
+    // controller 持有 recognizer；同步生命周期无法 await，因此在此收敛异步释放错误。
+    unawaited(recognizer.dispose().catchError((Object _) {}));
     super.dispose();
   }
 }

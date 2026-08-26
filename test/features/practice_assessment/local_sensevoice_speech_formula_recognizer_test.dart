@@ -18,6 +18,65 @@ void main() {
     expect(events, <String>['health', 'permission']);
   });
 
+  test('initialize 健康检查失败时提供启动本机服务的安全原因', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..isHealthyResult = false;
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+
+    expect(await recognizer.initialize(), isFalse);
+    expect(
+      recognizer.initializationError?.message,
+      contains('启动本机 SenseVoice 服务'),
+    );
+    expect(
+      recognizer.initializationError?.message,
+      isNot(contains('127.0.0.1')),
+    );
+    expect(recognizer.initializationError?.message, isNot(contains('Chrome')));
+    expect(capture.permissionCalls, 0);
+  });
+
+  test('initialize 健康检查异常也收敛为启动本机服务的安全原因', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..healthError = StateError('endpoint down');
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+
+    expect(await recognizer.initialize(), isFalse);
+    expect(
+      recognizer.initializationError?.message,
+      contains('启动本机 SenseVoice 服务'),
+    );
+    expect(
+      recognizer.initializationError?.message,
+      isNot(contains('endpoint')),
+    );
+    expect(capture.permissionCalls, 0);
+  });
+
+  test('initialize 麦克风权限失败时提供权限恢复原因', () async {
+    final capture = _FakeCapture()..permissionResult = false;
+    final client = _FakeAsrClient();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+
+    expect(await recognizer.initialize(), isFalse);
+    expect(recognizer.initializationError?.message, contains('麦克风权限'));
+    expect(recognizer.initializationError?.message, isNot(contains('Chrome')));
+    expect(recognizer.initializationError?.message, isNot(contains('Edge')));
+  });
+
+  test('initialize 重试成功后清除上一轮失败原因', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..isHealthyResult = false;
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    expect(await recognizer.initialize(), isFalse);
+    expect(recognizer.initializationError, isNotNull);
+
+    client.isHealthyResult = true;
+
+    expect(await recognizer.initialize(), isTrue);
+    expect(recognizer.initializationError, isNull);
+  });
+
   test('listen 为每次录音建立新的 PCM 缓冲区', () async {
     final capture = _FakeCapture();
     final client = _FakeAsrClient(transcripts: <String>['first', 'second']);
@@ -488,6 +547,35 @@ void main() {
 
     expect(uncaught, isEmpty);
   });
+
+  test('重复 dispose 活跃会话只释放资源一次且迟到转写不再回调', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..transcribeGate = Completer<String>();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    final results = <String>[];
+    final errors = <SpokenFormulaRecognitionException>[];
+    await recognizer.listen(
+      onResult: (words, {required isFinal}) => results.add(words),
+      onError: errors.add,
+    );
+    capture.add(<int>[1, 2]);
+    final stopping = recognizer.stop();
+    await _flushAsyncWork();
+    expect(client.callCount, 1);
+
+    final firstDispose = recognizer.dispose();
+    final secondDispose = recognizer.dispose();
+    await Future.wait<void>(<Future<void>>[firstDispose, secondDispose]);
+
+    expect(capture.cancelCount, 1);
+    expect(capture.disposeCount, 1);
+    expect(client.disposeCount, 1);
+    expect(capture.subscriptionCancelCount, 1);
+    client.transcribeGate!.complete('late result');
+    await stopping;
+    expect(results, isEmpty);
+    expect(errors, isEmpty);
+  });
 }
 
 Future<void> _flushAsyncWork() async {
@@ -521,17 +609,21 @@ final class _FakeCapture implements SpeechAudioCapture {
   final List<List<int>>? chunksOnListen;
   final List<StreamController<Uint8List>> _controllers = [];
   Object? stopError;
+  bool permissionResult = true;
+  int permissionCalls = 0;
   int stopCount = 0;
   int cancelCount = 0;
   int subscriptionCancelCount = 0;
   int startCount = 0;
+  int disposeCount = 0;
 
   StreamController<Uint8List> get _current => _controllers.last;
 
   @override
   Future<bool> requestPermission() async {
+    permissionCalls += 1;
     events?.add('permission');
-    return true;
+    return permissionResult;
   }
 
   @override
@@ -573,6 +665,11 @@ final class _FakeCapture implements SpeechAudioCapture {
     cancelCount += 1;
     await cancelGate?.future;
   }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
 }
 
 final class _FakeAsrClient implements SenseVoiceAsrApi {
@@ -584,6 +681,9 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   final Object? transcribeError;
   final List<Uint8List> requests = <Uint8List>[];
   Completer<String>? transcribeGate;
+  bool isHealthyResult = true;
+  Object? healthError;
+  int disposeCount = 0;
 
   int get callCount => requests.length;
   Uint8List? get lastBytes => requests.lastOrNull;
@@ -591,7 +691,8 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   @override
   Future<bool> isHealthy() async {
     events?.add('health');
-    return true;
+    if (healthError case final error?) throw error;
+    return isHealthyResult;
   }
 
   @override
@@ -600,6 +701,11 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
     if (transcribeError case final error?) throw error;
     if (transcribeGate case final gate?) return gate.future;
     return _transcripts.removeAt(0);
+  }
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
   }
 }
 

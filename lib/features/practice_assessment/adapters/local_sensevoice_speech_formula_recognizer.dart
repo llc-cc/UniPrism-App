@@ -36,11 +36,39 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   Future<void>? _listenFuture;
   Future<void>? _stopFuture;
   bool _hasTerminalCallback = false;
+  SpokenFormulaRecognitionException? _initializationError;
+  bool _disposed = false;
+  Future<void>? _disposeFuture;
+
+  @override
+  SpokenFormulaRecognitionException? get initializationError =>
+      _initializationError;
 
   @override
   Future<bool> initialize() async {
-    if (!await _client.isHealthy()) return false;
-    return _capture.requestPermission();
+    _ensureNotDisposed();
+    _initializationError = null;
+    var isHealthy = false;
+    try {
+      isHealthy = await _client.isHealthy();
+    } catch (_) {
+      // 健康检查的网络与传输异常等价于本机服务不可用，UI 只给出可恢复操作。
+    }
+    if (!isHealthy) {
+      _initializationError = const SpokenFormulaRecognitionException(
+        '请先启动本机 SenseVoice 服务后重试。',
+      );
+      return false;
+    }
+    try {
+      if (await _capture.requestPermission()) return true;
+    } catch (_) {
+      // 插件权限异常与用户拒绝权限使用同一安全恢复提示，不暴露实现细节。
+    }
+    _initializationError = const SpokenFormulaRecognitionException(
+      '无法使用麦克风，请检查麦克风权限后重试。',
+    );
+    return false;
   }
 
   @override
@@ -48,6 +76,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
   }) {
+    _ensureNotDisposed();
     if (_state != _LocalRecognitionState.idle) {
       return Future<void>.error(StateError('上一轮语音识别尚未结束，不能重复启动'));
     }
@@ -113,6 +142,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
 
   @override
   Future<void> stop() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
     final existing = _stopFuture;
     if (existing != null) return existing;
     if (_state == _LocalRecognitionState.idle) return Future<void>.value();
@@ -169,6 +199,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
 
   @override
   Future<void> cancel() {
+    if (_disposed) return _disposeFuture ?? Future<void>.value();
     // 先推进 generation，再触碰插件或订阅，确保其间完成的 HTTP Future 已无回调资格。
     ++_generation;
     _state = _LocalRecognitionState.idle;
@@ -179,6 +210,48 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _clearCallbacksAndBuffer();
     _stopFuture = null;
     return _cancelResources(subscription);
+  }
+
+  @override
+  Future<void> dispose() {
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
+    _disposed = true;
+    ++_generation;
+    _state = _LocalRecognitionState.idle;
+    final subscription = _subscription;
+    _subscription = null;
+    _timer?.cancel();
+    _timer = null;
+    _clearCallbacksAndBuffer();
+    _stopFuture = null;
+    final operation = _disposeResources(subscription);
+    _disposeFuture = operation;
+    return operation;
+  }
+
+  Future<void> _disposeResources(
+    StreamSubscription<Uint8List>? subscription,
+  ) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> release(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    await release(() async => subscription?.cancel());
+    await release(_capture.cancel);
+    await release(_capture.dispose);
+    await release(_client.dispose);
+    if (firstError case final error?) {
+      Error.throwWithStackTrace(error, firstStackTrace!);
+    }
   }
 
   Future<void> _cancelResources(
@@ -265,7 +338,11 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     return const SpokenFormulaRecognitionException('语音识别暂时不可用，请重新说一次。');
   }
 
-  bool _isCurrent(int generation) => generation == _generation;
+  bool _isCurrent(int generation) => !_disposed && generation == _generation;
+
+  void _ensureNotDisposed() {
+    if (_disposed) throw StateError('本机语音识别器已释放');
+  }
 
   void _clearCallbacksAndBuffer() {
     _chunks = <Uint8List>[];

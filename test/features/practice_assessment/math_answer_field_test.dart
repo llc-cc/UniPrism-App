@@ -580,6 +580,9 @@ final class _VoiceTestRecognizer implements SpeechFormulaRecognizer {
   SpeechFormulaResultCallback? _onResult;
 
   @override
+  SpokenFormulaRecognitionException? get initializationError => null;
+
+  @override
   Future<bool> initialize() async => true;
 
   @override
@@ -595,6 +598,9 @@ final class _VoiceTestRecognizer implements SpeechFormulaRecognizer {
 
   @override
   Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {}
 
   @override
   Future<void> stop() async {}

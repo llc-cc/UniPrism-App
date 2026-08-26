@@ -9,4 +9,7 @@ abstract interface class SpeechAudioCapture {
   Future<void> stop();
 
   Future<void> cancel();
+
+  /// 结束活动采集并释放底层录音资源；实现必须幂等。
+  Future<void> dispose();
 }

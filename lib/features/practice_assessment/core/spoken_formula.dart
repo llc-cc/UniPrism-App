@@ -8,6 +8,9 @@ typedef SpeechFormulaErrorCallback =
 
 /// 语音识别端口，隔离浏览器权限与平台插件细节。
 abstract interface class SpeechFormulaRecognizer {
+  /// 最近一次 `initialize` 返回 false 的安全原因；成功后必须清空。
+  SpokenFormulaRecognitionException? get initializationError;
+
   Future<bool> initialize();
 
   Future<void> listen({
@@ -18,6 +21,9 @@ abstract interface class SpeechFormulaRecognizer {
   Future<void> stop();
 
   Future<void> cancel();
+
+  /// 取消活动会话并释放识别器持有的资源；实现必须幂等。
+  Future<void> dispose();
 }
 
 /// 可安全展示给学生的语音识别失败，不携带插件、网络或服务端内部信息。

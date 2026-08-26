@@ -6,6 +6,27 @@ import 'package:uniprism_app/features/practice_assessment/adapters/platform_spee
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
 void main() {
+  test('browser initialize 失败提供 Chrome 或 Edge 的安全恢复原因', () async {
+    final driver = _FakeWebSpeechDriver()..initializeResult = false;
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+
+    expect(await recognizer.initialize(), isFalse);
+    expect(recognizer.initializationError?.message, contains('Chrome'));
+    expect(recognizer.initializationError?.message, contains('Edge'));
+  });
+
+  test('browser initialize 重试成功后清除上一轮失败原因', () async {
+    final driver = _FakeWebSpeechDriver()..initializeResult = false;
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    expect(await recognizer.initialize(), isFalse);
+    expect(recognizer.initializationError, isNotNull);
+
+    driver.initializeResult = true;
+
+    expect(await recognizer.initialize(), isTrue);
+    expect(recognizer.initializationError, isNull);
+  });
+
   test('stop 无 final 时最多一次把最后非空 partial 提升为 final', () async {
     final driver = _FakeWebSpeechDriver();
     final recognizer = WebSpeechFormulaRecognizer(driver: driver);
@@ -351,6 +372,29 @@ void main() {
 
     expect(errorCalls, 1);
   });
+
+  test('重复 dispose 活跃 browser 会话只取消一次并隔离全局迟到回调', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final results = <String>[];
+    final errors = <SpokenFormulaRecognitionException>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (words, {required isFinal}) => results.add(words),
+      onError: errors.add,
+    );
+
+    final firstDispose = recognizer.dispose();
+    final secondDispose = recognizer.dispose();
+    driver.emit('late result', isFinal: true);
+    driver.emitError(StateError('late error'));
+    driver.emitStatus(SpeechToText.doneStatus);
+    await Future.wait<void>(<Future<void>>[firstDispose, secondDispose]);
+
+    expect(driver.cancelCount, 1);
+    expect(results, isEmpty);
+    expect(errors, isEmpty);
+  });
 }
 
 final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
@@ -360,6 +404,7 @@ final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   Completer<void>? stopGate;
   Completer<void>? cancelGate;
   Object? listenError;
+  bool initializeResult = true;
   int stopCount = 0;
   int cancelCount = 0;
 
@@ -370,7 +415,7 @@ final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   }) async {
     _errorListener = onError;
     _statusListener = onStatus;
-    return true;
+    return initializeResult;
   }
 
   @override

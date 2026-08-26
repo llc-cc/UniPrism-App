@@ -36,6 +36,9 @@ abstract interface class SenseVoiceAsrApi {
   Future<bool> isHealthy();
 
   Future<String> transcribe(Uint8List wavBytes);
+
+  /// 终止 owned 请求并释放 client 自己持有的传输资源；实现必须幂等。
+  Future<void> dispose();
 }
 
 /// 本地 SenseVoice HTTP 适配器，负责协议封装及上传、响应的资源边界校验。
@@ -49,11 +52,15 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
            ? baseUrl.substring(0, baseUrl.length - 1)
            : baseUrl,
        _client = client ?? http.Client(),
+       _ownsClient = client == null,
        _deadlineScheduler = deadlineScheduler ?? _TimerDeadlineScheduler();
 
   final String _baseUrl;
   final http.Client _client;
+  final bool _ownsClient;
   final SenseVoiceDeadlineScheduler _deadlineScheduler;
+  bool _disposed = false;
+  Future<void>? _disposeFuture;
 
   /// 单次转写操作的总时限；计时同时覆盖上传、等待响应头和读取响应体。
   final Duration timeout;
@@ -61,6 +68,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
   /// 健康检查仅用于决定是否显示本地服务可用；所有失败统一降级为 false。
   @override
   Future<bool> isHealthy() async {
+    _ensureNotDisposed();
     final deadline = Completer<void>();
     final timer = _deadlineScheduler.schedule(
       _healthTimeout,
@@ -84,6 +92,7 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
   @override
   Future<String> transcribe(Uint8List wavBytes) async {
+    _ensureNotDisposed();
     final abortCompleter = Completer<void>();
     final deadline = _deadlineScheduler.schedule(timeout, () {
       if (!abortCompleter.isCompleted) {
@@ -244,5 +253,25 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
       }
     }
     return true;
+  }
+
+  @override
+  Future<void> dispose() {
+    final existing = _disposeFuture;
+    if (existing != null) return existing;
+    _disposed = true;
+    final completer = Completer<void>();
+    _disposeFuture = completer.future;
+    try {
+      if (_ownsClient) _client.close();
+      completer.complete();
+    } catch (error, stackTrace) {
+      completer.completeError(error, stackTrace);
+    }
+    return completer.future;
+  }
+
+  void _ensureNotDisposed() {
+    if (_disposed) throw StateError('SenseVoiceAsrClient 已释放');
   }
 }

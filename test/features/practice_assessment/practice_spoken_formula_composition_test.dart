@@ -65,9 +65,31 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('页面销毁只释放注入 recognizer 一次', (tester) async {
+    final recognizer = _FakeRecognizer();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PracticeAssessmentLabPage.mock(
+          speechFormulaRecognizer: recognizer,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    expect(recognizer.disposeCount, 1);
+  });
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
+  int disposeCount = 0;
+
+  @override
+  SpokenFormulaRecognitionException? get initializationError => null;
+
   @override
   Future<bool> initialize() async => true;
 
@@ -82,6 +104,11 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
 
   @override
   Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+  }
 }
 
 final class _FakeSpokenFormulaRepository implements SpokenFormulaRepository {

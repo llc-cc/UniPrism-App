@@ -25,7 +25,12 @@ void main() {
 
   test('浏览器不支持语音时保留可恢复错误状态', () async {
     final controller = SpeechFormulaController(
-      recognizer: _FakeRecognizer(isAvailable: false),
+      recognizer: _FakeRecognizer(
+        isAvailable: false,
+        initializationError: const SpokenFormulaRecognitionException(
+          '当前浏览器无法使用语音识别，请改用最新版 Chrome 或 Edge。',
+        ),
+      ),
       repository: _ImmediateRepository(),
     );
     addTearDown(controller.dispose);
@@ -35,6 +40,38 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.error);
     expect(controller.state.isSupported, isFalse);
     expect(controller.state.errorMessage, contains('Chrome'));
+  });
+
+  test('初始化失败使用 recognizer typed 原因而不根据来源标签猜测', () async {
+    final controller = SpeechFormulaController(
+      recognizer: _FakeRecognizer(
+        isAvailable: false,
+        initializationError: const SpokenFormulaRecognitionException(
+          '请先启动本机 SenseVoice 服务后重试。',
+        ),
+      ),
+      repository: _ImmediateRepository(),
+      sourceLabel: '浏览器语音',
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startListening();
+
+    expect(controller.state.errorMessage, '请先启动本机 SenseVoice 服务后重试。');
+    expect(controller.state.errorMessage, isNot(contains('Chrome')));
+    expect(controller.state.errorMessage, isNot(contains('Edge')));
+  });
+
+  test('初始化失败缺少 typed 原因时使用不泄露内部信息的安全 fallback', () async {
+    final controller = SpeechFormulaController(
+      recognizer: _FakeRecognizer(isAvailable: false),
+      repository: _ImmediateRepository(),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startListening();
+
+    expect(controller.state.errorMessage, '语音识别暂时不可用，请稍后重试。');
   });
 
   test('取消后迟到的转换结果不能进入预览', () async {
@@ -199,21 +236,25 @@ void main() {
     },
   );
 
-  test('dispose 收敛 recognizer cancel 的异步插件异常', () async {
+  test('重复 dispose 只释放 recognizer 一次并收敛异步插件异常', () async {
     final uncaught = <Object>[];
+    late _FakeRecognizer recognizer;
     await runZonedGuarded(() async {
+      recognizer = _FakeRecognizer(
+        disposeError: StateError('plugin dispose failure'),
+      );
       final controller = SpeechFormulaController(
-        recognizer: _FakeRecognizer(
-          cancelError: StateError('plugin cancel failure'),
-        ),
+        recognizer: recognizer,
         repository: _ImmediateRepository(),
       );
 
+      controller.dispose();
       controller.dispose();
       await _flushAsyncWork();
     }, (error, _) => uncaught.add(error));
 
     expect(uncaught, isEmpty);
+    expect(recognizer.disposeCount, 1);
   });
 }
 
@@ -233,20 +274,24 @@ Future<void> _flushAsyncWork() async {
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
   _FakeRecognizer({
     this.isAvailable = true,
+    this.initializationError,
     this.finalWordsOnStop,
     this.stopError,
     this.stopGate,
-    this.cancelError,
+    this.disposeError,
   });
 
   final bool isAvailable;
+  @override
+  final SpokenFormulaRecognitionException? initializationError;
   final String? finalWordsOnStop;
   final Object? stopError;
   final Completer<void>? stopGate;
-  final Object? cancelError;
+  final Object? disposeError;
   final List<SpeechFormulaResultCallback> _resultCallbacks = [];
   final List<SpeechFormulaErrorCallback?> _errorCallbacks = [];
   int stopCount = 0;
+  int disposeCount = 0;
 
   @override
   Future<bool> initialize() async => isAvailable;
@@ -282,8 +327,12 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   }
 
   @override
-  Future<void> cancel() async {
-    if (cancelError case final error?) throw error;
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {
+    disposeCount += 1;
+    if (disposeError case final error?) throw error;
   }
 }
 
