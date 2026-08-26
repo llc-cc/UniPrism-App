@@ -156,6 +156,9 @@ try {
   $postCalls = @($httpCalls | Where-Object { $_.Method -eq 'POST' })
   if ($postCalls.Count -ne 16) { throw "Warmup plus sample POST count mismatch: $($postCalls.Count)" }
   foreach ($post in $postCalls) {
+    if ($post.Fields -isnot [Collections.IDictionary]) {
+      throw "PowerShell 7 -Form requires IDictionary fields, got: $($post.Fields.GetType().FullName)"
+    }
     if ($post.Uri -ne 'http://127.0.0.1:8000/v1/audio/transcriptions') {
       throw "Transcription URI mismatch: $($post.Uri)"
     }

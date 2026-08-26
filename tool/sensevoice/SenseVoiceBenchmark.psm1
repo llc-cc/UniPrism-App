@@ -186,7 +186,7 @@ function Invoke-SenseVoiceBenchmarkRun {
     [pscustomobject][ordered]@{
       Method = 'POST'
       Uri = $transcriptionUri
-      Fields = [pscustomobject][ordered]@{
+      Fields = [ordered]@{
         file = $AudioPath
         model = 'sensevoice'
         response_format = 'json'
