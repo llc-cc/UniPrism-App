@@ -89,32 +89,99 @@ void main() {
     expect(errors, hasLength(1));
     expect(errors.single.message, isNot(contains('browser internals')));
   });
+
+  test('relisten 后旧 session error 不能进入新 session onError', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final oldErrors = <SpokenFormulaRecognitionException>[];
+    final newErrors = <SpokenFormulaRecognitionException>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: oldErrors.add,
+    );
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {},
+      onError: newErrors.add,
+    );
+
+    driver.emitError(StateError('late old error'), listenIndex: 0);
+    expect(oldErrors, isEmpty);
+    expect(newErrors, isEmpty);
+
+    driver.emitError(StateError('current error'), listenIndex: 1);
+    expect(oldErrors, isEmpty);
+    expect(newErrors, hasLength(1));
+  });
+
+  test('browser final onResult 抛错不逃逸且不会再发 terminal error', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    var resultCalls = 0;
+    var errorCalls = 0;
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {
+        resultCalls += 1;
+        throw StateError('consumer result failure');
+      },
+      onError: (_) => errorCalls += 1,
+    );
+
+    driver.emit('final', isFinal: true);
+    driver.emitError(StateError('late error'));
+    await recognizer.stop();
+
+    expect(resultCalls, 1);
+    expect(errorCalls, 0);
+    expect(driver.stopCount, 1);
+  });
+
+  test('browser onError 抛错不逃逸且仍只调用一次', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    var errorCalls = 0;
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onError: (_) {
+        errorCalls += 1;
+        throw StateError('consumer error failure');
+      },
+    );
+
+    driver.emitError(StateError('first'));
+    driver.emitError(StateError('second'));
+
+    expect(errorCalls, 1);
+  });
 }
 
 final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
   final List<WebSpeechResultCallback> _callbacks = [];
-  WebSpeechDriverErrorCallback? _onError;
+  final List<WebSpeechDriverErrorCallback> _errorCallbacks = [];
   int stopCount = 0;
   int cancelCount = 0;
 
   @override
-  Future<bool> initialize({
-    required WebSpeechDriverErrorCallback onError,
-  }) async {
-    _onError = onError;
-    return true;
-  }
+  Future<bool> initialize() async => true;
 
   @override
-  Future<void> listen({required WebSpeechResultCallback onResult}) async {
+  Future<void> listen({
+    required WebSpeechResultCallback onResult,
+    required WebSpeechDriverErrorCallback onError,
+  }) async {
     _callbacks.add(onResult);
+    _errorCallbacks.add(onError);
   }
 
   void emit(String words, {required bool isFinal, int? listenIndex}) {
     _callbacks[listenIndex ?? _callbacks.length - 1](words, isFinal: isFinal);
   }
 
-  void emitError(Object error) => _onError?.call(error);
+  void emitError(Object error, {int? listenIndex}) {
+    _errorCallbacks[listenIndex ?? _errorCallbacks.length - 1](error);
+  }
 
   @override
   Future<void> stop() async {

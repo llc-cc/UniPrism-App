@@ -76,6 +76,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       final subscription = stream.listen(
         (chunk) {
           if (_isCurrent(generation) &&
+              !_hasTerminalCallback &&
               (_state == _LocalRecognitionState.listening ||
                   _state == _LocalRecognitionState.stopping)) {
             // 插件可能复用底层缓冲；进入会话缓冲前必须复制，避免随后写入篡改已录数据。
@@ -142,6 +143,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       await _capture.stop();
       await _cancelSubscription();
       if (!_isCurrent(generation)) return;
+      if (_hasTerminalCallback) return;
 
       final pcm = _joinChunks();
       if (pcm.isEmpty) {
@@ -196,18 +198,25 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
 
   void _handleStreamError(int generation, Object error) {
     if (!_isCurrent(generation) || _hasTerminalCallback) return;
-    final errorCallback = _onError;
-    _hasTerminalCallback = true;
-    ++_generation;
-    _state = _LocalRecognitionState.idle;
-    final subscription = _subscription;
-    _subscription = null;
+    _state = _LocalRecognitionState.stopping;
     _timer?.cancel();
     _timer = null;
-    _clearCallbacksAndBuffer();
-    final cleanup = _cancelResources(subscription);
-    _stopFuture = cleanup;
-    errorCallback?.call(_safeException(error));
+    // stream error 与 manual/auto stop 共用本轮唯一终止屏障，不能替换已在执行的 stop。
+    _stopFuture ??= _finishStreamError(generation);
+    _emitSafeError(generation, error);
+  }
+
+  Future<void> _finishStreamError(int generation) async {
+    try {
+      final subscription = _subscription;
+      _subscription = null;
+      await _cancelResources(subscription);
+    } finally {
+      if (_isCurrent(generation)) {
+        _state = _LocalRecognitionState.idle;
+        _clearCallbacksAndBuffer();
+      }
+    }
   }
 
   Uint8List _joinChunks() {
@@ -231,13 +240,21 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   void _emitFinal(int generation, String transcript) {
     if (!_isCurrent(generation) || _hasTerminalCallback) return;
     _hasTerminalCallback = true;
-    _onResult?.call(transcript, isFinal: true);
+    try {
+      _onResult?.call(transcript, isFinal: true);
+    } catch (_) {
+      // 消费方回调失败不能改变 terminal 次数，也不能跳过 finally 中的资源释放。
+    }
   }
 
   void _emitSafeError(int generation, Object error) {
     if (!_isCurrent(generation) || _hasTerminalCallback) return;
     _hasTerminalCallback = true;
-    _onError?.call(_safeException(error));
+    try {
+      _onError?.call(_safeException(error));
+    } catch (_) {
+      // typed error 已是本轮唯一终态；消费方异常不得再次回调或逃逸为未处理 Future。
+    }
   }
 
   SpokenFormulaRecognitionException _safeException(Object error) {

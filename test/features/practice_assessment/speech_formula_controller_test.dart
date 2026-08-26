@@ -132,6 +132,53 @@ void main() {
     expect(recognizer.stopCount, 1);
   });
 
+  test('manual stop 同步发出 final 后抛错不能覆盖转换结果', () async {
+    final recognizer = _FakeRecognizer(
+      finalWordsOnStop: 'x 的平方',
+      stopError: StateError('late stop failure'),
+    );
+    final repository = _CountingRepository();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    await controller.stopListening();
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.preview);
+    expect(controller.state.errorMessage, isNull);
+    expect(repository.callCount, 1);
+  });
+
+  test('pending manual stop 期间的 final 不被迟到 stop error 覆盖', () async {
+    final stopGate = Completer<void>();
+    final recognizer = _FakeRecognizer(stopGate: stopGate);
+    final repository = _CountingDeferredRepository();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    final stopping = controller.stopListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+    expect(controller.state.status, SpeechFormulaStatus.converting);
+
+    stopGate.completeError(StateError('late gated failure'));
+    await stopping;
+
+    expect(controller.state.status, SpeechFormulaStatus.converting);
+    expect(controller.state.errorMessage, isNull);
+    expect(repository.callCount, 1);
+    repository.complete(_conversion());
+    await _flushAsyncWork();
+    expect(controller.state.status, SpeechFormulaStatus.preview);
+  });
+
   test(
     '当前 operation 的 typed recognition error 保留 partial transcript',
     () async {
@@ -151,6 +198,23 @@ void main() {
       expect(controller.state.errorMessage, '安全错误');
     },
   );
+
+  test('dispose 收敛 recognizer cancel 的异步插件异常', () async {
+    final uncaught = <Object>[];
+    await runZonedGuarded(() async {
+      final controller = SpeechFormulaController(
+        recognizer: _FakeRecognizer(
+          cancelError: StateError('plugin cancel failure'),
+        ),
+        repository: _ImmediateRepository(),
+      );
+
+      controller.dispose();
+      await _flushAsyncWork();
+    }, (error, _) => uncaught.add(error));
+
+    expect(uncaught, isEmpty);
+  });
 }
 
 SpokenFormulaConversion _conversion() => const SpokenFormulaConversion(
@@ -167,10 +231,19 @@ Future<void> _flushAsyncWork() async {
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
-  _FakeRecognizer({this.isAvailable = true, this.finalWordsOnStop});
+  _FakeRecognizer({
+    this.isAvailable = true,
+    this.finalWordsOnStop,
+    this.stopError,
+    this.stopGate,
+    this.cancelError,
+  });
 
   final bool isAvailable;
   final String? finalWordsOnStop;
+  final Object? stopError;
+  final Completer<void>? stopGate;
+  final Object? cancelError;
   final List<SpeechFormulaResultCallback> _resultCallbacks = [];
   final List<SpeechFormulaErrorCallback?> _errorCallbacks = [];
   int stopCount = 0;
@@ -204,10 +277,14 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     if (finalWordsOnStop case final words?) {
       emit(words, isFinal: true);
     }
+    await stopGate?.future;
+    if (stopError case final error?) throw error;
   }
 
   @override
-  Future<void> cancel() async {}
+  Future<void> cancel() async {
+    if (cancelError case final error?) throw error;
+  }
 }
 
 final class _ImmediateRepository implements SpokenFormulaRepository {
@@ -241,4 +318,20 @@ final class _CountingRepository implements SpokenFormulaRepository {
     callCount += 1;
     return _conversion();
   }
+}
+
+final class _CountingDeferredRepository implements SpokenFormulaRepository {
+  final Completer<SpokenFormulaConversion> _completer = Completer();
+  int callCount = 0;
+
+  @override
+  Future<SpokenFormulaConversion> convert({
+    required String text,
+    String locale = 'zh-CN',
+  }) {
+    callCount += 1;
+    return _completer.future;
+  }
+
+  void complete(SpokenFormulaConversion value) => _completer.complete(value);
 }

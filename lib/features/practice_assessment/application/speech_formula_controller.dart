@@ -103,7 +103,8 @@ final class SpeechFormulaController extends ChangeNotifier {
     try {
       await recognizer.stop();
     } catch (_) {
-      if (_isCurrent(operationId)) {
+      if (_isCurrent(operationId) &&
+          _state.status == SpeechFormulaStatus.listening) {
         _showError('无法结束语音识别，请重新说一次。', _state.transcript.trim());
       }
       return;
@@ -244,7 +245,8 @@ final class SpeechFormulaController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     ++_operationId;
-    unawaited(recognizer.cancel());
+    // dispose 无法 await 插件清理；错误必须在此收敛，不能泄漏为未处理异步异常。
+    unawaited(recognizer.cancel().catchError((Object _) {}));
     super.dispose();
   }
 }

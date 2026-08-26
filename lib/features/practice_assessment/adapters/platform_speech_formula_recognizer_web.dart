@@ -8,9 +8,12 @@ typedef WebSpeechDriverErrorCallback = void Function(Object error);
 
 /// 浏览器语音插件的最小生产边界，使会话代际和 final fallback 可独立验证。
 abstract interface class WebSpeechRecognitionDriver {
-  Future<bool> initialize({required WebSpeechDriverErrorCallback onError});
+  Future<bool> initialize();
 
-  Future<void> listen({required WebSpeechResultCallback onResult});
+  Future<void> listen({
+    required WebSpeechResultCallback onResult,
+    required WebSpeechDriverErrorCallback onError,
+  });
 
   Future<void> stop();
 
@@ -31,12 +34,11 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
   String _lastPartialWords = '';
   bool _hasTerminalCallback = false;
   SpeechFormulaResultCallback? _onResult;
-  SpeechFormulaErrorCallback? _onError;
 
   @override
   Future<bool> initialize() async {
     if (_initialized) return true;
-    _initialized = await _driver.initialize(onError: _handleDriverError);
+    _initialized = await _driver.initialize();
     return _initialized;
   }
 
@@ -52,7 +54,6 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     _lastPartialWords = '';
     _hasTerminalCallback = false;
     _onResult = onResult;
-    _onError = onError;
     await _driver.listen(
       onResult: (words, {required isFinal}) {
         if (generation != _generation || _hasTerminalCallback) return;
@@ -62,7 +63,18 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
         } else if (normalized.isNotEmpty) {
           _lastPartialWords = normalized;
         }
-        onResult(words, isFinal: isFinal);
+        _invokeResultSafely(onResult, words, isFinal: isFinal);
+      },
+      onError: (_) {
+        if (generation != _generation || _hasTerminalCallback) return;
+        _hasTerminalCallback = true;
+        try {
+          onError?.call(
+            const SpokenFormulaRecognitionException('浏览器语音识别暂时不可用，请重新说一次。'),
+          );
+        } catch (_) {
+          // 插件事件栈不能被消费方异常打断；terminal guard 已保证不会再次回调。
+        }
       },
     );
   }
@@ -77,7 +89,10 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     if (fallback.isEmpty) return;
     // speech_to_text 的 stop 在部分浏览器不会给 final；只提升本轮最后一个非空 partial。
     _hasTerminalCallback = true;
-    _onResult?.call(fallback, isFinal: true);
+    final onResult = _onResult;
+    if (onResult != null) {
+      _invokeResultSafely(onResult, fallback, isFinal: true);
+    }
   }
 
   @override
@@ -87,16 +102,19 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
     _lastPartialWords = '';
     _hasTerminalCallback = false;
     _onResult = null;
-    _onError = null;
     if (_initialized) await _driver.cancel();
   }
 
-  void _handleDriverError(Object _) {
-    if (_onError == null || _hasTerminalCallback) return;
-    _hasTerminalCallback = true;
-    _onError?.call(
-      const SpokenFormulaRecognitionException('浏览器语音识别暂时不可用，请重新说一次。'),
-    );
+  void _invokeResultSafely(
+    SpeechFormulaResultCallback onResult,
+    String words, {
+    required bool isFinal,
+  }) {
+    try {
+      onResult(words, isFinal: isFinal);
+    } catch (_) {
+      // 消费方异常不得破坏插件会话收尾或 terminal 去重。
+    }
   }
 }
 
@@ -104,11 +122,15 @@ final class _SpeechToTextDriver implements WebSpeechRecognitionDriver {
   final SpeechToText _speech = SpeechToText();
 
   @override
-  Future<bool> initialize({required WebSpeechDriverErrorCallback onError}) =>
-      _speech.initialize(onError: onError);
+  Future<bool> initialize() => _speech.initialize();
 
   @override
-  Future<void> listen({required WebSpeechResultCallback onResult}) async {
+  Future<void> listen({
+    required WebSpeechResultCallback onResult,
+    required WebSpeechDriverErrorCallback onError,
+  }) async {
+    // initialize 成功后再次调用会直接返回，必须在每轮 listen 前更新公开 listener。
+    _speech.errorListener = onError;
     await _speech.listen(
       onResult: (result) =>
           onResult(result.recognizedWords, isFinal: result.finalResult),

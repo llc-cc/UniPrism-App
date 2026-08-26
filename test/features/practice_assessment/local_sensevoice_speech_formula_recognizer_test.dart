@@ -122,6 +122,55 @@ void main() {
     expect(capture.stopCount, 1);
   });
 
+  test('pending capture.start 期间 stop 仍共享单一 Future 并只 stop 一次', () async {
+    final startGate = Completer<void>();
+    final capture = _FakeCapture(startGate: startGate);
+    final client = _FakeAsrClient();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    final errors = <SpokenFormulaRecognitionException>[];
+    final listening = recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onError: errors.add,
+    );
+
+    final first = recognizer.stop();
+    final second = recognizer.stop();
+    expect(identical(first, second), isTrue);
+    startGate.complete();
+    await listening;
+    await first;
+
+    expect(capture.stopCount, 1);
+    expect(capture.cancelCount, 0);
+    expect(errors, hasLength(1));
+  });
+
+  test('auto stop 与 manual stop 同时发生仍只共享一次终止和上传', () async {
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient(transcripts: <String>['auto-manual']);
+    final timerFactory = _ManualTimerFactory();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      timerFactory: timerFactory.call,
+    );
+    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    capture.add(<int>[1, 2]);
+
+    timerFactory.timers.single.fire();
+    await _flushAsyncWork();
+    final firstManual = recognizer.stop();
+    final secondManual = recognizer.stop();
+    expect(identical(firstManual, secondManual), isTrue);
+    expect(capture.stopCount, 1);
+    stopGate.complete();
+    await firstManual;
+
+    expect(client.callCount, 1);
+    expect(capture.stopCount, 1);
+  });
+
   test('cancel 先失效 generation 并阻止迟到 HTTP 结果回调', () async {
     final capture = _FakeCapture();
     final client = _FakeAsrClient()..transcribeGate = Completer<String>();
@@ -239,6 +288,74 @@ void main() {
     expect(client.callCount, 0);
   });
 
+  test('stream error cleanup 完成前拒绝 relisten，完成后允许新会话', () async {
+    final subscriptionCancelGate = Completer<void>();
+    final cancelGate = Completer<void>();
+    final capture = _FakeCapture(
+      subscriptionCancelGate: subscriptionCancelGate,
+      cancelGate: cancelGate,
+    );
+    final client = _FakeAsrClient();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    Future<void>? immediateRelisten;
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onError: (_) {
+        immediateRelisten = recognizer.listen(
+          onResult: (_, {required isFinal}) {},
+        );
+      },
+    );
+
+    capture.addError(StateError('stream failed'));
+    await expectLater(immediateRelisten, throwsStateError);
+    final terminal = recognizer.stop();
+    final duplicateTerminal = recognizer.stop();
+    expect(identical(terminal, duplicateTerminal), isTrue);
+    var isTerminalComplete = false;
+    terminal.then((_) => isTerminalComplete = true);
+    await _flushAsyncWork();
+    expect(isTerminalComplete, isFalse);
+    expect(capture.cancelCount, 0);
+
+    subscriptionCancelGate.complete();
+    await _flushAsyncWork();
+    expect(capture.cancelCount, 1);
+    expect(isTerminalComplete, isFalse);
+    cancelGate.complete();
+    await terminal;
+    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    expect(capture.startCount, 2);
+    await recognizer.cancel();
+  });
+
+  test('manual stop 中的 stream error 复用原 Future 且不重复终止 capture', () async {
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    final errors = <SpokenFormulaRecognitionException>[];
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onError: errors.add,
+    );
+    capture.add(<int>[1, 2]);
+
+    final manual = recognizer.stop();
+    await _flushAsyncWork();
+    capture.addError(StateError('stream failed during stop'));
+    final afterError = recognizer.stop();
+
+    expect(identical(manual, afterError), isTrue);
+    expect(capture.stopCount, 1);
+    expect(capture.cancelCount, 0);
+    expect(errors, hasLength(1));
+    stopGate.complete();
+    await manual;
+    expect(client.callCount, 0);
+    expect(capture.subscriptionCancelCount, 1);
+  });
+
   test('capture stop 与 WAV 编码错误均不会重复或泄露内部异常', () async {
     for (final fixture in <_FailureFixture>[
       _FailureFixture(stopError: StateError('plugin stop detail')),
@@ -297,6 +414,80 @@ void main() {
       expect(errors, isEmpty);
     }
   });
+
+  test('onResult 抛错仍只产生一个 terminal 并完成资源释放', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient(transcripts: <String>['result']);
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    var resultCalls = 0;
+    var errorCalls = 0;
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) {
+        resultCalls += 1;
+        throw StateError('consumer result failure');
+      },
+      onError: (_) => errorCalls += 1,
+    );
+    capture.add(<int>[1, 2]);
+
+    await recognizer.stop();
+
+    expect(resultCalls, 1);
+    expect(errorCalls, 0);
+    expect(capture.stopCount, 1);
+    expect(capture.subscriptionCancelCount, 1);
+  });
+
+  test('stop error 的 onError 抛错不会逃逸或跳过资源释放', () async {
+    final subscriptionCancelGate = Completer<void>();
+    final capture = _FakeCapture(subscriptionCancelGate: subscriptionCancelGate)
+      ..stopError = StateError('capture failure');
+    final client = _FakeAsrClient();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    var errorCalls = 0;
+    await recognizer.listen(
+      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onError: (_) {
+        errorCalls += 1;
+        throw StateError('consumer error failure');
+      },
+    );
+
+    final stopping = recognizer.stop();
+    var isStoppingComplete = false;
+    stopping.then((_) => isStoppingComplete = true);
+    await _flushAsyncWork();
+
+    expect(errorCalls, 1);
+    expect(capture.stopCount, 1);
+    expect(capture.subscriptionCancelCount, 1);
+    expect(isStoppingComplete, isFalse);
+    subscriptionCancelGate.complete();
+    await stopping;
+  });
+
+  test('stream error 的 onError 抛错不会成为 unhandled async error', () async {
+    final uncaught = <Object>[];
+    await runZonedGuarded(() async {
+      final capture = _FakeCapture();
+      final client = _FakeAsrClient();
+      final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+        capture,
+        client,
+      );
+      await recognizer.listen(
+        onResult: (_, {required isFinal}) => fail('不应发出结果'),
+        onError: (_) => throw StateError('consumer stream error failure'),
+      );
+
+      capture.addError(StateError('stream failed'));
+      await recognizer.stop();
+      expect(capture.cancelCount, 1);
+      expect(capture.subscriptionCancelCount, 1);
+    }, (error, _) => uncaught.add(error));
+
+    expect(uncaught, isEmpty);
+  });
 }
 
 Future<void> _flushAsyncWork() async {
@@ -313,16 +504,27 @@ final class _FailureFixture {
 }
 
 final class _FakeCapture implements SpeechAudioCapture {
-  _FakeCapture({this.events, this.startGate, this.chunksOnListen});
+  _FakeCapture({
+    this.events,
+    this.startGate,
+    this.stopGate,
+    this.cancelGate,
+    this.subscriptionCancelGate,
+    this.chunksOnListen,
+  });
 
   final List<String>? events;
   final Completer<void>? startGate;
+  final Completer<void>? stopGate;
+  final Completer<void>? cancelGate;
+  final Completer<void>? subscriptionCancelGate;
   final List<List<int>>? chunksOnListen;
   final List<StreamController<Uint8List>> _controllers = [];
   Object? stopError;
   int stopCount = 0;
   int cancelCount = 0;
   int subscriptionCancelCount = 0;
+  int startCount = 0;
 
   StreamController<Uint8List> get _current => _controllers.last;
 
@@ -334,6 +536,7 @@ final class _FakeCapture implements SpeechAudioCapture {
 
   @override
   Future<Stream<Uint8List>> start() async {
+    startCount += 1;
     await startGate?.future;
     late final StreamController<Uint8List> controller;
     controller = StreamController<Uint8List>(
@@ -345,7 +548,7 @@ final class _FakeCapture implements SpeechAudioCapture {
       },
       onCancel: () {
         subscriptionCancelCount += 1;
-        return null;
+        return subscriptionCancelGate?.future;
       },
     );
     _controllers.add(controller);
@@ -361,12 +564,14 @@ final class _FakeCapture implements SpeechAudioCapture {
   @override
   Future<void> stop() async {
     stopCount += 1;
+    await stopGate?.future;
     if (stopError case final error?) throw error;
   }
 
   @override
   Future<void> cancel() async {
     cancelCount += 1;
+    await cancelGate?.future;
   }
 }
 
