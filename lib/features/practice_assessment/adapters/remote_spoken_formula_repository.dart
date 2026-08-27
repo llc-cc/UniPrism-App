@@ -26,6 +26,54 @@ final class RemoteSpokenFormulaRepository
   };
   static const _optionRequiredKeys = <String>{'id', 'label', 'action'};
   static const _optionOptionalKeys = <String>{'candidateId'};
+  // Dart VM 与 Web 对 Unicode property escape 的支持可能不同，因此显式固化
+  // 后端 Node v22（Unicode 16）`Script=Han` 的完整闭区间，避免两端安全边界漂移。
+  static const _hanScriptRangeBounds = <int>[
+    0x2E80,
+    0x2E99,
+    0x2E9B,
+    0x2EF3,
+    0x2F00,
+    0x2FD5,
+    0x3005,
+    0x3005,
+    0x3007,
+    0x3007,
+    0x3021,
+    0x3029,
+    0x3038,
+    0x303B,
+    0x3400,
+    0x4DBF,
+    0x4E00,
+    0x9FFF,
+    0xF900,
+    0xFA6D,
+    0xFA70,
+    0xFAD9,
+    0x16FE2,
+    0x16FE3,
+    0x16FF0,
+    0x16FF1,
+    0x20000,
+    0x2A6DF,
+    0x2A700,
+    0x2B739,
+    0x2B740,
+    0x2B81D,
+    0x2B820,
+    0x2CEA1,
+    0x2CEB0,
+    0x2EBE0,
+    0x2EBF0,
+    0x2EE5D,
+    0x2F800,
+    0x2FA1D,
+    0x30000,
+    0x3134A,
+    0x31350,
+    0x323AF,
+  ];
 
   // 与后端 strictModelTextSchema 保持同一拒绝面，避免响应绕过纯文本 UI 边界。
   static final List<RegExp>
@@ -298,15 +346,23 @@ final class RemoteSpokenFormulaRepository
     return false;
   }
 
-  bool _isHan(int rune) =>
-      (rune >= 0x2E80 && rune <= 0x2FDF) ||
-      rune == 0x3005 ||
-      (rune >= 0x31C0 && rune <= 0x31EF) ||
-      (rune >= 0x3400 && rune <= 0x4DBF) ||
-      (rune >= 0x4E00 && rune <= 0x9FFF) ||
-      (rune >= 0xF900 && rune <= 0xFAFF) ||
-      (rune >= 0x20000 && rune <= 0x2FA1F) ||
-      (rune >= 0x30000 && rune <= 0x323AF);
+  bool _isHan(int rune) {
+    var lower = 0;
+    var upper = _hanScriptRangeBounds.length ~/ 2 - 1;
+    while (lower <= upper) {
+      final middle = (lower + upper) >> 1;
+      final start = _hanScriptRangeBounds[middle * 2];
+      final end = _hanScriptRangeBounds[middle * 2 + 1];
+      if (rune < start) {
+        upper = middle - 1;
+      } else if (rune > end) {
+        lower = middle + 1;
+      } else {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 String _requiredLegacyString(Map<String, Object?> data, String key) {

@@ -348,6 +348,43 @@ void main() {
     });
   }
 
+  test('展示文本拒绝 U+3007 位于 Markdown 强调前的 Han 邻接绕过', () async {
+    await _expectSafeResolutionFailure(
+      _candidateFieldFixture('spokenBack', '〇_答案_。'),
+    );
+  });
+
+  test('展示文本拒绝 U+3007 位于 Markdown 强调后的 Han 邻接绕过', () async {
+    await _expectSafeResolutionFailure(
+      _candidateFieldFixture('spokenBack', '请_答案_〇'),
+    );
+  });
+
+  for (final item in <({String codePoint, int rune})>[
+    (codePoint: 'U+3021', rune: 0x3021),
+    (codePoint: 'U+3038', rune: 0x3038),
+    (codePoint: 'U+16FE2', rune: 0x16FE2),
+  ]) {
+    test('展示文本拒绝 ${item.codePoint} Han 邻接绕过', () async {
+      final hanCharacter = String.fromCharCode(item.rune);
+      await _expectSafeResolutionFailure(
+        _candidateFieldFixture('spokenBack', '${hanCharacter}_答案_。'),
+      );
+    });
+  }
+
+  test('展示文本不把后端 Script=Common 的 U+31C0 扩大为 Han', () async {
+    final data = _candidateFieldFixture('spokenBack', '㇀_答案_。');
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'x',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.candidates.single.spokenBack, '㇀_答案_。');
+  });
+
   test('展示文本过滤允许普通高中数学下标描述', () async {
     final data = _resolvedFixture()
       ..['warnings'] = <String>['请确认 x_2 的取值范围（可以等于 2）。'];
