@@ -1084,9 +1084,12 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   }
 
   @override
-  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout}) async {
+  Future<String> transcribe(
+    Uint8List wavBytes, {
+    required Duration timeout,
+  }) async {
     requests.add(Uint8List.fromList(wavBytes));
-    if (timeout case final value?) timeouts.add(value);
+    timeouts.add(timeout);
     if (transcribeError case final error?) throw error;
     if (transcribeGate case final gate?) return gate.future;
     return _transcripts.removeAt(0);

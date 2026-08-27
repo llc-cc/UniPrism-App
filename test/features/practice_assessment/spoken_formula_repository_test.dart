@@ -52,6 +52,56 @@ void main() {
     expect(resolution.warnings, isEmpty);
   });
 
+  test('V2 budgetMs 收敛到 1..5000 且不抬高已有的较小毫秒预算', () async {
+    final budgets = <int>[];
+    final repository = _remoteRepository((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      budgets.add(body['budgetMs']! as int);
+      return _okResponse(_resolvedFixture());
+    });
+
+    await repository.resolve(
+      text: '上限测试',
+      timeout: const Duration(seconds: 6),
+    );
+    await repository.resolve(
+      text: '较小预算',
+      timeout: const Duration(milliseconds: 200),
+    );
+    await repository.resolve(
+      text: '不足一毫秒',
+      timeout: const Duration(microseconds: 500),
+    );
+
+    expect(budgets, <int>[5000, 200, 1]);
+  });
+
+  test('非正剩余时间在 HTTP 前失败', () async {
+    var requestCount = 0;
+    final repository = _remoteRepository((_) async {
+      requestCount += 1;
+      return _okResponse(_resolvedFixture());
+    });
+
+    for (final timeout in <Duration>[
+      Duration.zero,
+      const Duration(milliseconds: -1),
+    ]) {
+      await expectLater(
+        repository.resolve(text: '不应上传', timeout: timeout),
+        throwsA(
+          isA<SpokenFormulaResolutionException>().having(
+            (error) => error.message,
+            'message',
+            contains('时间'),
+          ),
+        ),
+      );
+    }
+
+    expect(requestCount, 0);
+  });
+
   test('远程解析映射二至三个候选及反向朗读', () async {
     final data = _resolvedFixture()
       ..['outcome'] = 'candidates'

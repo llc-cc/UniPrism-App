@@ -9,6 +9,9 @@ final class RemoteSpokenFormulaRepository
   static const _malformedResolution = SpokenFormulaResolutionException(
     '公式服务返回的数据不完整，请重新说一次。',
   );
+  static const _deadlineExhausted = SpokenFormulaResolutionException(
+    '公式解析剩余时间不足，请重新录音或使用公式键盘。',
+  );
   static const _resolutionKeys = <String>{
     'resolutionId',
     'recognizedText',
@@ -103,6 +106,9 @@ final class RemoteSpokenFormulaRepository
     String locale = 'zh-CN',
     required Duration timeout,
   }) async {
+    if (timeout <= Duration.zero) throw _deadlineExhausted;
+    // JSON 只发送完整毫秒；正的亚毫秒预算收敛到协议最小值，其余小预算不得被抬高。
+    final budgetMs = timeout.inMilliseconds.clamp(1, 5000);
     final data = await api.request(
       'POST',
       '/api/practice/formulas/resolve-spoken-text',
@@ -110,7 +116,7 @@ final class RemoteSpokenFormulaRepository
       body: <String, Object?>{
         'text': text,
         'locale': locale,
-        'budgetMs': timeout.inMilliseconds,
+        'budgetMs': budgetMs,
       },
       requestTimeout: timeout,
     );

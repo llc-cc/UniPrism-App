@@ -501,8 +501,10 @@ final class _NoopSenseVoiceAsrClient implements SenseVoiceAsrApi {
   Future<bool> isHealthy() async => true;
 
   @override
-  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout}) async =>
-      'unused';
+  Future<String> transcribe(
+    Uint8List wavBytes, {
+    required Duration timeout,
+  }) async => 'unused';
 }
 
 final class _NoopSpeechAudioCapture implements SpeechAudioCapture {
