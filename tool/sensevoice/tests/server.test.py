@@ -63,6 +63,27 @@ class SenseVoiceApplicationTests(unittest.TestCase):
         self.assertEqual("iic/SenseVoiceSmall", FakeAutoModel.constructions[0]["model"])
         self.assertEqual("cpu", FakeAutoModel.constructions[0]["device"])
 
+    def test_local_model_snapshot_is_forwarded_without_network_lookup(self):
+        patcher = mock.patch.object(funasr, "AutoModel", FakeAutoModel)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        application = self.server.create_application(
+            host="127.0.0.1",
+            device="cpu",
+            cors_origin="http://localhost:5174",
+            model_path=r"D:\dev\local-ai\sensevoice\cache\modelscope\models\iic--SenseVoiceSmall\snapshots\master",
+        )
+
+        with TestClient(application) as client:
+            response = client.get("/health")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(
+            r"D:\dev\local-ai\sensevoice\cache\modelscope\models\iic--SenseVoiceSmall\snapshots\master",
+            FakeAutoModel.constructions[0]["model"],
+        )
+
     def test_cors_preflight_allows_only_configured_local_origin(self):
         with self.create_client() as client:
             allowed = client.options(

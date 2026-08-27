@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from typing import Any
 
 
@@ -29,7 +30,12 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def create_application(host: str, device: str, cors_origin: str):
+def create_application(
+    host: str,
+    device: str,
+    cors_origin: str,
+    model_path: str | None = None,
+):
     # 在导入/创建 FunASR 应用前拒绝公网地址，避免错误配置触发模型加载后才失败.
     if host != "127.0.0.1":
         raise ValueError("Local SenseVoice may bind only to 127.0.0.1")
@@ -40,7 +46,13 @@ def create_application(host: str, device: str, cors_origin: str):
     from funasr.bin._server_app import create_app as create_funasr_app
 
     # 1.3.29 已提供 OpenAI 转写端点和模型预加载；这里只补项目需要的 CORS 与稳定 health 字段.
-    funasr_app = create_funasr_app(device=device, preload_model="sensevoice", hub="ms")
+    # 优先使用 setup 已落盘的模型快照，避免每次启动都依赖模型站连通性。
+    funasr_app = create_funasr_app(
+        device=device,
+        preload_model="sensevoice",
+        model_path=model_path,
+        hub="ms",
+    )
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(
         CORSMiddleware,
@@ -66,7 +78,10 @@ def main() -> None:
     import uvicorn
 
     application = create_application(
-        arguments.host, arguments.device, arguments.cors_origin
+        arguments.host,
+        arguments.device,
+        arguments.cors_origin,
+        os.environ.get("SENSEVOICE_MODEL_PATH"),
     )
     uvicorn.run(application, host=arguments.host, port=arguments.port)
 

@@ -28,6 +28,13 @@ if ($ValidateOnly) {
 }
 
 Set-SenseVoiceProcessEnvironment -Paths $paths
+$localModelPath = Join-Path $paths.ModelScopeCache 'models\iic--SenseVoiceSmall\snapshots\master'
+# 模型已经由 setup 固化到 D 盘时必须直接加载本地快照，离线开发不应再次访问模型站.
+if (Test-Path -LiteralPath (Join-Path $localModelPath 'model.pt')) {
+  $env:SENSEVOICE_MODEL_PATH = $localModelPath
+} else {
+  Remove-Item Env:SENSEVOICE_MODEL_PATH -ErrorAction SilentlyContinue
+}
 Write-Host "SenseVoice health endpoint: http://$($invocation.host):$($invocation.port)/health"
 Write-Host 'Press Ctrl+C to stop the foreground service.'
 Invoke-SenseVoiceServiceInvocation -Invocation $invocation -ProcessInvoker $ProcessInvoker
