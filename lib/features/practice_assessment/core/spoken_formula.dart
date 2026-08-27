@@ -1,6 +1,10 @@
-/// 浏览器语音识别结果回调；`isFinal` 为真时才允许进入公式转换。
+/// 语音识别结果回调；本机链路用 `processingElapsed` 传递停止录音后的处理耗时。
 typedef SpeechFormulaResultCallback =
-    void Function(String words, {required bool isFinal});
+    void Function(
+      String words, {
+      required bool isFinal,
+      Duration? processingElapsed,
+    });
 
 /// 识别适配器仅通过此回调向 UI 暴露已清洗、可安全展示的错误。
 typedef SpeechFormulaErrorCallback =
@@ -34,33 +38,6 @@ final class SpokenFormulaRecognitionException implements Exception {
 
   @override
   String toString() => message;
-}
-
-/// 数学口语转 LaTeX 的结果；候选仅用于明确的结构歧义。
-final class SpokenFormulaConversion {
-  const SpokenFormulaConversion({
-    required this.recognizedText,
-    required this.normalizedText,
-    required this.latex,
-    required this.alternatives,
-    required this.warnings,
-  });
-
-  final String recognizedText;
-  final String normalizedText;
-  final String latex;
-  final List<String> alternatives;
-  final List<String> warnings;
-
-  List<String> get candidates => <String>[latex, ...alternatives];
-}
-
-/// 数学口语转换端口；远程和本地演示实现必须保持同一返回协议。
-abstract interface class SpokenFormulaRepository {
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
-  });
 }
 
 /// 韧性公式解析的三类成功结果；数学歧义不会被折叠为基础设施错误。
@@ -136,9 +113,7 @@ final class SpokenFormulaResolution {
   final List<String> warnings;
 }
 
-/// V2 公式解析端口；调用方必须显式给出覆盖整次解析的截止时间。
-///
-/// Task 7 会让控制器迁移到此端口；当前独立接口避免中间提交破坏旧控制器编译。
+/// 公式解析端口；调用方必须显式给出本次请求剩余的截止时间。
 abstract interface class SpokenFormulaResolutionRepository {
   Future<SpokenFormulaResolution> resolve({
     required String text,
@@ -150,16 +125,6 @@ abstract interface class SpokenFormulaResolutionRepository {
 /// 服务端解析结果违反公开契约时向 UI 暴露的安全错误。
 final class SpokenFormulaResolutionException implements Exception {
   const SpokenFormulaResolutionException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
-}
-
-/// 可安全展示给学生的转换失败。
-final class SpokenFormulaConversionException implements Exception {
-  const SpokenFormulaConversionException(this.message);
 
   final String message;
 

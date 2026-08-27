@@ -16,11 +16,10 @@ void main() {
     page.controller.dispose();
   });
 
-  test('Mock 默认仓库同时保留旧控制器端口和 V2 解析端口', () {
+  test('Mock 默认仓库只暴露 V2 解析端口', () {
     final page = PracticeAssessmentLabPage.mock();
 
     final repository = page.speechFormulaController?.repository;
-    expect(repository, isA<SpokenFormulaRepository>());
     expect(repository, isA<SpokenFormulaResolutionRepository>());
     page.speechFormulaController?.dispose();
     page.controller.dispose();
@@ -121,16 +120,26 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   }
 }
 
-final class _FakeSpokenFormulaRepository implements SpokenFormulaRepository {
+final class _FakeSpokenFormulaRepository
+    implements SpokenFormulaResolutionRepository {
   @override
-  Future<SpokenFormulaConversion> convert({
+  Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
-  }) async => SpokenFormulaConversion(
+    required Duration timeout,
+  }) async => SpokenFormulaResolution(
+    resolutionId: 'composition-resolution',
     recognizedText: text,
     normalizedText: text,
-    latex: 'x^2',
-    alternatives: const <String>[],
+    outcome: SpokenFormulaOutcome.resolved,
+    candidates: const <SpokenFormulaCandidate>[
+      SpokenFormulaCandidate(
+        id: 'candidate-a',
+        latex: 'x^2',
+        spokenBack: 'x 的平方',
+      ),
+    ],
+    clarification: null,
     warnings: const <String>[],
   );
 }

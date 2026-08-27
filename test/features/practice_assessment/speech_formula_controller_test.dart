@@ -5,278 +5,497 @@ import 'package:uniprism_app/features/practice_assessment/application/speech_for
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
 void main() {
-  test('最终语音文本转换为可确认公式', () async {
+  test('idle 依次进入 requestingPermission 和 listening', () async {
     final recognizer = _FakeRecognizer();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: _ImmediateRepository(),
-    );
+    final controller = _controller(recognizer: recognizer);
     addTearDown(controller.dispose);
-
-    await controller.startListening();
-    recognizer.emit('x 的平方', isFinal: true);
-    await _flushAsyncWork();
-
-    expect(controller.state.status, SpeechFormulaStatus.preview);
-    expect(controller.state.transcript, 'x 的平方');
-    expect(controller.state.selectedLatex, 'x^2');
-    expect(recognizer.stopCount, 0);
-  });
-
-  test('浏览器不支持语音时保留可恢复错误状态', () async {
-    final controller = SpeechFormulaController(
-      recognizer: _FakeRecognizer(
-        isAvailable: false,
-        initializationError: const SpokenFormulaRecognitionException(
-          '当前浏览器无法使用语音识别，请改用最新版 Chrome 或 Edge。',
-        ),
-      ),
-      repository: _ImmediateRepository(),
-    );
-    addTearDown(controller.dispose);
+    final statuses = <SpeechFormulaStatus>[];
+    controller.addListener(() => statuses.add(controller.state.status));
 
     await controller.startListening();
 
-    expect(controller.state.status, SpeechFormulaStatus.error);
-    expect(controller.state.isSupported, isFalse);
-    expect(controller.state.errorMessage, contains('Chrome'));
-  });
-
-  test('初始化失败使用 recognizer typed 原因而不根据来源标签猜测', () async {
-    final controller = SpeechFormulaController(
-      recognizer: _FakeRecognizer(
-        isAvailable: false,
-        initializationError: const SpokenFormulaRecognitionException(
-          '请先启动本机 SenseVoice 服务后重试。',
-        ),
-      ),
-      repository: _ImmediateRepository(),
-      sourceLabel: '浏览器语音',
-    );
-    addTearDown(controller.dispose);
-
-    await controller.startListening();
-
-    expect(controller.state.errorMessage, '请先启动本机 SenseVoice 服务后重试。');
-    expect(controller.state.errorMessage, isNot(contains('Chrome')));
-    expect(controller.state.errorMessage, isNot(contains('Edge')));
-  });
-
-  test('初始化失败缺少 typed 原因时使用不泄露内部信息的安全 fallback', () async {
-    final controller = SpeechFormulaController(
-      recognizer: _FakeRecognizer(isAvailable: false),
-      repository: _ImmediateRepository(),
-    );
-    addTearDown(controller.dispose);
-
-    await controller.startListening();
-
-    expect(controller.state.errorMessage, '语音识别暂时不可用，请稍后重试。');
-  });
-
-  test('取消后迟到的转换结果不能进入预览', () async {
-    final recognizer = _FakeRecognizer();
-    final repository = _DeferredRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-
-    await controller.startListening();
-    recognizer.emit('x 的平方', isFinal: true);
-    await _flushAsyncWork();
-    expect(controller.state.status, SpeechFormulaStatus.converting);
-
-    await controller.reset();
-    repository.complete(_conversion());
-    await _flushAsyncWork();
-
-    expect(controller.state.status, SpeechFormulaStatus.idle);
-    expect(controller.state.conversion, isNull);
-  });
-
-  test('重复的最终识别结果只触发一次公式转换', () async {
-    final recognizer = _FakeRecognizer();
-    final repository = _CountingRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-
-    await controller.startListening();
-    recognizer.emit('x 的平方', isFinal: true);
-    recognizer.emit('x 的平方', isFinal: true);
-    await _flushAsyncWork();
-
-    expect(repository.callCount, 1);
-  });
-
-  test('旧 operation 的 typed error 不能覆盖新一轮监听状态', () async {
-    final recognizer = _FakeRecognizer();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: _ImmediateRepository(),
-    );
-    addTearDown(controller.dispose);
-
-    await controller.startListening();
-    await controller.reset();
-    await controller.startListening();
-    recognizer.emitError(
-      const SpokenFormulaRecognitionException('旧错误'),
-      listenIndex: 0,
-    );
-
-    expect(controller.state.status, SpeechFormulaStatus.listening);
-    expect(controller.state.errorMessage, isNull);
-  });
-
-  test('manual stop 没有 final 时不转换 partial 并报告无识别结果', () async {
-    final recognizer = _FakeRecognizer();
-    final repository = _CountingRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-    await controller.startListening();
-    recognizer.emit('partial', isFinal: false);
-
-    await controller.stopListening();
-
-    expect(controller.state.status, SpeechFormulaStatus.error);
-    expect(controller.state.errorMessage, contains('没有识别到语音'));
-    expect(repository.callCount, 0);
-  });
-
-  test('manual stop 内同步发出的 final 只转换一次', () async {
-    final recognizer = _FakeRecognizer(finalWordsOnStop: 'x 的平方');
-    final repository = _CountingRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-    await controller.startListening();
-
-    await controller.stopListening();
-    await _flushAsyncWork();
-
-    expect(controller.state.status, SpeechFormulaStatus.preview);
-    expect(repository.callCount, 1);
-    expect(recognizer.stopCount, 1);
-  });
-
-  test('manual stop 同步发出 final 后抛错不能覆盖转换结果', () async {
-    final recognizer = _FakeRecognizer(
-      finalWordsOnStop: 'x 的平方',
-      stopError: StateError('late stop failure'),
-    );
-    final repository = _CountingRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-    await controller.startListening();
-
-    await controller.stopListening();
-    await _flushAsyncWork();
-
-    expect(controller.state.status, SpeechFormulaStatus.preview);
-    expect(controller.state.errorMessage, isNull);
-    expect(repository.callCount, 1);
-  });
-
-  test('pending manual stop 期间的 final 不被迟到 stop error 覆盖', () async {
-    final stopGate = Completer<void>();
-    final recognizer = _FakeRecognizer(stopGate: stopGate);
-    final repository = _CountingDeferredRepository();
-    final controller = SpeechFormulaController(
-      recognizer: recognizer,
-      repository: repository,
-    );
-    addTearDown(controller.dispose);
-    await controller.startListening();
-    final stopping = controller.stopListening();
-    recognizer.emit('x 的平方', isFinal: true);
-    await _flushAsyncWork();
-    expect(controller.state.status, SpeechFormulaStatus.converting);
-
-    stopGate.completeError(StateError('late gated failure'));
-    await stopping;
-
-    expect(controller.state.status, SpeechFormulaStatus.converting);
-    expect(controller.state.errorMessage, isNull);
-    expect(repository.callCount, 1);
-    repository.complete(_conversion());
-    await _flushAsyncWork();
-    expect(controller.state.status, SpeechFormulaStatus.preview);
+    expect(statuses, <SpeechFormulaStatus>[
+      SpeechFormulaStatus.requestingPermission,
+      SpeechFormulaStatus.listening,
+    ]);
   });
 
   test(
-    '当前 operation 的 typed recognition error 保留 partial transcript',
+    'manual stop 先进入 transcribing，final 后 resolving 且 stop 完成不覆盖 resolved',
     () async {
-      final recognizer = _FakeRecognizer();
-      final controller = SpeechFormulaController(
+      final stopGate = Completer<void>();
+      final recognizer = _FakeRecognizer(stopGate: stopGate);
+      final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_resolved()),
+      ]);
+      final controller = _controller(
         recognizer: recognizer,
-        repository: _ImmediateRepository(),
+        repository: repository,
       );
       addTearDown(controller.dispose);
+      final statuses = <SpeechFormulaStatus>[];
+      controller.addListener(() => statuses.add(controller.state.status));
       await controller.startListening();
-      recognizer.emit('x partial', isFinal: false);
 
-      recognizer.emitError(const SpokenFormulaRecognitionException('安全错误'));
+      final stopping = controller.stopListening();
+      expect(controller.state.status, SpeechFormulaStatus.transcribing);
+      recognizer.emit('x 的平方', isFinal: true);
+      await _flushAsyncWork();
+      expect(controller.state.status, SpeechFormulaStatus.resolved);
+      stopGate.complete();
+      await stopping;
 
-      expect(controller.state.status, SpeechFormulaStatus.error);
-      expect(controller.state.transcript, 'x partial');
-      expect(controller.state.errorMessage, '安全错误');
+      expect(
+        statuses,
+        containsAllInOrder(<SpeechFormulaStatus>[
+          SpeechFormulaStatus.transcribing,
+          SpeechFormulaStatus.resolving,
+          SpeechFormulaStatus.resolved,
+        ]),
+      );
+      expect(controller.state.selectedCandidate?.latex, 'x^2');
+      expect(controller.state.errorMessage, isNull);
     },
   );
 
-  test('重复 dispose 只释放 recognizer 一次并收敛异步插件异常', () async {
-    final uncaught = <Object>[];
-    late _FakeRecognizer recognizer;
-    await runZonedGuarded(() async {
-      recognizer = _FakeRecognizer(
-        disposeError: StateError('plugin dispose failure'),
-      );
-      final controller = SpeechFormulaController(
+  test('V2 三类 outcome 精确映射且语义结果不占用 errorMessage', () async {
+    final fixtures =
+        <({SpokenFormulaResolution value, SpeechFormulaStatus want})>[
+          (value: _resolved(), want: SpeechFormulaStatus.resolved),
+          (value: _candidates(), want: SpeechFormulaStatus.choosingCandidate),
+          (value: _clarification(), want: SpeechFormulaStatus.clarifying),
+        ];
+
+    for (final fixture in fixtures) {
+      final recognizer = _FakeRecognizer();
+      final controller = _controller(
         recognizer: recognizer,
-        repository: _ImmediateRepository(),
+        repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+          Future<SpokenFormulaResolution>.value(fixture.value),
+        ]),
       );
-
-      controller.dispose();
-      controller.dispose();
+      await controller.startListening();
+      recognizer.emit('测试公式', isFinal: true);
       await _flushAsyncWork();
-    }, (error, _) => uncaught.add(error));
 
-    expect(uncaught, isEmpty);
+      expect(controller.state.status, fixture.want);
+      expect(controller.state.resolution, same(fixture.value));
+      expect(controller.state.errorMessage, isNull);
+      controller.dispose();
+    }
+  });
+
+  test('麦克风、ASR、网络与畸形响应统一进入 infrastructureError', () async {
+    final cases = <_InfrastructureFailureCase>[
+      _InfrastructureFailureCase(
+        recognizer: _FakeRecognizer(
+          isAvailable: false,
+          initializationError: const SpokenFormulaRecognitionException(
+            '麦克风权限不可用',
+          ),
+        ),
+        repository: _QueueRepository(const <Future<SpokenFormulaResolution>>[]),
+        trigger: (recognizer) async {},
+        expectedMessage: '麦克风权限不可用',
+      ),
+      _InfrastructureFailureCase(
+        recognizer: _FakeRecognizer(),
+        repository: _QueueRepository(const <Future<SpokenFormulaResolution>>[]),
+        trigger: (recognizer) async {
+          recognizer.emitError(
+            const SpokenFormulaRecognitionException('ASR 暂时不可用'),
+          );
+        },
+        expectedMessage: 'ASR 暂时不可用',
+      ),
+      _InfrastructureFailureCase(
+        recognizer: _FakeRecognizer(),
+        repository: _ErrorRepository(StateError('network internals')),
+        trigger: (recognizer) async {
+          recognizer.emit('网络测试', isFinal: true);
+          await _flushAsyncWork();
+        },
+        expectedMessage: '公式解析暂时不可用，请稍后重试。',
+      ),
+      _InfrastructureFailureCase(
+        recognizer: _FakeRecognizer(),
+        repository: _ErrorRepository(
+          const SpokenFormulaResolutionException('公式服务返回的数据不完整，请重新说一次。'),
+        ),
+        trigger: (recognizer) async {
+          recognizer.emit('畸形响应测试', isFinal: true);
+          await _flushAsyncWork();
+        },
+        expectedMessage: '公式服务返回的数据不完整，请重新说一次。',
+      ),
+    ];
+
+    for (final fixture in cases) {
+      final controller = _controller(
+        recognizer: fixture.recognizer,
+        repository: fixture.repository,
+      );
+      await controller.startListening();
+      await fixture.trigger(fixture.recognizer);
+
+      expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+      expect(controller.state.errorMessage, fixture.expectedMessage);
+      controller.dispose();
+    }
+  });
+
+  test('ASR 已用 4.5 秒时 repository 同时收到剩余 0.5 秒 caller timeout', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(seconds: 5),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    recognizer.emit(
+      'x 的平方',
+      isFinal: true,
+      processingElapsed: const Duration(milliseconds: 4500),
+    );
+    await _flushAsyncWork();
+
+    expect(repository.timeouts, <Duration>[const Duration(milliseconds: 500)]);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+  });
+
+  test('repository 永不完成时按注入的总 deadline 退出且只调用一次', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Completer<SpokenFormulaResolution>().future,
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 12),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('不会结束的解析', isFinal: true);
+    expect(controller.state.status, SpeechFormulaStatus.resolving);
+
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.errorMessage, contains('5 秒'));
+    expect(repository.callCount, 1);
+  });
+
+  test('ASR processingElapsed 已耗尽预算时不调用 repository', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(
+      const <Future<SpokenFormulaResolution>>[],
+    );
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    recognizer.emit(
+      '超时文本',
+      isFinal: true,
+      processingElapsed: const Duration(seconds: 5),
+    );
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(repository.callCount, 0);
+  });
+
+  test('reset 使迟到 resolution 失效', () async {
+    final gate = Completer<SpokenFormulaResolution>();
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        gate.future,
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('旧请求', isFinal: true);
+    await controller.reset();
+
+    gate.complete(_resolved());
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.idle);
+    expect(controller.state.resolution, isNull);
+  });
+
+  test('第二次录音使第一次迟到 resolution 失效', () async {
+    final oldGate = Completer<SpokenFormulaResolution>();
+    final newGate = Completer<SpokenFormulaResolution>();
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        oldGate.future,
+        newGate.future,
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('旧请求', isFinal: true, listenIndex: 0);
+    await controller.startListening();
+    recognizer.emit('新请求', isFinal: true, listenIndex: 1);
+
+    oldGate.complete(_resolved(resolutionId: 'old', latex: 'old'));
+    await _flushAsyncWork();
+    expect(controller.state.status, SpeechFormulaStatus.resolving);
+    newGate.complete(_resolved(resolutionId: 'new', latex: 'new'));
+    await _flushAsyncWork();
+
+    expect(controller.state.resolution?.resolutionId, 'new');
+    expect(controller.state.selectedCandidate?.latex, 'new');
+  });
+
+  test('dispose 使迟到 resolution 无法通知页面且 recognizer 只释放一次', () async {
+    final gate = Completer<SpokenFormulaResolution>();
+    final recognizer = _FakeRecognizer(
+      disposeError: StateError('plugin internals'),
+    );
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        gate.future,
+      ]),
+    );
+    var notifications = 0;
+    controller.addListener(() => notifications += 1);
+    await controller.startListening();
+    recognizer.emit('待销毁请求', isFinal: true);
+    final beforeDispose = notifications;
+
+    controller.dispose();
+    controller.dispose();
+    gate.complete(_resolved());
+    await _flushAsyncWork();
+
+    expect(notifications, beforeDispose);
     expect(recognizer.disposeCount, 1);
+  });
+
+  test('用户确认后失效旧回调并返回当前响应唯一公式', () async {
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_resolved()),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(controller.confirmSelectedCandidate(), 'x^2');
+    recognizer.emit('旧 final', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.idle);
+    expect(controller.state.resolution, isNull);
+  });
+
+  test('只能按当前 response candidate ID 选择候选', () async {
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_candidates()),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('负二的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    controller.selectCandidate('candidate-from-old-response');
+    expect(controller.state.selectedCandidate, isNull);
+    controller.selectCandidate('candidate-b');
+
+    expect(controller.state.selectedCandidate?.id, 'candidate-b');
+    expect(controller.state.status, SpeechFormulaStatus.choosingCandidate);
+  });
+
+  test('clarification selectCandidate 只选择同响应候选并进入 resolved', () async {
+    final recognizer = _FakeRecognizer();
+    final resolution = _clarification();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(resolution),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('负二的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    await controller.answerClarification(resolution.clarification!.options[0]);
+
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(controller.state.selectedCandidate?.id, 'candidate-b');
+    expect(controller.state.errorMessage, isNull);
+  });
+
+  test('clarification retryRecording 开启新录音且隔离旧回调', () async {
+    final recognizer = _FakeRecognizer();
+    final resolution = _clarification();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(resolution),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('待澄清', isFinal: true);
+    await _flushAsyncWork();
+
+    await controller.answerClarification(resolution.clarification!.options[1]);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(recognizer.listenCount, 2);
+    recognizer.emit('旧 late final', isFinal: true, listenIndex: 0);
+    await _flushAsyncWork();
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+  });
+
+  test('clarification useKeyboard 回到 idle 且不产生选中答案', () async {
+    final recognizer = _FakeRecognizer();
+    final resolution = _clarification();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(resolution),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('待澄清', isFinal: true);
+    await _flushAsyncWork();
+
+    await controller.answerClarification(resolution.clarification!.options[2]);
+
+    expect(controller.state.status, SpeechFormulaStatus.idle);
+    expect(controller.state.selectedCandidate, isNull);
+    expect(controller.state.resolution, isNull);
   });
 }
 
-SpokenFormulaConversion _conversion() => const SpokenFormulaConversion(
+SpeechFormulaController _controller({
+  _FakeRecognizer? recognizer,
+  SpokenFormulaResolutionRepository? repository,
+  Duration totalDeadline = const Duration(seconds: 5),
+}) => SpeechFormulaController(
+  recognizer: recognizer ?? _FakeRecognizer(),
+  repository:
+      repository ??
+      _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_resolved()),
+      ]),
+  totalDeadline: totalDeadline,
+);
+
+SpokenFormulaResolution _resolved({
+  String resolutionId = 'resolution-resolved',
+  String latex = 'x^2',
+}) => SpokenFormulaResolution(
+  resolutionId: resolutionId,
   recognizedText: 'x 的平方',
   normalizedText: 'x 的平方',
-  latex: 'x^2',
-  alternatives: <String>[],
-  warnings: <String>[],
+  outcome: SpokenFormulaOutcome.resolved,
+  candidates: <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-a',
+      latex: latex,
+      spokenBack: 'x 的平方',
+    ),
+  ],
+  clarification: null,
+  warnings: const <String>[],
+);
+
+SpokenFormulaResolution _candidates() => SpokenFormulaResolution(
+  resolutionId: 'resolution-candidates',
+  recognizedText: '负二的平方',
+  normalizedText: '负二的平方',
+  outcome: SpokenFormulaOutcome.candidates,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-a',
+      latex: '(-2)^2',
+      spokenBack: '负二整体的平方',
+    ),
+    SpokenFormulaCandidate(
+      id: 'candidate-b',
+      latex: '-2^2',
+      spokenBack: '二的平方再取负',
+    ),
+  ],
+  clarification: null,
+  warnings: const <String>['存在作用域歧义'],
+);
+
+SpokenFormulaResolution _clarification() => SpokenFormulaResolution(
+  resolutionId: 'resolution-clarification',
+  recognizedText: '负二的平方',
+  normalizedText: '负二的平方',
+  outcome: SpokenFormulaOutcome.clarification,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-b',
+      latex: '-2^2',
+      spokenBack: '二的平方再取负',
+    ),
+  ],
+  clarification: SpokenFormulaClarification(
+    question: '负号是否在平方范围内？',
+    focusText: '负二的平方',
+    options: const <SpokenFormulaClarificationOption>[
+      SpokenFormulaClarificationOption(
+        id: 'select-negative-outside',
+        label: '平方后再取负',
+        action: SpokenFormulaClarificationAction.selectCandidate,
+        candidateId: 'candidate-b',
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'retry',
+        label: '重新说',
+        action: SpokenFormulaClarificationAction.retryRecording,
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'keyboard',
+        label: '使用键盘',
+        action: SpokenFormulaClarificationAction.useKeyboard,
+      ),
+    ],
+  ),
+  warnings: const <String>[],
 );
 
 Future<void> _flushAsyncWork() async {
-  await Future<void>.delayed(Duration.zero);
-  await Future<void>.delayed(Duration.zero);
+  for (var index = 0; index < 4; index += 1) {
+    await Future<void>.delayed(Duration.zero);
+  }
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
   _FakeRecognizer({
     this.isAvailable = true,
     this.initializationError,
-    this.finalWordsOnStop,
-    this.stopError,
     this.stopGate,
     this.disposeError,
   });
@@ -284,13 +503,13 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   final bool isAvailable;
   @override
   final SpokenFormulaRecognitionException? initializationError;
-  final String? finalWordsOnStop;
-  final Object? stopError;
   final Completer<void>? stopGate;
   final Object? disposeError;
-  final List<SpeechFormulaResultCallback> _resultCallbacks = [];
-  final List<SpeechFormulaErrorCallback?> _errorCallbacks = [];
-  int stopCount = 0;
+  final List<SpeechFormulaResultCallback> _resultCallbacks =
+      <SpeechFormulaResultCallback>[];
+  final List<SpeechFormulaErrorCallback?> _errorCallbacks =
+      <SpeechFormulaErrorCallback?>[];
+  int listenCount = 0;
   int disposeCount = 0;
 
   @override
@@ -301,14 +520,21 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
   }) async {
+    listenCount += 1;
     _resultCallbacks.add(onResult);
     _errorCallbacks.add(onError);
   }
 
-  void emit(String words, {required bool isFinal, int? listenIndex}) {
+  void emit(
+    String words, {
+    required bool isFinal,
+    Duration? processingElapsed,
+    int? listenIndex,
+  }) {
     _resultCallbacks[listenIndex ?? _resultCallbacks.length - 1](
       words,
       isFinal: isFinal,
+      processingElapsed: processingElapsed,
     );
   }
 
@@ -317,14 +543,7 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   }
 
   @override
-  Future<void> stop() async {
-    stopCount += 1;
-    if (finalWordsOnStop case final words?) {
-      emit(words, isFinal: true);
-    }
-    await stopGate?.future;
-    if (stopError case final error?) throw error;
-  }
+  Future<void> stop() async => stopGate?.future;
 
   @override
   Future<void> cancel() async {}
@@ -336,51 +555,52 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   }
 }
 
-final class _ImmediateRepository implements SpokenFormulaRepository {
-  @override
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
-  }) async => _conversion();
-}
+final class _QueueRepository implements SpokenFormulaResolutionRepository {
+  _QueueRepository(this._responses);
 
-final class _DeferredRepository implements SpokenFormulaRepository {
-  final Completer<SpokenFormulaConversion> _completer = Completer();
-
-  @override
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
-  }) => _completer.future;
-
-  void complete(SpokenFormulaConversion value) => _completer.complete(value);
-}
-
-final class _CountingRepository implements SpokenFormulaRepository {
+  final List<Future<SpokenFormulaResolution>> _responses;
+  final List<Duration> timeouts = <Duration>[];
   int callCount = 0;
 
   @override
-  Future<SpokenFormulaConversion> convert({
+  Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
-  }) async {
-    callCount += 1;
-    return _conversion();
-  }
-}
-
-final class _CountingDeferredRepository implements SpokenFormulaRepository {
-  final Completer<SpokenFormulaConversion> _completer = Completer();
-  int callCount = 0;
-
-  @override
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
+    required Duration timeout,
   }) {
+    timeouts.add(timeout);
+    final response = _responses[callCount];
     callCount += 1;
-    return _completer.future;
+    return response;
   }
+}
 
-  void complete(SpokenFormulaConversion value) => _completer.complete(value);
+final class _ErrorRepository implements SpokenFormulaResolutionRepository {
+  const _ErrorRepository(this.error);
+
+  final Object error;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async {
+    await Future<void>.delayed(Duration.zero);
+    throw error;
+  }
+}
+
+final class _InfrastructureFailureCase {
+  const _InfrastructureFailureCase({
+    required this.recognizer,
+    required this.repository,
+    required this.trigger,
+    required this.expectedMessage,
+  });
+
+  final _FakeRecognizer recognizer;
+  final SpokenFormulaResolutionRepository repository;
+  final Future<void> Function(_FakeRecognizer recognizer) trigger;
+  final String expectedMessage;
 }

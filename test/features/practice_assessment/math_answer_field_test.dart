@@ -606,18 +606,27 @@ final class _VoiceTestRecognizer implements SpeechFormulaRecognizer {
   Future<void> stop() async {}
 }
 
-final class _VoiceTestRepository implements SpokenFormulaRepository {
+final class _VoiceTestRepository implements SpokenFormulaResolutionRepository {
   const _VoiceTestRepository();
 
   @override
-  Future<SpokenFormulaConversion> convert({
+  Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
-  }) async => SpokenFormulaConversion(
+    required Duration timeout,
+  }) async => SpokenFormulaResolution(
+    resolutionId: 'math-answer-resolution',
     recognizedText: text,
     normalizedText: text,
-    latex: 'x^2',
-    alternatives: const <String>[],
+    outcome: SpokenFormulaOutcome.resolved,
+    candidates: const <SpokenFormulaCandidate>[
+      SpokenFormulaCandidate(
+        id: 'candidate-a',
+        latex: 'x^2',
+        spokenBack: 'x 的平方',
+      ),
+    ],
+    clarification: null,
     warnings: const <String>[],
   );
 }

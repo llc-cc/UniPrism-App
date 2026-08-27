@@ -8,6 +8,11 @@ import 'sensevoice_asr_client.dart';
 
 typedef SpeechFormulaTimerFactory =
     Timer Function(Duration duration, void Function() callback);
+typedef SpeechFormulaProcessingClock = Duration Function();
+
+final Stopwatch _processingStopwatch = Stopwatch()..start();
+
+Duration _readProcessingClock() => _processingStopwatch.elapsed;
 
 enum _LocalRecognitionState { idle, starting, listening, stopping }
 
@@ -19,11 +24,13 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     this._client, {
     this.maxDuration = const Duration(seconds: 15),
     this.timerFactory = Timer.new,
+    this.processingClock = _readProcessingClock,
   });
 
   final SpeechAudioCapture _capture;
   final SenseVoiceAsrApi _client;
   final SpeechFormulaTimerFactory timerFactory;
+  final SpeechFormulaProcessingClock processingClock;
   final Duration maxDuration;
 
   int _generation = 0;
@@ -153,6 +160,8 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   }
 
   Future<void> _stopInternal(int generation) async {
+    // 从 stop/finalization 发起就计时，pending start、capture.stop、WAV 和 ASR 都不能漏算。
+    final processingStartedAt = processingClock();
     final pendingStart = _listenFuture;
     if (_state == _LocalRecognitionState.starting && pendingStart != null) {
       try {
@@ -185,7 +194,8 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       if (transcript.isEmpty) {
         throw const SpokenFormulaRecognitionException('本地语音识别暂时不可用，请稍后重试。');
       }
-      _emitFinal(generation, transcript);
+      final processingElapsed = processingClock() - processingStartedAt;
+      _emitFinal(generation, transcript, processingElapsed);
     } catch (error) {
       _emitSafeError(generation, error);
     } finally {
@@ -310,11 +320,19 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     }
   }
 
-  void _emitFinal(int generation, String transcript) {
+  void _emitFinal(
+    int generation,
+    String transcript,
+    Duration processingElapsed,
+  ) {
     if (!_isCurrent(generation) || _hasTerminalCallback) return;
     _hasTerminalCallback = true;
     try {
-      _onResult?.call(transcript, isFinal: true);
+      _onResult?.call(
+        transcript,
+        isFinal: true,
+        processingElapsed: processingElapsed,
+      );
     } catch (_) {
       // 消费方回调失败不能改变 terminal 次数，也不能跳过 finally 中的资源释放。
     }

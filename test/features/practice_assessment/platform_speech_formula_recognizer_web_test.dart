@@ -1,11 +1,37 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:uniprism_app/features/practice_assessment/adapters/local_sensevoice_speech_formula_recognizer.dart';
 import 'package:uniprism_app/features/practice_assessment/adapters/platform_speech_formula_recognizer_web.dart';
+import 'package:uniprism_app/features/practice_assessment/adapters/sensevoice_asr_client.dart';
+import 'package:uniprism_app/features/practice_assessment/core/speech_audio_capture.dart';
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('sensevoiceLocal factory 为 ASR 留出固定 1800ms 预算', () {
+    String? configuredBaseUrl;
+    Duration? configuredTimeout;
+
+    final recognizer = createPlatformSpeechFormulaRecognizer(
+      mode: 'sensevoiceLocal',
+      senseVoiceBaseUrl: 'http://127.0.0.1:8765',
+      audioCaptureFactory: _NoopSpeechAudioCapture.new,
+      asrClientFactory: ({required baseUrl, required timeout}) {
+        configuredBaseUrl = baseUrl;
+        configuredTimeout = timeout;
+        return _NoopSenseVoiceAsrClient();
+      },
+    );
+
+    expect(recognizer, isA<LocalSenseVoiceSpeechFormulaRecognizer>());
+    expect(configuredBaseUrl, 'http://127.0.0.1:8765');
+    expect(configuredTimeout, const Duration(milliseconds: 1800));
+  });
+
   test('browser initialize 失败提供 Chrome 或 Edge 的安全恢复原因', () async {
     final driver = _FakeWebSpeechDriver()..initializeResult = false;
     final recognizer = WebSpeechFormulaRecognizer(driver: driver);
@@ -33,7 +59,7 @@ void main() {
     final results = <({String words, bool isFinal})>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('first partial', isFinal: false);
@@ -51,13 +77,28 @@ void main() {
     ]);
   });
 
+  test('browser final 不伪造无法可靠测量的 processingElapsed', () async {
+    final driver = _FakeWebSpeechDriver();
+    final recognizer = WebSpeechFormulaRecognizer(driver: driver);
+    final elapsedValues = <Duration?>[];
+    await recognizer.initialize();
+    await recognizer.listen(
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          elapsedValues.add(processingElapsed),
+    );
+
+    driver.emit('browser final', isFinal: true);
+
+    expect(elapsedValues, <Duration?>[null]);
+  });
+
   test('cancel 不会把 partial 发为 final 并忽略迟到回调', () async {
     final driver = _FakeWebSpeechDriver();
     final recognizer = WebSpeechFormulaRecognizer(driver: driver);
     final results = <({String words, bool isFinal})>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('partial', isFinal: false);
@@ -79,7 +120,7 @@ void main() {
     final results = <({String words, bool isFinal})>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('old partial', isFinal: false, listenIndex: 0);
@@ -89,7 +130,7 @@ void main() {
     await firstStopping;
 
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('late old mutation', isFinal: false, listenIndex: 0);
@@ -112,7 +153,7 @@ void main() {
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: errors.add,
     );
 
@@ -130,7 +171,7 @@ void main() {
     final newErrors = <SpokenFormulaRecognitionException>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: oldErrors.add,
     );
 
@@ -138,7 +179,7 @@ void main() {
     expect(oldErrors, hasLength(1));
     await expectLater(
       recognizer.listen(
-        onResult: (_, {required isFinal}) {},
+        onResult: (_, {required isFinal, processingElapsed}) {},
         onError: newErrors.add,
       ),
       throwsStateError,
@@ -147,14 +188,14 @@ void main() {
     driver.emitStatus(SpeechToText.doneStatus);
     await expectLater(
       recognizer.listen(
-        onResult: (_, {required isFinal}) {},
+        onResult: (_, {required isFinal, processingElapsed}) {},
         onError: newErrors.add,
       ),
       throwsStateError,
     );
     await pumpEventQueue(times: 2);
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: newErrors.add,
     );
 
@@ -172,7 +213,7 @@ void main() {
     late Future<void> cancelling;
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: (_) {
         stopping = recognizer.stop();
         cancelling = recognizer.cancel();
@@ -186,7 +227,9 @@ void main() {
 
     driver.emitStatus(SpeechToText.doneStatus);
     await Future.wait(<Future<void>>[stopping, cancelling]);
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
   });
 
   test('pending manual stop 中到达 error 不覆盖已有 finishing', () async {
@@ -195,7 +238,7 @@ void main() {
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: errors.add,
     );
 
@@ -223,14 +266,16 @@ void main() {
     await recognizer.initialize();
 
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('失败会话不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) =>
+          fail('失败会话不应发出结果'),
       onError: oldErrors.add,
     );
     expect(oldErrors, hasLength(1));
     expect(oldErrors.single.message, isNot(contains('browser start failure')));
 
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => newResults.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          newResults.add(words),
     );
     driver.emit('late failed result', isFinal: true, listenIndex: 0);
     driver.emit('new result', isFinal: false, listenIndex: 1);
@@ -244,7 +289,7 @@ void main() {
     final newErrors = <SpokenFormulaRecognitionException>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: oldErrors.add,
     );
     var stopCompleted = false;
@@ -255,7 +300,7 @@ void main() {
 
     await expectLater(
       recognizer.listen(
-        onResult: (_, {required isFinal}) {},
+        onResult: (_, {required isFinal, processingElapsed}) {},
         onError: newErrors.add,
       ),
       throwsStateError,
@@ -268,7 +313,7 @@ void main() {
     await stopping;
 
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {},
+      onResult: (_, {required isFinal, processingElapsed}) {},
       onError: newErrors.add,
     );
 
@@ -283,7 +328,7 @@ void main() {
     final results = <({String words, bool isFinal})>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('partial', isFinal: false);
@@ -309,7 +354,7 @@ void main() {
     final results = <({String words, bool isFinal})>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) =>
+      onResult: (words, {required isFinal, processingElapsed}) =>
           results.add((words: words, isFinal: isFinal)),
     );
     driver.emit('partial', isFinal: false);
@@ -336,7 +381,7 @@ void main() {
     var errorCalls = 0;
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {
+      onResult: (_, {required isFinal, processingElapsed}) {
         resultCalls += 1;
         throw StateError('consumer result failure');
       },
@@ -360,7 +405,7 @@ void main() {
     var errorCalls = 0;
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: (_) {
         errorCalls += 1;
         throw StateError('consumer error failure');
@@ -380,7 +425,8 @@ void main() {
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.initialize();
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
       onError: errors.add,
     );
 
@@ -445,4 +491,32 @@ final class _FakeWebSpeechDriver implements WebSpeechRecognitionDriver {
     cancelCount += 1;
     await cancelGate?.future;
   }
+}
+
+final class _NoopSenseVoiceAsrClient implements SenseVoiceAsrApi {
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<bool> isHealthy() async => true;
+
+  @override
+  Future<String> transcribe(Uint8List wavBytes) async => 'unused';
+}
+
+final class _NoopSpeechAudioCapture implements SpeechAudioCapture {
+  @override
+  Future<void> cancel() async {}
+
+  @override
+  Future<void> dispose() async {}
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<Stream<Uint8List>> start() async => const Stream<Uint8List>.empty();
+
+  @override
+  Future<void> stop() async {}
 }

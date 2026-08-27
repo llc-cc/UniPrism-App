@@ -29,7 +29,7 @@ final class PracticeAssessmentLabPage extends StatefulWidget {
   /// 创建供开发者工具使用的自造题内存版本；注入 recognizer 后其所有权转移给页面 controller。
   factory PracticeAssessmentLabPage.mock({
     Key? key,
-    SpokenFormulaRepository spokenFormulaRepository =
+    SpokenFormulaResolutionRepository spokenFormulaRepository =
         const DemoSpokenFormulaRepository(),
     SpeechFormulaRecognizer? speechFormulaRecognizer,
     String speechFormulaSourceLabel = '浏览器语音',

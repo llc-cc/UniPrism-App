@@ -3,7 +3,7 @@ import 'practice_api_client.dart';
 
 /// 通过练习 API 解析数学口语；JSON 只在此适配器内转换为安全领域值。
 final class RemoteSpokenFormulaRepository
-    implements SpokenFormulaRepository, SpokenFormulaResolutionRepository {
+    implements SpokenFormulaResolutionRepository {
   const RemoteSpokenFormulaRepository(this.api);
 
   static const _malformedResolution = SpokenFormulaResolutionException(
@@ -110,29 +110,6 @@ final class RemoteSpokenFormulaRepository
       requestTimeout: timeout,
     );
     return _parseResolution(data);
-  }
-
-  @override
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
-  }) async {
-    // Task 7 迁移控制器前保留旧端口；新代码不得调用此桥或旧接口。
-    final data = await api.request(
-      'POST',
-      '/api/practice/formulas/from-spoken-text',
-      body: <String, Object?>{'text': text, 'locale': locale},
-    );
-    final recognizedText = _requiredLegacyString(data, 'recognizedText');
-    final normalizedText = _requiredLegacyString(data, 'normalizedText');
-    final latex = _requiredLegacyString(data, 'latex');
-    return SpokenFormulaConversion(
-      recognizedText: recognizedText,
-      normalizedText: normalizedText,
-      latex: latex,
-      alternatives: _legacyStringList(data['alternatives']).take(2).toList(),
-      warnings: _legacyStringList(data['warnings']).toList(),
-    );
   }
 
   SpokenFormulaResolution _parseResolution(Map<String, Object?> data) {
@@ -362,20 +339,5 @@ final class RemoteSpokenFormulaRepository
       }
     }
     return false;
-  }
-}
-
-String _requiredLegacyString(Map<String, Object?> data, String key) {
-  final value = data[key]?.toString().trim() ?? '';
-  if (value.isEmpty) {
-    throw const SpokenFormulaConversionException('公式服务返回的数据不完整，请重新说一次。');
-  }
-  return value;
-}
-
-Iterable<String> _legacyStringList(Object? value) sync* {
-  if (value is! List) return;
-  for (final item in value) {
-    if (item is String && item.trim().isNotEmpty) yield item.trim();
   }
 }

@@ -2,7 +2,7 @@ import '../core/spoken_formula.dart';
 
 /// Mock 实验室的受控口语解析器，只覆盖验收样例，不代替正式模型服务。
 final class DemoSpokenFormulaRepository
-    implements SpokenFormulaRepository, SpokenFormulaResolutionRepository {
+    implements SpokenFormulaResolutionRepository {
   const DemoSpokenFormulaRepository();
 
   static const Map<String, String> _exact = <String, String>{
@@ -79,41 +79,6 @@ final class DemoSpokenFormulaRepository
         ),
       ],
       clarification: null,
-      warnings: const <String>[],
-    );
-  }
-
-  @override
-  Future<SpokenFormulaConversion> convert({
-    required String text,
-    String locale = 'zh-CN',
-  }) async {
-    // Task 7 迁移控制器前保留旧返回形状；新功能只应调用 resolve。
-    if (locale != 'zh-CN') {
-      throw const SpokenFormulaConversionException('初版仅支持中文普通话。');
-    }
-    final recognizedText = text.trim();
-    final normalized = _normalize(recognizedText);
-    if (normalized == '负二的平方') {
-      return SpokenFormulaConversion(
-        recognizedText: recognizedText,
-        normalizedText: '负二的平方',
-        latex: r'(-2)^2',
-        alternatives: const <String>[r'-2^2'],
-        warnings: const <String>['括号作用范围存在歧义，请选择符合原意的公式。'],
-      );
-    }
-    final latex = _exact[normalized];
-    if (latex == null) {
-      throw const SpokenFormulaConversionException(
-        '演示版暂未覆盖这条表达，请使用下方公式键盘或换一种说法。',
-      );
-    }
-    return SpokenFormulaConversion(
-      recognizedText: recognizedText,
-      normalizedText: normalized,
-      latex: latex,
-      alternatives: const <String>[],
       warnings: const <String>[],
     );
   }

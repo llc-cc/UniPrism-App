@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:speech_to_text/speech_to_text.dart';
 
+import '../core/speech_audio_capture.dart';
 import '../core/spoken_formula.dart';
 import 'local_sensevoice_speech_formula_recognizer.dart';
 import 'record_speech_audio_capture.dart';
@@ -11,6 +12,19 @@ typedef WebSpeechResultCallback =
     void Function(String words, {required bool isFinal});
 typedef WebSpeechDriverErrorCallback = void Function(Object error);
 typedef WebSpeechDriverStatusCallback = void Function(String status);
+typedef SenseVoiceAsrClientFactory =
+    SenseVoiceAsrApi Function({
+      required String baseUrl,
+      required Duration timeout,
+    });
+typedef SpeechAudioCaptureFactory = SpeechAudioCapture Function();
+
+SenseVoiceAsrApi _createSenseVoiceAsrClient({
+  required String baseUrl,
+  required Duration timeout,
+}) => SenseVoiceAsrClient(baseUrl: baseUrl, timeout: timeout);
+
+SpeechAudioCapture _createSpeechAudioCapture() => RecordSpeechAudioCapture();
 
 /// 浏览器语音插件的最小生产边界，使会话代际和 final fallback 可独立验证。
 abstract interface class WebSpeechRecognitionDriver {
@@ -30,11 +44,17 @@ abstract interface class WebSpeechRecognitionDriver {
 SpeechFormulaRecognizer createPlatformSpeechFormulaRecognizer({
   required String mode,
   required String senseVoiceBaseUrl,
+  SenseVoiceAsrClientFactory asrClientFactory = _createSenseVoiceAsrClient,
+  SpeechAudioCaptureFactory audioCaptureFactory = _createSpeechAudioCapture,
 }) => switch (mode) {
   'browser' => WebSpeechFormulaRecognizer(),
   'sensevoiceLocal' => LocalSenseVoiceSpeechFormulaRecognizer(
-    RecordSpeechAudioCapture(),
-    SenseVoiceAsrClient(baseUrl: senseVoiceBaseUrl),
+    audioCaptureFactory(),
+    // 1.8 秒是五秒总预算中的 ASR 上限；client 自身默认值供独立调用方继续使用。
+    asrClientFactory(
+      baseUrl: senseVoiceBaseUrl,
+      timeout: const Duration(milliseconds: 1800),
+    ),
   ),
   _ => throw ArgumentError.value(mode, 'mode', '仅支持 browser 或 sensevoiceLocal'),
 };

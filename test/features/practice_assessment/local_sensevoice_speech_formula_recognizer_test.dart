@@ -82,10 +82,14 @@ void main() {
     final client = _FakeAsrClient(transcripts: <String>['first', 'second']);
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
 
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
     capture.add(<int>[1, 2]);
     await recognizer.stop();
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
     capture.add(<int>[3, 4]);
     await recognizer.stop();
 
@@ -103,7 +107,9 @@ void main() {
     final client = _FakeAsrClient(transcripts: <String>['sync chunk']);
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
 
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
     await recognizer.stop();
 
     expect(client.lastBytes!.sublist(44), <int>[1, 2]);
@@ -120,7 +126,7 @@ void main() {
       timerFactory: timerFactory.call,
     );
     final listening = recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
     );
 
     await recognizer.cancel();
@@ -140,7 +146,7 @@ void main() {
     final firstChunk = Uint8List.fromList(<int>[1, 2]);
 
     await recognizer.listen(
-      onResult: (words, {required isFinal}) {
+      onResult: (words, {required isFinal, processingElapsed}) {
         results.add(words);
         finalFlags.add(isFinal);
       },
@@ -159,13 +165,77 @@ void main() {
     expect(capture.subscriptionCancelCount, 1);
   });
 
+  test('final processingElapsed 覆盖 capture stop、WAV 编码与 ASR', () async {
+    var elapsed = Duration.zero;
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient()..transcribeGate = Completer<String>();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      processingClock: () => elapsed,
+    );
+    final observed = <Duration?>[];
+    await recognizer.listen(
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          observed.add(processingElapsed),
+    );
+    capture.add(<int>[1, 2]);
+
+    final stopping = recognizer.stop();
+    elapsed = const Duration(milliseconds: 300);
+    stopGate.complete();
+    await _flushAsyncWork();
+    expect(client.callCount, 1);
+    elapsed = const Duration(milliseconds: 750);
+    client.transcribeGate!.complete('x 的平方');
+    await stopping;
+
+    expect(observed, <Duration?>[const Duration(milliseconds: 750)]);
+  });
+
+  test('stop 在 pending capture.start 时也从 finalization 发起点计时', () async {
+    var elapsed = Duration.zero;
+    final startGate = Completer<void>();
+    final capture = _FakeCapture(
+      startGate: startGate,
+      chunksOnListen: <List<int>>[
+        <int>[1, 2],
+      ],
+    );
+    final client = _FakeAsrClient()..transcribeGate = Completer<String>();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      processingClock: () => elapsed,
+    );
+    final observed = <Duration?>[];
+    final listening = recognizer.listen(
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          observed.add(processingElapsed),
+    );
+
+    final stopping = recognizer.stop();
+    elapsed = const Duration(milliseconds: 400);
+    startGate.complete();
+    await listening;
+    await _flushAsyncWork();
+    expect(client.callCount, 1);
+    elapsed = const Duration(milliseconds: 900);
+    client.transcribeGate!.complete('x 的平方');
+    await stopping;
+
+    expect(observed, <Duration?>[const Duration(milliseconds: 900)]);
+  });
+
   test('并发 duplicate stop 共享同一个 in-flight Future 且不重复上传', () async {
     final capture = _FakeCapture();
     final client = _FakeAsrClient()..transcribeGate = Completer<String>();
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     final results = <String>[];
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
     );
     capture.add(<int>[1, 2]);
 
@@ -188,7 +258,7 @@ void main() {
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     final errors = <SpokenFormulaRecognitionException>[];
     final listening = recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: errors.add,
     );
 
@@ -214,7 +284,9 @@ void main() {
       client,
       timerFactory: timerFactory.call,
     );
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
     capture.add(<int>[1, 2]);
 
     timerFactory.timers.single.fire();
@@ -241,7 +313,8 @@ void main() {
     );
     final results = <String>[];
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
     );
     capture.add(<int>[1, 2]);
     final stopping = recognizer.stop();
@@ -268,7 +341,8 @@ void main() {
     );
     final results = <String>[];
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
     );
     capture.add(<int>[1, 2]);
 
@@ -287,7 +361,7 @@ void main() {
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出识别结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出识别结果'),
       onError: errors.add,
     );
 
@@ -307,7 +381,8 @@ void main() {
     final results = <String>[];
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
       onError: errors.add,
     );
     capture.add(<int>[1, 2]);
@@ -331,7 +406,7 @@ void main() {
     );
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出识别结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出识别结果'),
       onError: errors.add,
     );
 
@@ -358,10 +433,10 @@ void main() {
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     Future<void>? immediateRelisten;
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: (_) {
         immediateRelisten = recognizer.listen(
-          onResult: (_, {required isFinal}) {},
+          onResult: (_, {required isFinal, processingElapsed}) {},
         );
       },
     );
@@ -383,7 +458,9 @@ void main() {
     expect(isTerminalComplete, isFalse);
     cancelGate.complete();
     await terminal;
-    await recognizer.listen(onResult: (_, {required isFinal}) {});
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
     expect(capture.startCount, 2);
     await recognizer.cancel();
   });
@@ -395,7 +472,7 @@ void main() {
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: errors.add,
     );
     capture.add(<int>[1, 2]);
@@ -428,7 +505,8 @@ void main() {
       );
       final errors = <SpokenFormulaRecognitionException>[];
       await recognizer.listen(
-        onResult: (_, {required isFinal}) => fail('不应发出识别结果'),
+        onResult: (_, {required isFinal, processingElapsed}) =>
+            fail('不应发出识别结果'),
         onError: errors.add,
       );
       if (fixture.bytes case final bytes?) capture.add(bytes);
@@ -454,7 +532,8 @@ void main() {
       final results = <String>[];
       final errors = <SpokenFormulaRecognitionException>[];
       await recognizer.listen(
-        onResult: (words, {required isFinal}) => results.add(words),
+        onResult: (words, {required isFinal, processingElapsed}) =>
+            results.add(words),
         onError: errors.add,
       );
       capture.add(<int>[1, 2]);
@@ -481,7 +560,7 @@ void main() {
     var resultCalls = 0;
     var errorCalls = 0;
     await recognizer.listen(
-      onResult: (_, {required isFinal}) {
+      onResult: (_, {required isFinal, processingElapsed}) {
         resultCalls += 1;
         throw StateError('consumer result failure');
       },
@@ -505,7 +584,7 @@ void main() {
     final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
     var errorCalls = 0;
     await recognizer.listen(
-      onResult: (_, {required isFinal}) => fail('不应发出结果'),
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
       onError: (_) {
         errorCalls += 1;
         throw StateError('consumer error failure');
@@ -535,7 +614,7 @@ void main() {
         client,
       );
       await recognizer.listen(
-        onResult: (_, {required isFinal}) => fail('不应发出结果'),
+        onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
         onError: (_) => throw StateError('consumer stream error failure'),
       );
 
@@ -555,7 +634,8 @@ void main() {
     final results = <String>[];
     final errors = <SpokenFormulaRecognitionException>[];
     await recognizer.listen(
-      onResult: (words, {required isFinal}) => results.add(words),
+      onResult: (words, {required isFinal, processingElapsed}) =>
+          results.add(words),
       onError: errors.add,
     );
     capture.add(<int>[1, 2]);

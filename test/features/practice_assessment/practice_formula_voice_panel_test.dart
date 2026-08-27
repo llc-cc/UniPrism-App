@@ -63,7 +63,7 @@ void main() {
     recognizer.emit('负二的平方', isFinal: true);
     await _pumpAsync(tester);
 
-    expect(controller.state.status, SpeechFormulaStatus.preview);
+    expect(controller.state.status, SpeechFormulaStatus.choosingCandidate);
     expect(inserted, isEmpty);
     expect(find.textContaining('负二的平方'), findsOneWidget);
     await tester.tap(
@@ -112,7 +112,7 @@ void main() {
     recognizer.emit('把 y 乘以它自己再减五倍 y', isFinal: true);
     await _pumpAsync(tester);
 
-    expect(controller.state.status, SpeechFormulaStatus.error);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
     expect(
       find.byKey(const ValueKey('practice-formula-voice-error-transcript')),
       findsOneWidget,
@@ -166,28 +166,53 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<void> stop() async {}
 }
 
-final class _Repository implements SpokenFormulaRepository {
+final class _Repository implements SpokenFormulaResolutionRepository {
   const _Repository({this.withAlternative = false});
 
   final bool withAlternative;
 
   @override
-  Future<SpokenFormulaConversion> convert({
+  Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
-  }) async => SpokenFormulaConversion(
+    required Duration timeout,
+  }) async => SpokenFormulaResolution(
+    resolutionId: 'voice-panel-resolution',
     recognizedText: text,
     normalizedText: text,
-    latex: withAlternative ? r'(-2)^2' : r'x^2',
-    alternatives: withAlternative ? const <String>[r'-2^2'] : const [],
+    outcome: withAlternative
+        ? SpokenFormulaOutcome.candidates
+        : SpokenFormulaOutcome.resolved,
+    candidates: withAlternative
+        ? const <SpokenFormulaCandidate>[
+            SpokenFormulaCandidate(
+              id: 'candidate-a',
+              latex: r'(-2)^2',
+              spokenBack: '负二整体的平方',
+            ),
+            SpokenFormulaCandidate(
+              id: 'candidate-b',
+              latex: r'-2^2',
+              spokenBack: '二的平方再取负',
+            ),
+          ]
+        : const <SpokenFormulaCandidate>[
+            SpokenFormulaCandidate(
+              id: 'candidate-a',
+              latex: r'x^2',
+              spokenBack: 'x 的平方',
+            ),
+          ],
+    clarification: null,
     warnings: withAlternative ? const <String>['括号作用范围存在歧义'] : const [],
   );
 }
 
-final class _FailingRepository implements SpokenFormulaRepository {
+final class _FailingRepository implements SpokenFormulaResolutionRepository {
   @override
-  Future<SpokenFormulaConversion> convert({
+  Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
-  }) => throw const SpokenFormulaConversionException('公式转换失败，请重试。');
+    required Duration timeout,
+  }) => throw StateError('network internals');
 }

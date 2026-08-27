@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 
@@ -61,11 +59,18 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
         message: '正在请求麦克风权限…',
       ),
       SpeechFormulaStatus.listening => _listening(state),
-      SpeechFormulaStatus.converting => const _ProgressMessage(
+      SpeechFormulaStatus.transcribing => const _ProgressMessage(
+        message: '正在识别语音…',
+      ),
+      SpeechFormulaStatus.resolving => const _ProgressMessage(
         message: '正在转换为数学公式…',
       ),
-      SpeechFormulaStatus.preview => _preview(context, state),
-      SpeechFormulaStatus.error => _error(state),
+      SpeechFormulaStatus.resolved ||
+      SpeechFormulaStatus.choosingCandidate => _preview(context, state),
+      SpeechFormulaStatus.clarifying => Text(
+        state.resolution!.clarification!.question,
+      ),
+      SpeechFormulaStatus.infrastructureError => _error(state),
     };
   }
 
@@ -96,14 +101,15 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
   }
 
   Widget _preview(BuildContext context, SpeechFormulaState state) {
-    final conversion = state.conversion!;
-    final candidates = conversion.candidates;
-    final selectedLatex = state.selectedLatex!;
+    final resolution = state.resolution!;
+    final candidates = resolution.candidates;
+    final selected = state.selectedCandidate;
+    final displayedCandidate = selected ?? candidates.first;
     return Column(
       key: const ValueKey('practice-formula-voice-preview'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('识别内容：${conversion.recognizedText}'),
+        Text('识别内容：${resolution.recognizedText}'),
         const SizedBox(height: 10),
         Container(
           width: double.infinity,
@@ -116,7 +122,7 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Math.tex(
-                selectedLatex,
+                displayedCandidate.latex,
                 textStyle: const TextStyle(fontSize: 24),
               ),
             ),
@@ -133,14 +139,15 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
               for (var index = 0; index < candidates.length; index++)
                 ChoiceChip(
                   key: ValueKey('practice-formula-voice-alternative-$index'),
-                  selected: state.selectedCandidateIndex == index,
-                  label: Math.tex(candidates[index]),
-                  onSelected: (_) => controller.selectCandidate(index),
+                  selected: state.selectedCandidateId == candidates[index].id,
+                  label: Math.tex(candidates[index].latex),
+                  onSelected: (_) =>
+                      controller.selectCandidate(candidates[index].id),
                 ),
             ],
           ),
         ],
-        for (final warning in conversion.warnings) ...[
+        for (final warning in resolution.warnings) ...[
           const SizedBox(height: 8),
           Text(
             warning,
@@ -167,10 +174,12 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
             ),
             FilledButton.icon(
               key: const ValueKey('practice-formula-voice-insert'),
-              onPressed: () {
-                onInsert(selectedLatex);
-                unawaited(controller.reset());
-              },
+              onPressed: selected == null
+                  ? null
+                  : () {
+                      final latex = controller.confirmSelectedCandidate();
+                      if (latex != null) onInsert(latex);
+                    },
               icon: const Icon(Icons.add_rounded),
               label: const Text('插入公式'),
             ),
@@ -205,7 +214,7 @@ final class PracticeFormulaVoicePanel extends StatelessWidget {
               key: const ValueKey('practice-formula-voice-retry'),
               onPressed: state.transcript.isEmpty
                   ? controller.startListening
-                  : controller.retryConversion,
+                  : controller.retryResolution,
               child: const Text('重试'),
             ),
             TextButton(
