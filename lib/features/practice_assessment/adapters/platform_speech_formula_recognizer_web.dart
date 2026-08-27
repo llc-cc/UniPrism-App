@@ -107,6 +107,7 @@ final class WebSpeechFormulaRecognizer implements SpeechFormulaRecognizer {
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {
     _ensureNotDisposed();
     if (!_initialized) {

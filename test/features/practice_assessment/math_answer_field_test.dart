@@ -589,6 +589,7 @@ final class _VoiceTestRecognizer implements SpeechFormulaRecognizer {
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {
     _onResult = onResult;
   }

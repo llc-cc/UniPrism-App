@@ -10,6 +10,9 @@ typedef SpeechFormulaResultCallback =
 typedef SpeechFormulaErrorCallback =
     void Function(SpokenFormulaRecognitionException error);
 
+/// Local 识别器在 stop/finalization 起点通知控制器启动端到端 deadline。
+typedef SpeechFormulaFinalizationStartedCallback = void Function();
+
 /// 语音识别端口，隔离浏览器权限与平台插件细节。
 abstract interface class SpeechFormulaRecognizer {
   /// 最近一次 `initialize` 返回 false 的安全原因；成功后必须清空。
@@ -20,6 +23,7 @@ abstract interface class SpeechFormulaRecognizer {
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   });
 
   Future<void> stop();

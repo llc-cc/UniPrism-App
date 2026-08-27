@@ -295,6 +295,12 @@ void main() {
       totalDeadline: const Duration(milliseconds: 20),
     );
     addTearDown(controller.dispose);
+    var transcribingNotifications = 0;
+    controller.addListener(() {
+      if (controller.state.status == SpeechFormulaStatus.transcribing) {
+        transcribingNotifications += 1;
+      }
+    });
     await controller.startListening();
     capture.add(<int>[1, 2]);
 
@@ -306,6 +312,7 @@ void main() {
     await _flushAsyncWork();
 
     expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(transcribingNotifications, 1);
     expect(capture.cancelCount, 1);
     expect(client.callCount, 0);
     expect(repository.callCount, 0);
@@ -323,6 +330,12 @@ void main() {
       totalDeadline: const Duration(milliseconds: 20),
     );
     addTearDown(controller.dispose);
+    var transcribingNotifications = 0;
+    controller.addListener(() {
+      if (controller.state.status == SpeechFormulaStatus.transcribing) {
+        transcribingNotifications += 1;
+      }
+    });
     await controller.startListening();
     capture.add(<int>[1, 2]);
 
@@ -336,7 +349,130 @@ void main() {
     await _flushAsyncWork();
 
     expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(transcribingNotifications, 1);
     expect(capture.cancelCount, 1);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+  });
+
+  test('auto-stop 发起时即覆盖 gated capture.stop 且 late final 不覆盖错误', () async {
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient(transcripts: <String>['迟到结果']);
+    final timerFactory = _ManualTimerFactory();
+    final repository = _RecordingResolutionRepository();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      timerFactory: timerFactory.call,
+    );
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    var transcribingNotifications = 0;
+    controller.addListener(() {
+      if (controller.state.status == SpeechFormulaStatus.transcribing) {
+        transcribingNotifications += 1;
+      }
+    });
+    await controller.startListening();
+    capture.add(<int>[1, 2]);
+
+    timerFactory.timers.single.fire();
+    await _flushAsyncWork();
+    final statusAtFinalizationStart = controller.state.status;
+    final stopping = recognizer.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    final statusAtDeadline = controller.state.status;
+    final messageAtDeadline = controller.state.errorMessage;
+
+    stopGate.complete();
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtFinalizationStart, SpeechFormulaStatus.transcribing);
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(messageAtDeadline, contains('5 秒'));
+    expect(transcribingNotifications, 1);
+    expect(capture.stopCount, 1);
+    expect(client.callCount, 0);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+  });
+
+  test('auto-stop watchdog 覆盖 gated subscription cleanup 且不重复 stop', () async {
+    final subscriptionGate = Completer<void>();
+    final capture = _FakeCapture(subscriptionCancelGate: subscriptionGate);
+    final client = _FakeAsrClient(transcripts: <String>['迟到结果']);
+    final timerFactory = _ManualTimerFactory();
+    final repository = _RecordingResolutionRepository();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      timerFactory: timerFactory.call,
+    );
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    capture.add(<int>[1, 2]);
+
+    timerFactory.timers.single.fire();
+    await _flushAsyncWork();
+    final stopping = recognizer.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    final statusAtDeadline = controller.state.status;
+
+    subscriptionGate.complete();
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(capture.stopCount, 1);
+    expect(capture.subscriptionCancelCount, 1);
+    expect(client.callCount, 0);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+  });
+
+  test('auto-stop watchdog 覆盖 gated ASR 且共享预算不重启 deadline', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..transcribeGate = Completer<String>();
+    final timerFactory = _ManualTimerFactory();
+    final repository = _RecordingResolutionRepository();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      timerFactory: timerFactory.call,
+    );
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    capture.add(<int>[1, 2]);
+
+    timerFactory.timers.single.fire();
+    await _flushAsyncWork();
+    final stopping = recognizer.stop();
+    expect(client.callCount, 1);
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    final statusAtDeadline = controller.state.status;
+
+    client.transcribeGate!.complete('迟到公式');
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(capture.stopCount, 1);
     expect(repository.callCount, 0);
     expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
   });

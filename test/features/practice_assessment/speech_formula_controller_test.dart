@@ -677,6 +677,7 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {
     listenCount += 1;
     _resultCallbacks.add(onResult);

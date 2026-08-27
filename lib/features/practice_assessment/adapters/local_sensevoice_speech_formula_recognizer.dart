@@ -40,6 +40,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   Timer? _timer;
   SpeechFormulaResultCallback? _onResult;
   SpeechFormulaErrorCallback? _onError;
+  SpeechFormulaFinalizationStartedCallback? _onFinalizationStarted;
   Future<void>? _listenFuture;
   Future<void>? _stopFuture;
   Future<void>? _cancelFuture;
@@ -84,6 +85,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) {
     _ensureNotDisposed();
     if (_state != _LocalRecognitionState.idle) {
@@ -96,6 +98,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _timer = null;
     _onResult = onResult;
     _onError = onError;
+    _onFinalizationStarted = onFinalizationStarted;
     _stopFuture = null;
     _hasTerminalCallback = false;
     final operation = _startCaptureAfterCleanup(generation, _cancelFuture);
@@ -176,6 +179,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   Future<void> _stopInternal(int generation) async {
     // 从 stop/finalization 发起就计时，pending start、capture.stop、WAV 和 ASR 都不能漏算。
     final processingStartedAt = processingClock();
+    _emitFinalizationStarted(generation);
     final pendingStart = _listenFuture;
     if (_state == _LocalRecognitionState.starting && pendingStart != null) {
       try {
@@ -437,6 +441,15 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     }
   }
 
+  void _emitFinalizationStarted(int generation) {
+    if (!_isCurrent(generation) || _hasTerminalCallback) return;
+    try {
+      _onFinalizationStarted?.call();
+    } catch (_) {
+      // 生命周期信号只负责启动 watchdog；消费方异常不能阻断录音收尾。
+    }
+  }
+
   void _emitSafeError(int generation, Object error) {
     if (!_isCurrent(generation) || _hasTerminalCallback) return;
     _hasTerminalCallback = true;
@@ -465,6 +478,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _chunks = <Uint8List>[];
     _onResult = null;
     _onError = null;
+    _onFinalizationStarted = null;
     _listenFuture = null;
   }
 }

@@ -122,6 +122,9 @@ final class SpeechFormulaController extends ChangeNotifier {
         onError: (error) {
           _handleRecognitionError(operationId, error);
         },
+        onFinalizationStarted: () {
+          _handleFinalizationStarted(operationId);
+        },
       );
     } catch (_) {
       if (!_isCurrent(operationId)) return;
@@ -324,6 +327,21 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     _showInfrastructureError(error.message, _state.transcript.trim());
+  }
+
+  void _handleFinalizationStarted(int operationId) {
+    if (!_isCurrent(operationId) ||
+        _state.status != SpeechFormulaStatus.listening) {
+      return;
+    }
+    // Local 自动停止必须与手动 stop 共用同一 finalization 起点和绝对预算。
+    _setState(
+      SpeechFormulaState(
+        status: SpeechFormulaStatus.transcribing,
+        transcript: _state.transcript,
+      ),
+    );
+    _armDeadlineWatchdog(operationId, totalDeadline, _state.transcript.trim());
   }
 
   Future<void> _resolve(

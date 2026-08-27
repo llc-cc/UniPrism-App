@@ -23,6 +23,7 @@ final class _UnsupportedSpeechFormulaRecognizer
   Future<void> listen({
     required SpeechFormulaResultCallback onResult,
     SpeechFormulaErrorCallback? onError,
+    SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {}
 
   @override
