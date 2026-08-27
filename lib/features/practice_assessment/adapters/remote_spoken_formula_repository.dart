@@ -106,9 +106,10 @@ final class RemoteSpokenFormulaRepository
     String locale = 'zh-CN',
     required Duration timeout,
   }) async {
-    if (timeout <= Duration.zero) throw _deadlineExhausted;
-    // JSON 只发送完整毫秒；正的亚毫秒预算收敛到协议最小值，其余小预算不得被抬高。
-    final budgetMs = timeout.inMilliseconds.clamp(1, 5000);
+    final remainingMs = timeout.inMilliseconds;
+    // 协议只发送完整毫秒；截断后不足 1ms 即视为耗尽，不能反向延长到 1ms。
+    if (remainingMs <= 0) throw _deadlineExhausted;
+    final budgetMs = remainingMs.clamp(1, 5000);
     final data = await api.request(
       'POST',
       '/api/practice/formulas/resolve-spoken-text',

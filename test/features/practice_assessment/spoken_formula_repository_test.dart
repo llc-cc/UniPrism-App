@@ -68,15 +68,10 @@ void main() {
       text: '较小预算',
       timeout: const Duration(milliseconds: 200),
     );
-    await repository.resolve(
-      text: '不足一毫秒',
-      timeout: const Duration(microseconds: 500),
-    );
-
-    expect(budgets, <int>[5000, 200, 1]);
+    expect(budgets, <int>[5000, 200]);
   });
 
-  test('非正剩余时间在 HTTP 前失败', () async {
+  test('不足一整毫秒的剩余时间在 HTTP 前失败', () async {
     var requestCount = 0;
     final repository = _remoteRepository((_) async {
       requestCount += 1;
@@ -84,6 +79,7 @@ void main() {
     });
 
     for (final timeout in <Duration>[
+      const Duration(microseconds: 500),
       Duration.zero,
       const Duration(milliseconds: -1),
     ]) {
