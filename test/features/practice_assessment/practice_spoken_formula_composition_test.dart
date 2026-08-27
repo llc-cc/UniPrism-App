@@ -16,6 +16,16 @@ void main() {
     page.controller.dispose();
   });
 
+  test('Mock 默认仓库同时保留旧控制器端口和 V2 解析端口', () {
+    final page = PracticeAssessmentLabPage.mock();
+
+    final repository = page.speechFormulaController?.repository;
+    expect(repository, isA<SpokenFormulaRepository>());
+    expect(repository, isA<SpokenFormulaResolutionRepository>());
+    page.speechFormulaController?.dispose();
+    page.controller.dispose();
+  });
+
   test('Mock 页面保留显式注入的识别器与来源标签', () {
     final recognizer = _FakeRecognizer();
 

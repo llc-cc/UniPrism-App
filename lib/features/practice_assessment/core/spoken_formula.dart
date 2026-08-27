@@ -63,6 +63,99 @@ abstract interface class SpokenFormulaRepository {
   });
 }
 
+/// 韧性公式解析的三类成功结果；数学歧义不会被折叠为基础设施错误。
+enum SpokenFormulaOutcome { resolved, candidates, clarification }
+
+/// 澄清选项允许 UI 执行的有限动作集合。
+enum SpokenFormulaClarificationAction {
+  selectCandidate,
+  retryRecording,
+  useKeyboard,
+}
+
+/// 服务端已审核的公式候选；客户端只展示和选择，不重建 AST。
+final class SpokenFormulaCandidate {
+  const SpokenFormulaCandidate({
+    required this.id,
+    required this.latex,
+    required this.spokenBack,
+  });
+
+  final String id;
+  final String latex;
+  final String spokenBack;
+}
+
+/// 澄清问题中的可点击选项；只有选择候选动作会携带候选 ID。
+final class SpokenFormulaClarificationOption {
+  const SpokenFormulaClarificationOption({
+    required this.id,
+    required this.label,
+    required this.action,
+    this.candidateId,
+  });
+
+  final String id;
+  final String label;
+  final SpokenFormulaClarificationAction action;
+  final String? candidateId;
+}
+
+/// 公式解析无法唯一确定时返回的具体问题和恢复动作。
+final class SpokenFormulaClarification {
+  const SpokenFormulaClarification({
+    required this.question,
+    required this.focusText,
+    required this.options,
+  });
+
+  final String question;
+  final String focusText;
+  final List<SpokenFormulaClarificationOption> options;
+}
+
+/// 版本化公式解析结果；字段与服务端公开契约一一对应，不暴露 AST 或置信度。
+final class SpokenFormulaResolution {
+  const SpokenFormulaResolution({
+    required this.resolutionId,
+    required this.recognizedText,
+    required this.normalizedText,
+    required this.outcome,
+    required this.candidates,
+    required this.clarification,
+    required this.warnings,
+  });
+
+  final String resolutionId;
+  final String recognizedText;
+  final String normalizedText;
+  final SpokenFormulaOutcome outcome;
+  final List<SpokenFormulaCandidate> candidates;
+  final SpokenFormulaClarification? clarification;
+  final List<String> warnings;
+}
+
+/// V2 公式解析端口；调用方必须显式给出覆盖整次解析的截止时间。
+///
+/// Task 7 会让控制器迁移到此端口；当前独立接口避免中间提交破坏旧控制器编译。
+abstract interface class SpokenFormulaResolutionRepository {
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  });
+}
+
+/// 服务端解析结果违反公开契约时向 UI 暴露的安全错误。
+final class SpokenFormulaResolutionException implements Exception {
+  const SpokenFormulaResolutionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 /// 可安全展示给学生的转换失败。
 final class SpokenFormulaConversionException implements Exception {
   const SpokenFormulaConversionException(this.message);
