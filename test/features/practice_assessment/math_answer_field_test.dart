@@ -512,7 +512,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('语音候选确认后插入当前光标并进入原有 onChanged', (tester) async {
+  testWidgets('语音唯一结果确认后只插入当前光标一次并进入原有 onChanged', (tester) async {
     final mathController = MathFieldEditingController();
     final recognizer = _VoiceTestRecognizer();
     final speechController = SpeechFormulaController(
@@ -549,12 +549,63 @@ void main() {
     }
 
     expect(changes, changesBeforeVoice);
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-voice-insert')),
-    );
+    final insert = find.byKey(const ValueKey('practice-formula-voice-insert'));
+    await tester.tap(insert);
+    await tester.tap(insert);
     await tester.pump();
 
-    expect(changes.last, r'ax^2b');
+    expect(changes, <String>[...changesBeforeVoice, r'ax^2b']);
+    expect(speechController.state.status, SpeechFormulaStatus.idle);
+  });
+
+  testWidgets('375px infrastructureError 保留转写且原公式键盘继续可用', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final recognizer = _VoiceTestRecognizer();
+    final speechController = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: _VoiceFailingRepository(),
+    );
+    addTearDown(speechController.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-voice-error',
+          value: '',
+          enabled: true,
+          speechFormulaController: speechController,
+          onChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-start')),
+    );
+    await tester.pump();
+    recognizer.emit('把 y 乘以它自己再减五倍 y', isFinal: true);
+    for (var index = 0; index < 5; index++) {
+      await tester.pump();
+    }
+
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-infrastructure-error')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-error-transcript')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('把 y 乘以它自己再减五倍 y'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('practice-formula-keyboard')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }
 
@@ -630,4 +681,14 @@ final class _VoiceTestRepository implements SpokenFormulaResolutionRepository {
     clarification: null,
     warnings: const <String>[],
   );
+}
+
+final class _VoiceFailingRepository
+    implements SpokenFormulaResolutionRepository {
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) => throw StateError('network internals');
 }

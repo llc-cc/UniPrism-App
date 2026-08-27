@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/practice_assessment/application/speech_formula_controller.dart';
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
@@ -9,7 +10,7 @@ void main() {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
       recognizer: recognizer,
-      repository: _Repository(),
+      repository: const _Repository(_Outcome.resolved),
     );
     addTearDown(controller.dispose);
 
@@ -34,7 +35,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final controller = SpeechFormulaController(
       recognizer: _FakeRecognizer(),
-      repository: _Repository(),
+      repository: const _Repository(_Outcome.resolved),
       sourceLabel: '本机 SenseVoice',
     );
     addTearDown(controller.dispose);
@@ -49,36 +50,204 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('预览确认前不插入且确认后只回调选中候选', (tester) async {
+  testWidgets('resolved 只预览公式和反向朗读，显式插入后同步 reset 且只回调一次', (tester) async {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
       recognizer: recognizer,
-      repository: _Repository(withAlternative: true),
+      repository: const _Repository(_Outcome.resolved),
+    );
+    final inserted = <String>[];
+    final statusAtInsert = <SpeechFormulaStatus>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      _app(controller, (latex) {
+        inserted.add(latex);
+        statusAtInsert.add(controller.state.status);
+      }),
+    );
+    await _resolve(tester, controller, recognizer, 'x 的平方');
+
+    final resolved = find.byKey(
+      const ValueKey('practice-formula-voice-resolved'),
+    );
+    expect(resolved, findsOneWidget);
+    expect(
+      find.descendant(of: resolved, matching: find.byType(Math)),
+      findsOneWidget,
+    );
+    expect(find.text('反向朗读：x 的平方'), findsOneWidget);
+    expect(inserted, isEmpty);
+
+    final insert = find.byKey(const ValueKey('practice-formula-voice-insert'));
+    await tester.tap(insert);
+    await tester.tap(insert);
+    await tester.pump();
+
+    expect(inserted, <String>[r'x^2']);
+    expect(statusAtInsert, <SpeechFormulaStatus>[SpeechFormulaStatus.idle]);
+    recognizer.emit('迟到公式', isFinal: true, listenIndex: 0);
+    await _pumpAsync(tester);
+    expect(controller.state.status, SpeechFormulaStatus.idle);
+    expect(inserted, hasLength(1));
+  });
+
+  testWidgets('choosingCandidate 展示每张公式卡和反向朗读，显式选择前禁用插入', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.candidates),
     );
     final inserted = <String>[];
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller, inserted.add));
-    await controller.startListening();
-    recognizer.emit('负二的平方', isFinal: true);
-    await _pumpAsync(tester);
+    await _resolve(tester, controller, recognizer, '负二的平方');
 
     expect(controller.state.status, SpeechFormulaStatus.choosingCandidate);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-candidates')),
+      findsOneWidget,
+    );
+    for (final id in <String>['candidate-a', 'candidate-b']) {
+      final card = find.byKey(
+        ValueKey<String>('practice-formula-voice-candidate-$id'),
+      );
+      expect(card, findsOneWidget);
+      expect(
+        find.descendant(of: card, matching: find.byType(Math)),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.byKey(
+        const ValueKey('practice-formula-voice-spoken-back-candidate-a'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('反向朗读：负二整体的平方'), findsOneWidget);
+    expect(find.text('反向朗读：二的平方再取负'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('practice-formula-voice-insert')),
+          )
+          .onPressed,
+      isNull,
+    );
     expect(inserted, isEmpty);
-    expect(find.textContaining('负二的平方'), findsOneWidget);
+
     await tester.tap(
-      find.byKey(const ValueKey('practice-formula-voice-alternative-1')),
+      find.byKey(
+        const ValueKey('practice-formula-voice-candidate-candidate-b'),
+      ),
     );
     await tester.pump();
-    await tester.tap(
-      find.byKey(const ValueKey('practice-formula-voice-insert')),
+    expect(controller.state.selectedCandidate?.id, 'candidate-b');
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('practice-formula-voice-insert')),
+          )
+          .onPressed,
+      isNotNull,
     );
+
+    final insert = find.byKey(const ValueKey('practice-formula-voice-insert'));
+    await tester.tap(insert);
+    await tester.tap(insert);
     await tester.pump();
 
     expect(inserted, <String>[r'-2^2']);
+    expect(controller.state.status, SpeechFormulaStatus.idle);
   });
 
-  testWidgets('375 窄屏预览操作不溢出', (tester) async {
+  testWidgets('clarifying 显示具体问题和 focus，紫色 action 直接委托 controller', (
+    tester,
+  ) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.clarification),
+    );
+    final inserted = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, inserted.add));
+    await _resolve(tester, controller, recognizer, '负二的平方');
+
+    final promptFinder = find.byKey(
+      const ValueKey('practice-formula-voice-clarification'),
+    );
+    expect(promptFinder, findsOneWidget);
+    expect(find.text('负号是否在平方范围内？'), findsOneWidget);
+    expect(find.text('需要确认：负二的平方'), findsOneWidget);
+    expect(find.textContaining('换一种说法'), findsNothing);
+    expect(find.textContaining('语音输入失败'), findsNothing);
+    final decoration =
+        tester.widget<Container>(promptFinder).decoration! as BoxDecoration;
+    expect(decoration.color, const Color(0xFFF2ECFF));
+    expect(decoration.border!.top.color, const Color(0xFFB8A1E8));
+
+    for (final id in <String>['select-negative-outside', 'retry', 'keyboard']) {
+      expect(
+        find.byKey(
+          ValueKey<String>('practice-formula-voice-clarification-$id'),
+        ),
+        findsOneWidget,
+      );
+    }
+    await tester.tap(
+      find.byKey(
+        const ValueKey(
+          'practice-formula-voice-clarification-select-negative-outside',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(controller.state.selectedCandidate?.id, 'candidate-b');
+    expect(inserted, isEmpty);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-resolved')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('clarification 重录和监听取消都隔离旧 operation 的迟到 final', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.clarification),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '待澄清公式');
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-clarification-retry')),
+    );
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(recognizer.listenCount, 2);
+    recognizer.emit('旧轮次迟到结果', isFinal: true, listenIndex: 0);
+    await _pumpAsync(tester);
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-cancel')),
+    );
+    await _pumpAsync(tester);
+    recognizer.emit('取消后迟到结果', isFinal: true, listenIndex: 1);
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.idle);
+    expect(controller.state.resolution, isNull);
+  });
+
+  testWidgets('375px 下长 LaTeX 可横向滚动且长反向朗读换行不溢出', (tester) async {
     tester.view.physicalSize = const Size(375, 812);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -86,19 +255,36 @@ void main() {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
       recognizer: recognizer,
-      repository: _Repository(withAlternative: true),
+      repository: const _Repository(_Outcome.longCandidates),
     );
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller, (_) {}));
-    await controller.startListening();
-    recognizer.emit('负二的平方', isFinal: true);
-    await _pumpAsync(tester);
+    await _resolve(tester, controller, recognizer, '一个很长的公式');
 
+    for (final id in <String>['long-a', 'long-b']) {
+      final card = find.byKey(
+        ValueKey<String>('practice-formula-voice-candidate-$id'),
+      );
+      final horizontalScrolls = find.descendant(
+        of: card,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is SingleChildScrollView &&
+              widget.scrollDirection == Axis.horizontal,
+        ),
+      );
+      expect(horizontalScrolls, findsOneWidget);
+      final spoken = tester.widget<Text>(
+        find.byKey(ValueKey<String>('practice-formula-voice-spoken-back-$id')),
+      );
+      expect(spoken.maxLines, isNull);
+      expect(spoken.softWrap, isNot(false));
+    }
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('转换失败时保留并展示真实识别文本', (tester) async {
+  testWidgets('infrastructureError 保留真实转写并只显示基础设施错误态', (tester) async {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
       recognizer: recognizer,
@@ -108,11 +294,13 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(_app(controller, (_) {}));
-    await controller.startListening();
-    recognizer.emit('把 y 乘以它自己再减五倍 y', isFinal: true);
-    await _pumpAsync(tester);
+    await _resolve(tester, controller, recognizer, '把 y 乘以它自己再减五倍 y');
 
     expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-infrastructure-error')),
+      findsOneWidget,
+    );
     expect(
       find.byKey(const ValueKey('practice-formula-voice-error-transcript')),
       findsOneWidget,
@@ -130,6 +318,17 @@ Widget _app(
   ),
 );
 
+Future<void> _resolve(
+  WidgetTester tester,
+  SpeechFormulaController controller,
+  _FakeRecognizer recognizer,
+  String transcript,
+) async {
+  await controller.startListening();
+  recognizer.emit(transcript, isFinal: true);
+  await _pumpAsync(tester);
+}
+
 Future<void> _pumpAsync(WidgetTester tester) async {
   for (var index = 0; index < 5; index++) {
     await tester.pump();
@@ -137,7 +336,9 @@ Future<void> _pumpAsync(WidgetTester tester) async {
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
-  SpeechFormulaResultCallback? _onResult;
+  final List<SpeechFormulaResultCallback> _onResults =
+      <SpeechFormulaResultCallback>[];
+  int listenCount = 0;
 
   @override
   SpokenFormulaRecognitionException? get initializationError => null;
@@ -151,11 +352,12 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     SpeechFormulaErrorCallback? onError,
     SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {
-    _onResult = onResult;
+    listenCount += 1;
+    _onResults.add(onResult);
   }
 
-  void emit(String words, {required bool isFinal}) =>
-      _onResult?.call(words, isFinal: isFinal);
+  void emit(String words, {required bool isFinal, int? listenIndex}) =>
+      _onResults[listenIndex ?? _onResults.length - 1](words, isFinal: isFinal);
 
   @override
   Future<void> cancel() async {}
@@ -167,47 +369,121 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<void> stop() async {}
 }
 
-final class _Repository implements SpokenFormulaResolutionRepository {
-  const _Repository({this.withAlternative = false});
+enum _Outcome { resolved, candidates, clarification, longCandidates }
 
-  final bool withAlternative;
+final class _Repository implements SpokenFormulaResolutionRepository {
+  const _Repository(this.outcome);
+
+  final _Outcome outcome;
 
   @override
   Future<SpokenFormulaResolution> resolve({
     required String text,
     String locale = 'zh-CN',
     required Duration timeout,
-  }) async => SpokenFormulaResolution(
-    resolutionId: 'voice-panel-resolution',
-    recognizedText: text,
-    normalizedText: text,
-    outcome: withAlternative
-        ? SpokenFormulaOutcome.candidates
-        : SpokenFormulaOutcome.resolved,
-    candidates: withAlternative
-        ? const <SpokenFormulaCandidate>[
-            SpokenFormulaCandidate(
-              id: 'candidate-a',
-              latex: r'(-2)^2',
-              spokenBack: '负二整体的平方',
-            ),
-            SpokenFormulaCandidate(
-              id: 'candidate-b',
-              latex: r'-2^2',
-              spokenBack: '二的平方再取负',
-            ),
-          ]
-        : const <SpokenFormulaCandidate>[
-            SpokenFormulaCandidate(
-              id: 'candidate-a',
-              latex: r'x^2',
-              spokenBack: 'x 的平方',
-            ),
-          ],
-    clarification: null,
-    warnings: withAlternative ? const <String>['括号作用范围存在歧义'] : const [],
-  );
+  }) async => switch (outcome) {
+    _Outcome.resolved => _resolved(text),
+    _Outcome.candidates => _candidates(text),
+    _Outcome.clarification => _clarification(text),
+    _Outcome.longCandidates => _longCandidates(text),
+  };
 }
+
+SpokenFormulaResolution _resolved(String text) => SpokenFormulaResolution(
+  resolutionId: 'voice-panel-resolved',
+  recognizedText: text,
+  normalizedText: text,
+  outcome: SpokenFormulaOutcome.resolved,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-a',
+      latex: r'x^2',
+      spokenBack: 'x 的平方',
+    ),
+  ],
+  clarification: null,
+  warnings: const <String>[],
+);
+
+SpokenFormulaResolution _candidates(String text) => SpokenFormulaResolution(
+  resolutionId: 'voice-panel-candidates',
+  recognizedText: text,
+  normalizedText: text,
+  outcome: SpokenFormulaOutcome.candidates,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-a',
+      latex: r'(-2)^2',
+      spokenBack: '负二整体的平方',
+    ),
+    SpokenFormulaCandidate(
+      id: 'candidate-b',
+      latex: r'-2^2',
+      spokenBack: '二的平方再取负',
+    ),
+  ],
+  clarification: null,
+  warnings: const <String>['括号作用范围存在歧义'],
+);
+
+SpokenFormulaResolution _clarification(String text) => SpokenFormulaResolution(
+  resolutionId: 'voice-panel-clarification',
+  recognizedText: text,
+  normalizedText: text,
+  outcome: SpokenFormulaOutcome.clarification,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'candidate-b',
+      latex: r'-2^2',
+      spokenBack: '二的平方再取负',
+    ),
+  ],
+  clarification: SpokenFormulaClarification(
+    question: '负号是否在平方范围内？',
+    focusText: '负二的平方',
+    options: const <SpokenFormulaClarificationOption>[
+      SpokenFormulaClarificationOption(
+        id: 'select-negative-outside',
+        label: '平方后再取负',
+        action: SpokenFormulaClarificationAction.selectCandidate,
+        candidateId: 'candidate-b',
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'retry',
+        label: '重新说',
+        action: SpokenFormulaClarificationAction.retryRecording,
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'keyboard',
+        label: '使用键盘',
+        action: SpokenFormulaClarificationAction.useKeyboard,
+      ),
+    ],
+  ),
+  warnings: const <String>[],
+);
+
+SpokenFormulaResolution _longCandidates(String text) => SpokenFormulaResolution(
+  resolutionId: 'voice-panel-long-candidates',
+  recognizedText: text,
+  normalizedText: text,
+  outcome: SpokenFormulaOutcome.candidates,
+  candidates: const <SpokenFormulaCandidate>[
+    SpokenFormulaCandidate(
+      id: 'long-a',
+      latex:
+          r'\frac{x_1^2+x_2^2+x_3^2+x_4^2+x_5^2+x_6^2}{\sqrt{a_1^2+a_2^2+a_3^2+a_4^2}}',
+      spokenBack: '分子是从 x 一的平方一直加到 x 六的平方，分母是括号 a 一到 a 四各自平方之和的算术平方根，分母结束',
+    ),
+    SpokenFormulaCandidate(
+      id: 'long-b',
+      latex: r'\sum_{k=1}^{20}\frac{k^3+2k^2+k+1}{(k+1)(k+2)(k+3)}',
+      spokenBack: '从 k 等于一到二十求和，主体是 k 的三次方加二倍 k 的平方加 k 加一，整体除以三个连续因子的乘积，主体结束',
+    ),
+  ],
+  clarification: null,
+  warnings: const <String>[],
+);
 
 final class _FailingRepository implements SpokenFormulaResolutionRepository {
   @override

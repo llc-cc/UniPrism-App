@@ -233,39 +233,51 @@ final class _MathAnswerFieldState extends State<MathAnswerField> {
     );
   }
 
+  Widget _buildContent(BuildContext context) {
+    return Column(
+      key: const ValueKey('practice-math-answer-field'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildEditor(context),
+        if (_formatError case final message?) ...[
+          const SizedBox(height: 6),
+          Text(
+            message,
+            key: const ValueKey('practice-math-answer-error'),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.error,
+              fontSize: 12,
+            ),
+          ),
+        ],
+        if (_isKeyboardVisible && widget.enabled) ...[
+          if (widget.speechFormulaController case final voiceController?)
+            PracticeFormulaVoicePanel(
+              controller: voiceController,
+              onInsert: _insertSpokenFormula,
+            ),
+          PracticeFormulaKeyboard(
+            controller: _controller,
+            onDone: _finishEditing,
+          ),
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Semantics(
       label: '数学公式答案',
       textField: true,
-      child: Column(
-        key: const ValueKey('practice-math-answer-field'),
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildEditor(context),
-          if (_formatError case final message?) ...[
-            const SizedBox(height: 6),
-            Text(
-              message,
-              key: const ValueKey('practice-math-answer-error'),
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.error,
-                fontSize: 12,
-              ),
-            ),
-          ],
-          if (_isKeyboardVisible && widget.enabled) ...[
-            if (widget.speechFormulaController case final voiceController?)
-              PracticeFormulaVoicePanel(
-                controller: voiceController,
-                onInsert: _insertSpokenFormula,
-              ),
-            PracticeFormulaKeyboard(
-              controller: _controller,
-              onDone: _finishEditing,
-            ),
-          ],
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final content = _buildContent(context);
+          if (!constraints.hasBoundedHeight) return content;
+          // 练习页已有外层滚动；仅有界宿主在语音结果叠加键盘时启用本地滚动。
+          return SingleChildScrollView(child: content);
+        },
       ),
     );
   }
