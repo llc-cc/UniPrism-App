@@ -71,21 +71,28 @@ final class SpeechFormulaController extends ChangeNotifier {
   int _operationId = 0;
   bool _initialized = false;
   bool _disposed = false;
+  Timer? _deadlineWatchdog;
+  int? _deadlineOperationId;
+  Future<void>? _pendingCancel;
 
   Future<void> startListening() async {
     final previousStatus = _state.status;
     final operationId = ++_operationId;
+    _cancelDeadlineWatchdog();
     _setState(
       const SpeechFormulaState(
         status: SpeechFormulaStatus.requestingPermission,
       ),
     );
     try {
+      Future<void>? cleanup = _pendingCancel;
       if (previousStatus != SpeechFormulaStatus.idle) {
         // 新录音先使旧 operation 失效，再释放旧会话，迟到 Future 无权覆盖新状态。
-        await recognizer.cancel();
-        if (!_isCurrent(operationId)) return;
+        cleanup = _ensureRecognizerCancelled();
       }
+      // confirm 虽已同步回到 idle，其 fire-and-forget 清理仍是新会话的前置屏障。
+      await cleanup;
+      if (!_isCurrent(operationId)) return;
       if (!_initialized) {
         final available = await recognizer.initialize();
         if (!_isCurrent(operationId)) return;
@@ -134,6 +141,8 @@ final class SpeechFormulaController extends ChangeNotifier {
         transcript: _state.transcript,
       ),
     );
+    // 主动 stop 从 finalization 发起点占用总预算，不能等待 recognizer 自己返回后才计时。
+    _armDeadlineWatchdog(operationId, totalDeadline, _state.transcript.trim());
     try {
       await recognizer.stop();
     } catch (_) {
@@ -158,13 +167,15 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     final operationId = ++_operationId;
+    _cancelDeadlineWatchdog();
     _setState(
       SpeechFormulaState(
         status: SpeechFormulaStatus.resolving,
         transcript: transcript,
       ),
     );
-    await _resolve(operationId, transcript, Duration.zero);
+    _armDeadlineWatchdog(operationId, totalDeadline, transcript);
+    await _resolve(operationId, transcript, totalDeadline);
   }
 
   void selectCandidate(String candidateId) {
@@ -175,6 +186,7 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     ++_operationId;
+    _cancelDeadlineWatchdog();
     _setState(
       SpeechFormulaState(
         status: SpeechFormulaStatus.choosingCandidate,
@@ -212,6 +224,7 @@ final class SpeechFormulaController extends ChangeNotifier {
           return;
         }
         ++_operationId;
+        _cancelDeadlineWatchdog();
         _setState(
           SpeechFormulaState(
             status: SpeechFormulaStatus.resolved,
@@ -222,11 +235,20 @@ final class SpeechFormulaController extends ChangeNotifier {
         );
         return;
       case SpokenFormulaClarificationAction.retryRecording:
-        await reset();
+        final operationId = ++_operationId;
+        _cancelDeadlineWatchdog();
+        await _ensureRecognizerCancelled();
+        if (!_isCurrent(operationId)) return;
+        _setState(const SpeechFormulaState());
         await startListening();
         return;
       case SpokenFormulaClarificationAction.useKeyboard:
-        await reset();
+        final operationId = ++_operationId;
+        _cancelDeadlineWatchdog();
+        await _ensureRecognizerCancelled();
+        if (_isCurrent(operationId)) {
+          _setState(const SpeechFormulaState());
+        }
         return;
     }
   }
@@ -236,17 +258,19 @@ final class SpeechFormulaController extends ChangeNotifier {
     final latex = _state.selectedCandidate?.latex;
     if (latex == null) return null;
     ++_operationId;
-    unawaited(recognizer.cancel().catchError((Object _) {}));
+    _cancelDeadlineWatchdog();
+    unawaited(_ensureRecognizerCancelled());
     _setState(const SpeechFormulaState());
     return latex;
   }
 
   Future<void> reset() async {
-    ++_operationId;
+    final operationId = ++_operationId;
+    _cancelDeadlineWatchdog();
     try {
-      await recognizer.cancel();
+      await _ensureRecognizerCancelled();
     } finally {
-      if (!_disposed) _setState(const SpeechFormulaState());
+      if (_isCurrent(operationId)) _setState(const SpeechFormulaState());
     }
   }
 
@@ -279,9 +303,15 @@ final class SpeechFormulaController extends ChangeNotifier {
         transcript: transcript,
       ),
     );
-    unawaited(
-      _resolve(operationId, transcript, processingElapsed ?? Duration.zero),
-    );
+    final remaining = totalDeadline - (processingElapsed ?? Duration.zero);
+    if (processingElapsed == null) {
+      // Browser 没有可信 stop-origin metadata，按 ledger 从 final transcript 重新计时。
+      _armDeadlineWatchdog(operationId, totalDeadline, transcript);
+    } else if (_deadlineOperationId != operationId) {
+      // Local 自动停止没有经过 controller.stop，需从已报告耗时恢复同一总预算。
+      _armDeadlineWatchdog(operationId, remaining, transcript);
+    }
+    unawaited(_resolve(operationId, transcript, remaining));
   }
 
   void _handleRecognitionError(
@@ -299,13 +329,10 @@ final class SpeechFormulaController extends ChangeNotifier {
   Future<void> _resolve(
     int operationId,
     String transcript,
-    Duration processingElapsed,
+    Duration remaining,
   ) async {
-    final remaining = totalDeadline - processingElapsed;
     if (remaining <= Duration.zero) {
-      if (_isCurrent(operationId)) {
-        _showInfrastructureError(_deadlineMessage, transcript);
-      }
+      _expireOperation(operationId, transcript);
       return;
     }
     try {
@@ -314,6 +341,7 @@ final class SpeechFormulaController extends ChangeNotifier {
           .resolve(text: transcript, timeout: remaining)
           .timeout(remaining);
       if (!_isCurrent(operationId)) return;
+      _cancelDeadlineWatchdog();
       final status = switch (resolution.outcome) {
         SpokenFormulaOutcome.resolved => SpeechFormulaStatus.resolved,
         SpokenFormulaOutcome.candidates =>
@@ -332,9 +360,7 @@ final class SpeechFormulaController extends ChangeNotifier {
         ),
       );
     } on TimeoutException {
-      if (_isCurrent(operationId)) {
-        _showInfrastructureError(_deadlineMessage, transcript);
-      }
+      _expireOperation(operationId, transcript);
     } on SpokenFormulaResolutionException catch (error) {
       if (_isCurrent(operationId)) {
         _showInfrastructureError(error.message, transcript);
@@ -351,6 +377,7 @@ final class SpeechFormulaController extends ChangeNotifier {
     String transcript = '',
     bool isSupported = true,
   ]) {
+    _cancelDeadlineWatchdog();
     _setState(
       SpeechFormulaState(
         status: SpeechFormulaStatus.infrastructureError,
@@ -359,6 +386,70 @@ final class SpeechFormulaController extends ChangeNotifier {
         isSupported: isSupported,
       ),
     );
+  }
+
+  void _armDeadlineWatchdog(
+    int operationId,
+    Duration remaining,
+    String transcript,
+  ) {
+    _cancelDeadlineWatchdog();
+    if (remaining <= Duration.zero) {
+      _expireOperation(operationId, transcript);
+      return;
+    }
+    _deadlineOperationId = operationId;
+    _deadlineWatchdog = Timer(remaining, () {
+      if (_deadlineOperationId != operationId) return;
+      _deadlineWatchdog = null;
+      _deadlineOperationId = null;
+      _expireOperation(operationId, transcript);
+    });
+  }
+
+  void _cancelDeadlineWatchdog() {
+    _deadlineWatchdog?.cancel();
+    _deadlineWatchdog = null;
+    _deadlineOperationId = null;
+  }
+
+  void _expireOperation(int operationId, String transcript) {
+    if (!_isCurrent(operationId)) return;
+    // deadline 是终态边界：先失效回调并展示错误，再异步收尾，UI 不等待插件释放。
+    ++_operationId;
+    _cancelDeadlineWatchdog();
+    _showInfrastructureError(_deadlineMessage, transcript);
+    unawaited(_ensureRecognizerCancelled());
+  }
+
+  Future<void> _ensureRecognizerCancelled() {
+    final existing = _pendingCancel;
+    if (existing != null) return existing;
+    late final Future<void> operation;
+    operation = _cancelRecognizerSafely().whenComplete(() {
+      if (identical(_pendingCancel, operation)) _pendingCancel = null;
+    });
+    _pendingCancel = operation;
+    return operation;
+  }
+
+  Future<void> _cancelRecognizerSafely() async {
+    try {
+      await recognizer.cancel();
+    } catch (_) {
+      // operation 已先失效；插件清理错误不得覆盖安全 UI 状态或启动并发清理。
+    }
+  }
+
+  Future<void> _disposeRecognizerAfterCleanup(
+    Future<void>? pendingCleanup,
+  ) async {
+    try {
+      await pendingCleanup;
+      await recognizer.dispose();
+    } catch (_) {
+      // 同步 dispose 无法回传异步插件错误，且页面已无安全展示目标。
+    }
   }
 
   bool _containsCandidate(
@@ -384,8 +475,9 @@ final class SpeechFormulaController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     ++_operationId;
-    // controller 持有 recognizer；同步生命周期无法 await，因此在此收敛异步释放错误。
-    unawaited(recognizer.dispose().catchError((Object _) {}));
+    _cancelDeadlineWatchdog();
+    // dispose 与 pending cancel 串行，避免底层 capture 的迟到释放触碰下一生命周期。
+    unawaited(_disposeRecognizerAfterCleanup(_pendingCancel));
     super.dispose();
   }
 }

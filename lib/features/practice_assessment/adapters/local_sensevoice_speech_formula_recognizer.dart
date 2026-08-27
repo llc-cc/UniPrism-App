@@ -42,6 +42,8 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   SpeechFormulaErrorCallback? _onError;
   Future<void>? _listenFuture;
   Future<void>? _stopFuture;
+  Future<void>? _cancelFuture;
+  Future<void>? _captureCancelFuture;
   bool _hasTerminalCallback = false;
   SpokenFormulaRecognitionException? _initializationError;
   bool _disposed = false;
@@ -96,9 +98,21 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _onError = onError;
     _stopFuture = null;
     _hasTerminalCallback = false;
-    final operation = _startCapture(generation);
+    final operation = _startCaptureAfterCleanup(generation, _cancelFuture);
     _listenFuture = operation;
     return operation;
+  }
+
+  Future<void> _startCaptureAfterCleanup(
+    int generation,
+    Future<void>? pendingCleanup,
+  ) async {
+    // 旧 capture.cancel 完成前不能启动新 capture，否则迟到释放会终止新录音。
+    await pendingCleanup;
+    if (!_isCurrent(generation) || _state != _LocalRecognitionState.starting) {
+      return;
+    }
+    await _startCapture(generation);
   }
 
   Future<void> _startCapture(int generation) async {
@@ -211,6 +225,9 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   Future<void> cancel() {
     if (_disposed) return _disposeFuture ?? Future<void>.value();
     // 先推进 generation，再触碰插件或订阅，确保其间完成的 HTTP Future 已无回调资格。
+    final previousState = _state;
+    final pendingStart = _listenFuture;
+    final pendingStop = _stopFuture;
     ++_generation;
     _state = _LocalRecognitionState.idle;
     final subscription = _subscription;
@@ -219,13 +236,33 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _timer = null;
     _clearCallbacksAndBuffer();
     _stopFuture = null;
-    return _cancelResources(subscription);
+    final existing = _cancelFuture;
+    if (existing != null) return existing;
+    late final Future<void> operation;
+    operation =
+        _cancelSessionResources(
+          subscription: subscription,
+          pendingStart: previousState == _LocalRecognitionState.starting
+              ? pendingStart
+              : null,
+          pendingStop: previousState == _LocalRecognitionState.stopping
+              ? pendingStop
+              : null,
+        ).whenComplete(() {
+          if (identical(_cancelFuture, operation)) _cancelFuture = null;
+        });
+    _cancelFuture = operation;
+    return operation;
   }
 
   @override
   Future<void> dispose() {
     final existing = _disposeFuture;
     if (existing != null) return existing;
+    final previousState = _state;
+    final pendingStart = _listenFuture;
+    final pendingStop = _stopFuture;
+    final pendingCancel = _cancelFuture;
     _disposed = true;
     ++_generation;
     _state = _LocalRecognitionState.idle;
@@ -235,14 +272,26 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     _timer = null;
     _clearCallbacksAndBuffer();
     _stopFuture = null;
-    final operation = _disposeResources(subscription);
+    final operation = _disposeResources(
+      subscription: subscription,
+      pendingCancel: pendingCancel,
+      pendingStart: previousState == _LocalRecognitionState.starting
+          ? pendingStart
+          : null,
+      pendingStop: previousState == _LocalRecognitionState.stopping
+          ? pendingStop
+          : null,
+    );
     _disposeFuture = operation;
     return operation;
   }
 
-  Future<void> _disposeResources(
-    StreamSubscription<Uint8List>? subscription,
-  ) async {
+  Future<void> _disposeResources({
+    required StreamSubscription<Uint8List>? subscription,
+    required Future<void>? pendingCancel,
+    required Future<void>? pendingStart,
+    required Future<void>? pendingStop,
+  }) async {
     Object? firstError;
     StackTrace? firstStackTrace;
 
@@ -255,8 +304,14 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       }
     }
 
-    await release(() async => subscription?.cancel());
-    await release(_capture.cancel);
+    if (pendingCancel != null) {
+      await release(() => pendingCancel);
+    } else {
+      await release(() async => subscription?.cancel());
+      if (pendingStart != null) await release(() => pendingStart);
+      await release(_cancelCaptureSerialized);
+      if (pendingStop != null) await release(() => pendingStop);
+    }
     await release(_capture.dispose);
     await release(_client.dispose);
     if (firstError case final error?) {
@@ -273,10 +328,54 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       // 用户取消不应产生第二条 UI 错误；capture.cancel 仍需执行以释放麦克风。
     }
     try {
-      await _capture.cancel();
+      await _cancelCaptureSerialized();
     } catch (_) {
       // generation 已失效，取消失败也不能恢复或污染旧会话。
     }
+  }
+
+  Future<void> _cancelSessionResources({
+    required StreamSubscription<Uint8List>? subscription,
+    required Future<void>? pendingStart,
+    required Future<void>? pendingStop,
+  }) async {
+    try {
+      await subscription?.cancel();
+    } catch (_) {
+      // 用户取消不应产生第二条 UI 错误；capture 清理仍必须继续。
+    }
+    if (pendingStart != null) {
+      try {
+        await pendingStart;
+      } catch (_) {
+        // start 失败已由原调用方观察；取消路径只负责确保它不再晚于 capture.cancel。
+      }
+    }
+    try {
+      await _cancelCaptureSerialized();
+    } catch (_) {
+      // generation 已失效，取消失败也不能恢复或污染旧会话。
+    }
+    if (pendingStop != null) {
+      try {
+        await pendingStop;
+      } catch (_) {
+        // stop 的安全错误由原终止 Future 收敛；新会话只等待资源顺序完成。
+      }
+    }
+  }
+
+  Future<void> _cancelCaptureSerialized() {
+    final existing = _captureCancelFuture;
+    if (existing != null) return existing;
+    late final Future<void> operation;
+    operation = Future<void>.sync(_capture.cancel).whenComplete(() {
+      if (identical(_captureCancelFuture, operation)) {
+        _captureCancelFuture = null;
+      }
+    });
+    _captureCancelFuture = operation;
+    return operation;
   }
 
   void _handleStreamError(int generation, Object error) {

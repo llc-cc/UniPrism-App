@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/practice_assessment/adapters/local_sensevoice_speech_formula_recognizer.dart';
 import 'package:uniprism_app/features/practice_assessment/adapters/sensevoice_asr_client.dart';
+import 'package:uniprism_app/features/practice_assessment/application/speech_formula_controller.dart';
 import 'package:uniprism_app/features/practice_assessment/core/speech_audio_capture.dart';
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
@@ -115,7 +116,7 @@ void main() {
     expect(client.lastBytes!.sublist(44), <int>[1, 2]);
   });
 
-  test('cancel 与 pending capture.start 竞态只取消一次且不启动 timer', () async {
+  test('pending capture.start 取消收尾完成前新 listen 不得启动新 capture', () async {
     final startGate = Completer<void>();
     final capture = _FakeCapture(startGate: startGate);
     final client = _FakeAsrClient();
@@ -125,16 +126,33 @@ void main() {
       client,
       timerFactory: timerFactory.call,
     );
-    final listening = recognizer.listen(
+    final firstListening = recognizer.listen(
       onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
     );
+    await _flushAsyncWork();
 
-    await recognizer.cancel();
+    var isCancelComplete = false;
+    final cancelling = recognizer.cancel().then((_) => isCancelComplete = true);
+    final secondListening = recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
+    await _flushAsyncWork();
+    final startsBeforeOldCleanup = capture.startCount;
+    final cancelCompletedBeforeOldStart = isCancelComplete;
+
     startGate.complete();
-    await listening;
+    await Future.wait<void>(<Future<void>>[
+      firstListening,
+      cancelling,
+      secondListening,
+    ]);
 
+    expect(startsBeforeOldCleanup, 1);
+    expect(cancelCompletedBeforeOldStart, isFalse);
+    expect(capture.startCount, 2);
     expect(capture.cancelCount, 1);
-    expect(timerFactory.timers, isEmpty);
+    expect(timerFactory.timers, hasLength(1));
+    await recognizer.cancel();
   });
 
   test('stop 拼接安全副本并仅上传一次 WAV 后发出一个 final', () async {
@@ -226,6 +244,101 @@ void main() {
     await stopping;
 
     expect(observed, <Duration?>[const Duration(milliseconds: 900)]);
+  });
+
+  test(
+    'controller watchdog 覆盖 pending capture.start 且迟到 start 不改写错误',
+    () async {
+      final startGate = Completer<void>();
+      final capture = _FakeCapture(startGate: startGate);
+      final client = _FakeAsrClient();
+      final repository = _RecordingResolutionRepository();
+      final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+        capture,
+        client,
+      );
+      final controller = SpeechFormulaController(
+        recognizer: recognizer,
+        repository: repository,
+        totalDeadline: const Duration(milliseconds: 20),
+      );
+      addTearDown(controller.dispose);
+
+      final starting = controller.startListening();
+      await _flushAsyncWork();
+      final stopping = controller.stopListening();
+      await Future<void>.delayed(const Duration(milliseconds: 45));
+      final statusAtDeadline = controller.state.status;
+      final messageAtDeadline = controller.state.errorMessage;
+
+      startGate.complete();
+      await Future.wait<void>(<Future<void>>[starting, stopping]);
+      await _flushAsyncWork();
+
+      expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+      expect(messageAtDeadline, contains('5 秒'));
+      expect(capture.cancelCount, 1);
+      expect(repository.callCount, 0);
+      expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    },
+  );
+
+  test('controller watchdog 覆盖 gated capture.stop 且迟到收尾不能解析', () async {
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient(transcripts: <String>['迟到结果']);
+    final repository = _RecordingResolutionRepository();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    capture.add(<int>[1, 2]);
+
+    final stopping = controller.stopListening();
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    final statusAtDeadline = controller.state.status;
+    stopGate.complete();
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(capture.cancelCount, 1);
+    expect(client.callCount, 0);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+  });
+
+  test('controller watchdog 覆盖 gated ASR 且 late final 不能覆盖错误', () async {
+    final capture = _FakeCapture();
+    final client = _FakeAsrClient()..transcribeGate = Completer<String>();
+    final repository = _RecordingResolutionRepository();
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(capture, client);
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    capture.add(<int>[1, 2]);
+
+    final stopping = controller.stopListening();
+    await _flushAsyncWork();
+    expect(client.callCount, 1);
+    await Future<void>.delayed(const Duration(milliseconds: 45));
+    final statusAtDeadline = controller.state.status;
+    client.transcribeGate!.complete('迟到公式');
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(capture.cancelCount, 1);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
   });
 
   test('并发 duplicate stop 共享同一个 in-flight Future 且不重复上传', () async {
@@ -320,9 +433,9 @@ void main() {
     final stopping = recognizer.stop();
     await _flushAsyncWork();
 
-    await recognizer.cancel();
+    final cancelling = recognizer.cancel();
     client.transcribeGate!.complete('late');
-    await stopping;
+    await Future.wait<void>(<Future<void>>[stopping, cancelling]);
 
     expect(results, isEmpty);
     expect(capture.cancelCount, 1);
@@ -540,13 +653,13 @@ void main() {
       final stopping = recognizer.stop();
       await _flushAsyncWork();
 
-      await recognizer.cancel();
+      final cancelling = recognizer.cancel();
       if (completesWithError) {
         gate.completeError(StateError('late failure'));
       } else {
         gate.complete('late success');
       }
-      await stopping;
+      await Future.wait<void>(<Future<void>>[stopping, cancelling]);
 
       expect(results, isEmpty);
       expect(errors, isEmpty);
@@ -645,14 +758,23 @@ void main() {
 
     final firstDispose = recognizer.dispose();
     final secondDispose = recognizer.dispose();
-    await Future.wait<void>(<Future<void>>[firstDispose, secondDispose]);
+    var isDisposeComplete = false;
+    firstDispose.then((_) => isDisposeComplete = true);
+    await _flushAsyncWork();
+    final disposeCompletedBeforeOldStop = isDisposeComplete;
 
+    client.transcribeGate!.complete('late result');
+    await Future.wait<void>(<Future<void>>[
+      stopping,
+      firstDispose,
+      secondDispose,
+    ]);
+
+    expect(disposeCompletedBeforeOldStop, isFalse);
     expect(capture.cancelCount, 1);
     expect(capture.disposeCount, 1);
     expect(client.disposeCount, 1);
     expect(capture.subscriptionCancelCount, 1);
-    client.transcribeGate!.complete('late result');
-    await stopping;
     expect(results, isEmpty);
     expect(errors, isEmpty);
   });
@@ -786,6 +908,35 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   @override
   Future<void> dispose() async {
     disposeCount += 1;
+  }
+}
+
+final class _RecordingResolutionRepository
+    implements SpokenFormulaResolutionRepository {
+  int callCount = 0;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async {
+    callCount += 1;
+    return SpokenFormulaResolution(
+      resolutionId: 'late-resolution',
+      recognizedText: text,
+      normalizedText: text,
+      outcome: SpokenFormulaOutcome.resolved,
+      candidates: const <SpokenFormulaCandidate>[
+        SpokenFormulaCandidate(
+          id: 'late-candidate',
+          latex: 'x^2',
+          spokenBack: 'x 的平方',
+        ),
+      ],
+      clarification: null,
+      warnings: const <String>[],
+    );
   }
 }
 

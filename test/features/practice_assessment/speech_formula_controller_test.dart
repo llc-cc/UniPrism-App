@@ -190,6 +190,47 @@ void main() {
     expect(repository.callCount, 1);
   });
 
+  test('主动 stop 挂起时 watchdog 按总 deadline 退出并隔离 late final', () async {
+    final stopGate = Completer<void>();
+    final cancelGate = Completer<void>();
+    final recognizer = _FakeRecognizer(
+      stopGate: stopGate,
+      cancelGates: <Completer<void>>[cancelGate],
+    );
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(milliseconds: 20),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    final stopping = controller.stopListening();
+    await Future<void>.delayed(const Duration(milliseconds: 35));
+    final statusAtDeadline = controller.state.status;
+    final messageAtDeadline = controller.state.errorMessage;
+    final cancelCallsAtDeadline = recognizer.cancelCount;
+
+    recognizer.emit(
+      '迟到公式',
+      isFinal: true,
+      processingElapsed: const Duration(milliseconds: 10),
+    );
+    stopGate.complete();
+    cancelGate.complete();
+    await stopping;
+    await _flushAsyncWork();
+
+    expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
+    expect(messageAtDeadline, contains('5 秒'));
+    expect(cancelCallsAtDeadline, 1);
+    expect(repository.callCount, 0);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+  });
+
   test('ASR processingElapsed 已耗尽预算时不调用 repository', () async {
     final recognizer = _FakeRecognizer();
     final repository = _QueueRepository(
@@ -308,6 +349,58 @@ void main() {
     expect(controller.state.resolution, isNull);
   });
 
+  test('确认后立即重新录音必须等待旧 cancel 完成', () async {
+    final cancelGate = Completer<void>();
+    final recognizer = _FakeRecognizer(
+      cancelGates: <Completer<void>>[cancelGate],
+    );
+    final controller = _controller(recognizer: recognizer);
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(controller.confirmSelectedCandidate(), 'x^2');
+    final restarting = controller.startListening();
+    await _flushAsyncWork();
+    final statusBeforeCancel = controller.state.status;
+    final listensBeforeCancel = recognizer.listenCount;
+
+    cancelGate.complete();
+    await restarting;
+
+    expect(statusBeforeCancel, SpeechFormulaStatus.requestingPermission);
+    expect(listensBeforeCancel, 1);
+    expect(recognizer.cancelCount, 1);
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(recognizer.listenCount, 2);
+  });
+
+  test('迟到 reset finally 不能覆盖更晚的新 listening', () async {
+    final oldCancelGate = Completer<void>();
+    final newCancelGate = Completer<void>();
+    final recognizer = _FakeRecognizer(
+      cancelGates: <Completer<void>>[oldCancelGate, newCancelGate],
+    );
+    final controller = _controller(recognizer: recognizer);
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+
+    final resetting = controller.reset();
+    await _flushAsyncWork();
+    final restarting = controller.startListening();
+    await _flushAsyncWork();
+    newCancelGate.complete();
+    await _flushAsyncWork();
+    oldCancelGate.complete();
+    await Future.wait<void>(<Future<void>>[resetting, restarting]);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(recognizer.listenCount, 2);
+  });
+
   test('只能按当前 response candidate ID 选择候选', () async {
     final recognizer = _FakeRecognizer();
     final controller = _controller(
@@ -371,6 +464,66 @@ void main() {
     recognizer.emit('旧 late final', isFinal: true, listenIndex: 0);
     await _flushAsyncWork();
     expect(controller.state.status, SpeechFormulaStatus.listening);
+  });
+
+  test('迟到 clarification retry cleanup 不能启动第三轮录音', () async {
+    final oldCancelGate = Completer<void>();
+    final newCancelGate = Completer<void>();
+    final recognizer = _FakeRecognizer(
+      cancelGates: <Completer<void>>[oldCancelGate, newCancelGate],
+    );
+    final resolution = _clarification();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(resolution),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('待澄清', isFinal: true);
+    await _flushAsyncWork();
+
+    final answering = controller.answerClarification(
+      resolution.clarification!.options[1],
+    );
+    await _flushAsyncWork();
+    final restarting = controller.startListening();
+    await _flushAsyncWork();
+    newCancelGate.complete();
+    await _flushAsyncWork();
+    oldCancelGate.complete();
+    await Future.wait<void>(<Future<void>>[answering, restarting]);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(recognizer.listenCount, 2);
+  });
+
+  test('dispose 等待 pending cancel 后再释放 recognizer 且无迟到通知', () async {
+    final cancelGate = Completer<void>();
+    final events = <String>[];
+    final recognizer = _FakeRecognizer(
+      cancelGates: <Completer<void>>[cancelGate],
+      lifecycleEvents: events,
+    );
+    final controller = _controller(recognizer: recognizer);
+    var notifications = 0;
+    controller.addListener(() => notifications += 1);
+    await controller.startListening();
+    recognizer.emit('x 的平方', isFinal: true);
+    await _flushAsyncWork();
+    final beforeCleanup = notifications;
+    controller.confirmSelectedCandidate();
+
+    controller.dispose();
+    await _flushAsyncWork();
+    final eventsBeforeCancelCompletes = List<String>.of(events);
+    cancelGate.complete();
+    await _flushAsyncWork();
+
+    expect(eventsBeforeCancelCompletes, <String>['cancel:start']);
+    expect(events, <String>['cancel:start', 'cancel:end', 'dispose']);
+    expect(notifications, beforeCleanup + 1);
   });
 
   test('clarification useKeyboard 回到 idle 且不产生选中答案', () async {
@@ -498,18 +651,23 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     this.initializationError,
     this.stopGate,
     this.disposeError,
-  });
+    List<Completer<void>>? cancelGates,
+    this.lifecycleEvents,
+  }) : _cancelGates = cancelGates ?? <Completer<void>>[];
 
   final bool isAvailable;
   @override
   final SpokenFormulaRecognitionException? initializationError;
   final Completer<void>? stopGate;
   final Object? disposeError;
+  final List<Completer<void>> _cancelGates;
+  final List<String>? lifecycleEvents;
   final List<SpeechFormulaResultCallback> _resultCallbacks =
       <SpeechFormulaResultCallback>[];
   final List<SpeechFormulaErrorCallback?> _errorCallbacks =
       <SpeechFormulaErrorCallback?>[];
   int listenCount = 0;
+  int cancelCount = 0;
   int disposeCount = 0;
 
   @override
@@ -546,11 +704,18 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<void> stop() async => stopGate?.future;
 
   @override
-  Future<void> cancel() async {}
+  Future<void> cancel() async {
+    final index = cancelCount;
+    cancelCount += 1;
+    lifecycleEvents?.add('cancel:start');
+    if (index < _cancelGates.length) await _cancelGates[index].future;
+    lifecycleEvents?.add('cancel:end');
+  }
 
   @override
   Future<void> dispose() async {
     disposeCount += 1;
+    lifecycleEvents?.add('dispose');
     if (disposeError case final error?) throw error;
   }
 }
