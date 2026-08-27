@@ -79,6 +79,7 @@ class SenseVoiceApplicationTests(unittest.TestCase):
             response = client.get("/health")
 
         self.assertEqual(200, response.status_code)
+        self.assertEqual(["sensevoice"], response.json()["modelsLoaded"])
         self.assertEqual(
             r"D:\dev\local-ai\sensevoice\cache\modelscope\models\iic--SenseVoiceSmall\snapshots\master",
             FakeAutoModel.constructions[0]["model"],

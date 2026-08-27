@@ -53,6 +53,11 @@ def create_application(
         model_path=model_path,
         hub="ms",
     )
+    if model_path and "custom" in funasr_app.state.fallback_models:
+        # 对外仍保持 model=sensevoice；内部复用已加载的本地实例，避免短公式请求再次构造联网 VAD。
+        funasr_app.state.fallback_models["sensevoice"] = (
+            funasr_app.state.fallback_models.pop("custom")
+        )
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(
         CORSMiddleware,
