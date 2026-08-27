@@ -103,11 +103,11 @@ final class SpokenFormulaClarificationOption {
 
 /// 公式解析无法唯一确定时返回的具体问题和恢复动作。
 final class SpokenFormulaClarification {
-  const SpokenFormulaClarification({
+  SpokenFormulaClarification({
     required this.question,
     required this.focusText,
-    required this.options,
-  });
+    required List<SpokenFormulaClarificationOption> options,
+  }) : options = List<SpokenFormulaClarificationOption>.unmodifiable(options);
 
   final String question;
   final String focusText;
@@ -116,15 +116,16 @@ final class SpokenFormulaClarification {
 
 /// 版本化公式解析结果；字段与服务端公开契约一一对应，不暴露 AST 或置信度。
 final class SpokenFormulaResolution {
-  const SpokenFormulaResolution({
+  SpokenFormulaResolution({
     required this.resolutionId,
     required this.recognizedText,
     required this.normalizedText,
     required this.outcome,
-    required this.candidates,
+    required List<SpokenFormulaCandidate> candidates,
     required this.clarification,
-    required this.warnings,
-  });
+    required List<String> warnings,
+  }) : candidates = List<SpokenFormulaCandidate>.unmodifiable(candidates),
+       warnings = List<String>.unmodifiable(warnings);
 
   final String resolutionId;
   final String recognizedText;

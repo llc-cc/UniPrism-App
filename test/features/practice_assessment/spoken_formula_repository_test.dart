@@ -233,6 +233,292 @@ void main() {
     await _expectSafeResolutionFailure(oneOption);
   });
 
+  final textLengthCases =
+      <
+        ({
+          String field,
+          int maximum,
+          Map<String, Object?> Function(String value) fixture,
+        })
+      >[
+        (
+          field: 'recognizedText',
+          maximum: 300,
+          fixture: (value) => _resolvedFixture()..['recognizedText'] = value,
+        ),
+        (
+          field: 'normalizedText',
+          maximum: 300,
+          fixture: (value) => _resolvedFixture()..['normalizedText'] = value,
+        ),
+        (
+          field: 'candidate.spokenBack',
+          maximum: 240,
+          fixture: (value) => _candidateFieldFixture('spokenBack', value),
+        ),
+        (
+          field: 'candidate.latex',
+          maximum: 512,
+          fixture: (value) => _candidateFieldFixture('latex', value),
+        ),
+        (
+          field: 'clarification.question',
+          maximum: 240,
+          fixture: (value) => _clarificationFieldFixture('question', value),
+        ),
+        (
+          field: 'clarification.focusText',
+          maximum: 120,
+          fixture: (value) => _clarificationFieldFixture('focusText', value),
+        ),
+        (
+          field: 'clarification.options.label',
+          maximum: 120,
+          fixture: (value) => _optionFieldFixture('label', value),
+        ),
+        (
+          field: 'warnings',
+          maximum: 160,
+          fixture: (value) =>
+              _resolvedFixture()..['warnings'] = <String>[value],
+        ),
+      ];
+
+  for (final item in textLengthCases) {
+    test('${item.field} 接受后端契约最大长度 ${item.maximum}', () async {
+      final repository = _remoteRepository(
+        (_) async => _okResponse(item.fixture(_repeatedText(item.maximum))),
+      );
+
+      final result = await repository.resolve(
+        text: 'x',
+        timeout: const Duration(seconds: 5),
+      );
+
+      expect(result, isA<SpokenFormulaResolution>());
+    });
+
+    test('${item.field} 拒绝超过后端契约最大长度', () async {
+      await _expectSafeResolutionFailure(
+        item.fixture(_repeatedText(item.maximum + 1)),
+      );
+    });
+  }
+
+  test('用户原文和规范化文本允许契约内的 URL 与反斜线纯文本', () async {
+    final data = _resolvedFixture()
+      ..['recognizedText'] = '输入 https://example.com'
+      ..['normalizedText'] = r'集合 \{x\}';
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'x',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.recognizedText, '输入 https://example.com');
+    expect(resolution.normalizedText, r'集合 \{x\}');
+  });
+
+  for (final unsafeText in <String>[
+    r'\frac{x}{y}',
+    r'$x$',
+    '<img\nsrc=example.com/image>',
+    '`x`',
+    '[说明](https://example.com)',
+    '# 标题',
+    '**粗体答案**',
+    '__粗体答案__',
+    '~~删除答案~~',
+    '请确认 *答案*。',
+    '请确认_答案_。',
+    'ftp://example.com/formula',
+    'mailto:test@example.com',
+    'data:text/plain,x',
+    'javascript:alert(1)',
+    'file:///tmp/formula',
+    'www.example.com/formula',
+    '//example.com/formula',
+    '请查看example.com/formula',
+  ]) {
+    test('服务端展示文本拒绝标记或链接：$unsafeText', () async {
+      await _expectSafeResolutionFailure(
+        _candidateFieldFixture('spokenBack', unsafeText),
+      );
+    });
+  }
+
+  test('展示文本过滤允许普通高中数学下标描述', () async {
+    final data = _resolvedFixture()
+      ..['warnings'] = <String>['请确认 x_2 的取值范围（可以等于 2）。'];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'x',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.warnings, <String>['请确认 x_2 的取值范围（可以等于 2）。']);
+  });
+
+  for (final item
+      in <
+        ({String field, Map<String, Object?> Function(String value) fixture})
+      >[
+        (
+          field: 'candidate.spokenBack',
+          fixture: (value) => _candidateFieldFixture('spokenBack', value),
+        ),
+        (
+          field: 'clarification.question',
+          fixture: (value) => _clarificationFieldFixture('question', value),
+        ),
+        (
+          field: 'clarification.focusText',
+          fixture: (value) => _clarificationFieldFixture('focusText', value),
+        ),
+        (
+          field: 'clarification.options.label',
+          fixture: (value) => _optionFieldFixture('label', value),
+        ),
+        (
+          field: 'warnings',
+          fixture: (value) =>
+              _resolvedFixture()..['warnings'] = <String>[value],
+        ),
+      ]) {
+    test('${item.field} 使用服务端展示文本过滤规则', () async {
+      await _expectSafeResolutionFailure(
+        item.fixture('访问 https://example.com'),
+      );
+    });
+  }
+
+  for (final item
+      in <({String level, Map<String, Object?> Function() fixture})>[
+        (level: '顶层', fixture: () => _resolvedFixture()..['confidence'] = 0.99),
+        (
+          level: 'candidate',
+          fixture: () => _candidateFieldFixture('ast', <String, Object?>{}),
+        ),
+        (
+          level: 'clarification',
+          fixture: () => _clarificationFieldFixture('confidence', 0.5),
+        ),
+        (
+          level: 'option',
+          fixture: () => _optionFieldFixture('confidence', 0.5),
+        ),
+      ]) {
+    test('${item.level}对象拒绝后端契约外字段', () async {
+      await _expectSafeResolutionFailure(item.fixture());
+    });
+  }
+
+  test('领域集合防御复制源列表且 getter 不可修改', () {
+    final sourceOptions = <SpokenFormulaClarificationOption>[
+      const SpokenFormulaClarificationOption(
+        id: 'retry-recording',
+        label: '重新录音',
+        action: SpokenFormulaClarificationAction.retryRecording,
+      ),
+      const SpokenFormulaClarificationOption(
+        id: 'use-keyboard',
+        label: '使用公式键盘',
+        action: SpokenFormulaClarificationAction.useKeyboard,
+      ),
+    ];
+    final clarification = SpokenFormulaClarification(
+      question: '请选择下一步。',
+      focusText: '作用范围',
+      options: sourceOptions,
+    );
+    final sourceCandidates = <SpokenFormulaCandidate>[
+      const SpokenFormulaCandidate(
+        id: 'candidate-1',
+        latex: 'x^2',
+        spokenBack: 'x 的平方',
+      ),
+    ];
+    final sourceWarnings = <String>['请确认作用范围。'];
+    final resolution = SpokenFormulaResolution(
+      resolutionId: 'resolution-1',
+      recognizedText: 'x 的平方',
+      normalizedText: 'x的平方',
+      outcome: SpokenFormulaOutcome.clarification,
+      candidates: sourceCandidates,
+      clarification: clarification,
+      warnings: sourceWarnings,
+    );
+
+    sourceCandidates.clear();
+    sourceWarnings.clear();
+    sourceOptions.clear();
+
+    expect(resolution.candidates, hasLength(1));
+    expect(resolution.warnings, hasLength(1));
+    expect(resolution.clarification?.options, hasLength(2));
+    expect(
+      () => resolution.candidates.clear(),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(() => resolution.warnings.clear(), throwsA(isA<UnsupportedError>()));
+    expect(
+      () => resolution.clarification?.options.clear(),
+      throwsA(isA<UnsupportedError>()),
+    );
+  });
+
+  test('演示解析的候选、警告和澄清选项均不可修改', () async {
+    const repository = DemoSpokenFormulaRepository();
+
+    final resolved = await repository.resolve(
+      text: 'x 的平方',
+      timeout: const Duration(seconds: 5),
+    );
+    final candidates = await repository.resolve(
+      text: '负二的平方',
+      timeout: const Duration(seconds: 5),
+    );
+    final clarification = await repository.resolve(
+      text: '未覆盖表达',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(
+      () => resolved.candidates.add(
+        const SpokenFormulaCandidate(
+          id: 'candidate-2',
+          latex: 'x',
+          spokenBack: 'x',
+        ),
+      ),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(() => candidates.warnings.clear(), throwsA(isA<UnsupportedError>()));
+    expect(
+      () => clarification.clarification?.options.clear(),
+      throwsA(isA<UnsupportedError>()),
+    );
+  });
+
+  for (final text in <String>['', '   ', '，。！？']) {
+    test('演示解析拒绝空白或归一化为空的输入：${text.isEmpty ? '空字符串' : text}', () async {
+      const repository = DemoSpokenFormulaRepository();
+
+      await expectLater(
+        repository.resolve(text: text, timeout: const Duration(seconds: 5)),
+        throwsA(
+          isA<SpokenFormulaResolutionException>().having(
+            (error) => error.message,
+            'message',
+            '没有识别到有效的公式内容，请重新说一次。',
+          ),
+        ),
+      );
+    });
+  }
+
   test('演示解析对未覆盖表达返回可交互澄清而不是抛错', () async {
     const repository = DemoSpokenFormulaRepository();
 
@@ -306,6 +592,30 @@ Map<String, Object?> _candidateFixture(String id) => <String, Object?>{
   'latex': r'x^2',
   'spokenBack': 'x 的平方',
 };
+
+Map<String, Object?> _candidateFieldFixture(String key, Object? value) {
+  final data = _resolvedFixture();
+  final candidates = data['candidates']! as List<Map<String, Object?>>;
+  candidates.single[key] = value;
+  return data;
+}
+
+Map<String, Object?> _clarificationFieldFixture(String key, Object? value) {
+  final data = _clarificationFixture();
+  final clarification = data['clarification']! as Map<String, Object?>;
+  clarification[key] = value;
+  return data;
+}
+
+Map<String, Object?> _optionFieldFixture(String key, Object? value) {
+  final data = _clarificationFixture();
+  final clarification = data['clarification']! as Map<String, Object?>;
+  final options = clarification['options']! as List<Map<String, Object?>>;
+  options.first[key] = value;
+  return data;
+}
+
+String _repeatedText(int length) => List<String>.filled(length, '甲').join();
 
 Future<void> _expectSafeResolutionFailure(Map<String, Object?> data) async {
   final repository = _remoteRepository((_) async => _okResponse(data));

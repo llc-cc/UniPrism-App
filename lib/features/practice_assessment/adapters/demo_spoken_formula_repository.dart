@@ -25,6 +25,9 @@ final class DemoSpokenFormulaRepository
   }) async {
     final recognizedText = text.trim();
     final normalized = _normalize(recognizedText);
+    if (recognizedText.isEmpty || normalized.isEmpty) {
+      throw const SpokenFormulaResolutionException('没有识别到有效的公式内容，请重新说一次。');
+    }
     if (locale != 'zh-CN') {
       return _clarificationResolution(
         recognizedText: recognizedText,

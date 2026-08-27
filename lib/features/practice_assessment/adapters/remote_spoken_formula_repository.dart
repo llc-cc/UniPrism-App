@@ -9,6 +9,43 @@ final class RemoteSpokenFormulaRepository
   static const _malformedResolution = SpokenFormulaResolutionException(
     '公式服务返回的数据不完整，请重新说一次。',
   );
+  static const _resolutionKeys = <String>{
+    'resolutionId',
+    'recognizedText',
+    'normalizedText',
+    'outcome',
+    'candidates',
+    'clarification',
+    'warnings',
+  };
+  static const _candidateKeys = <String>{'id', 'latex', 'spokenBack'};
+  static const _clarificationKeys = <String>{
+    'question',
+    'focusText',
+    'options',
+  };
+  static const _optionRequiredKeys = <String>{'id', 'label', 'action'};
+  static const _optionOptionalKeys = <String>{'candidateId'};
+
+  // 与后端 strictModelTextSchema 保持同一拒绝面，避免响应绕过纯文本 UI 边界。
+  static final List<RegExp>
+  _prohibitedDisplayTextPatterns = List<RegExp>.unmodifiable(<RegExp>[
+    RegExp(r'\\|\$'),
+    RegExp(r'</?[A-Za-z][A-Za-z0-9:-]*(?:\s+[^<>]*?)?\s*/?>|<!--'),
+    RegExp(r'`|!?\[[^\]\r\n]+\]\([^)\r\n]+\)|^\s*#{1,6}\s', multiLine: true),
+    RegExp(
+      r'\*\*[^*\r\n]+\*\*|__[^_\r\n]+__|~~[^~\r\n]+~~|(?:^|[\s（(])(?:\*[^*\r\n]+\*|_[^_\r\n]+_)(?=$|[\s，。！？；：、）)])',
+      multiLine: true,
+    ),
+    RegExp(
+      r'\b(?:https?|ftp|mailto|data|javascript|file):|\bwww\.|//[A-Za-z0-9]',
+      caseSensitive: false,
+    ),
+    RegExp(
+      r'(?:^|[^A-Za-z0-9_-])(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})?\.)+[A-Za-z]{2,63}(?::\d{1,5})?(?:[/?#][^\s，。！？；：、）]*)?',
+      caseSensitive: false,
+    ),
+  ]);
 
   final PracticeApiClient api;
 
@@ -52,21 +89,25 @@ final class RemoteSpokenFormulaRepository
 
   SpokenFormulaResolution _parseResolution(Map<String, Object?> data) {
     try {
+      _parseStrictObject(data, requiredKeys: _resolutionKeys);
       final outcome = _parseOutcome(data['outcome']);
       final candidates = _parseCandidates(data['candidates']);
       final clarification = data['clarification'] == null
           ? null
           : _parseClarification(data['clarification']);
-      final warnings = _parseStringList(data['warnings'], maximum: 3);
+      final warnings = _parseList(
+        data['warnings'],
+        maximum: 3,
+      ).map((item) => _parseDisplayText(item, maximum: 160)).toList();
       _validateResolution(outcome, candidates, clarification);
       return SpokenFormulaResolution(
         resolutionId: _parseId(data['resolutionId']),
-        recognizedText: _parseText(data['recognizedText']),
-        normalizedText: _parseText(data['normalizedText']),
+        recognizedText: _parsePlainText(data['recognizedText'], maximum: 300),
+        normalizedText: _parsePlainText(data['normalizedText'], maximum: 300),
         outcome: outcome,
-        candidates: List<SpokenFormulaCandidate>.unmodifiable(candidates),
+        candidates: candidates,
         clarification: clarification,
-        warnings: List<String>.unmodifiable(warnings),
+        warnings: warnings,
       );
     } on SpokenFormulaResolutionException {
       rethrow;
@@ -87,14 +128,14 @@ final class RemoteSpokenFormulaRepository
     final candidates = <SpokenFormulaCandidate>[];
     final ids = <String>{};
     for (final item in items) {
-      final data = _parseObject(item);
+      final data = _parseStrictObject(item, requiredKeys: _candidateKeys);
       final id = _parseId(data['id']);
       if (!ids.add(id)) throw _malformedResolution;
       candidates.add(
         SpokenFormulaCandidate(
           id: id,
-          latex: _parseText(data['latex'], maximum: 512),
-          spokenBack: _parseText(data['spokenBack']),
+          latex: _parsePlainText(data['latex'], maximum: 512),
+          spokenBack: _parseDisplayText(data['spokenBack'], maximum: 240),
         ),
       );
     }
@@ -102,12 +143,16 @@ final class RemoteSpokenFormulaRepository
   }
 
   SpokenFormulaClarification _parseClarification(Object? value) {
-    final data = _parseObject(value);
+    final data = _parseStrictObject(value, requiredKeys: _clarificationKeys);
     final optionItems = _parseList(data['options'], minimum: 2, maximum: 3);
     final options = <SpokenFormulaClarificationOption>[];
     final ids = <String>{};
     for (final item in optionItems) {
-      final option = _parseObject(item);
+      final option = _parseStrictObject(
+        item,
+        requiredKeys: _optionRequiredKeys,
+        optionalKeys: _optionOptionalKeys,
+      );
       final id = _parseId(option['id']);
       if (!ids.add(id)) throw _malformedResolution;
       final action = _parseAction(option['action']);
@@ -118,16 +163,16 @@ final class RemoteSpokenFormulaRepository
       options.add(
         SpokenFormulaClarificationOption(
           id: id,
-          label: _parseText(option['label']),
+          label: _parseDisplayText(option['label'], maximum: 120),
           action: action,
           candidateId: candidateId,
         ),
       );
     }
     return SpokenFormulaClarification(
-      question: _parseText(data['question']),
-      focusText: _parseText(data['focusText']),
-      options: List<SpokenFormulaClarificationOption>.unmodifiable(options),
+      question: _parseDisplayText(data['question'], maximum: 240),
+      focusText: _parseDisplayText(data['focusText'], maximum: 120),
+      options: options,
     );
   }
 
@@ -168,9 +213,23 @@ final class RemoteSpokenFormulaRepository
     }
   }
 
-  Map<String, Object?> _parseObject(Object? value) {
+  Map<String, Object?> _parseStrictObject(
+    Object? value, {
+    required Set<String> requiredKeys,
+    Set<String> optionalKeys = const <String>{},
+  }) {
     if (value is! Map) throw _malformedResolution;
-    return value.map((key, item) => MapEntry(key.toString(), item));
+    final data = <String, Object?>{};
+    for (final entry in value.entries) {
+      if (entry.key is! String) throw _malformedResolution;
+      data[entry.key as String] = entry.value;
+    }
+    final allowedKeys = <String>{...requiredKeys, ...optionalKeys};
+    if (!data.keys.toSet().containsAll(requiredKeys) ||
+        data.keys.any((key) => !allowedKeys.contains(key))) {
+      throw _malformedResolution;
+    }
+    return data;
   }
 
   List<Object?> _parseList(
@@ -184,25 +243,70 @@ final class RemoteSpokenFormulaRepository
     return List<Object?>.from(value);
   }
 
-  List<String> _parseStringList(Object? value, {required int maximum}) {
-    final items = _parseList(value, maximum: maximum);
-    return items.map(_parseText).toList();
-  }
-
   String _parseId(Object? value) {
-    final id = _parseText(value, maximum: 80);
-    if (!RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(id)) {
-      throw _malformedResolution;
-    }
-    return id;
-  }
-
-  String _parseText(Object? value, {int maximum = 512}) {
-    if (value is! String || value.trim().isEmpty || value.length > maximum) {
+    if (value is! String ||
+        value.isEmpty ||
+        value.length > 80 ||
+        !RegExp(r'^[A-Za-z0-9_-]+$').hasMatch(value)) {
       throw _malformedResolution;
     }
     return value;
   }
+
+  String _parsePlainText(Object? value, {required int maximum}) {
+    if (value is! String) throw _malformedResolution;
+    final text = value.trim();
+    if (text.isEmpty || text.length > maximum) {
+      throw _malformedResolution;
+    }
+    return text;
+  }
+
+  String _parseDisplayText(Object? value, {required int maximum}) {
+    final text = _parsePlainText(value, maximum: maximum);
+    if (_prohibitedDisplayTextPatterns.any(
+          (pattern) => pattern.hasMatch(text),
+        ) ||
+        _hasHanAdjacentEmphasis(text)) {
+      throw _malformedResolution;
+    }
+    return text;
+  }
+
+  bool _hasHanAdjacentEmphasis(String text) {
+    final emphasisPattern = RegExp(r'\*[^*\r\n]+\*|_[^_\r\n]+_');
+    const closingCharacters = <int>{
+      0xFF0C,
+      0x3002,
+      0xFF01,
+      0xFF1F,
+      0xFF1B,
+      0xFF1A,
+      0x3001,
+      0xFF09,
+    };
+    for (final match in emphasisPattern.allMatches(text)) {
+      if (match.start == 0) continue;
+      final precedingRunes = text.substring(0, match.start).runes;
+      if (precedingRunes.isEmpty || !_isHan(precedingRunes.last)) continue;
+      if (match.end == text.length) return true;
+      final followingRune = text.substring(match.end).runes.first;
+      if (_isHan(followingRune) || closingCharacters.contains(followingRune)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _isHan(int rune) =>
+      (rune >= 0x2E80 && rune <= 0x2FDF) ||
+      rune == 0x3005 ||
+      (rune >= 0x31C0 && rune <= 0x31EF) ||
+      (rune >= 0x3400 && rune <= 0x4DBF) ||
+      (rune >= 0x4E00 && rune <= 0x9FFF) ||
+      (rune >= 0xF900 && rune <= 0xFAFF) ||
+      (rune >= 0x20000 && rune <= 0x2FA1F) ||
+      (rune >= 0x30000 && rune <= 0x323AF);
 }
 
 String _requiredLegacyString(Map<String, Object?> data, String key) {
