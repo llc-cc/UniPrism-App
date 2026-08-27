@@ -11,6 +11,7 @@ typedef SpeechFormulaTimerFactory =
 typedef SpeechFormulaProcessingClock = Duration Function();
 
 final Stopwatch _processingStopwatch = Stopwatch()..start();
+const Duration _senseVoiceRequestCap = Duration(milliseconds: 3800);
 
 Duration _readProcessingClock() => _processingStopwatch.elapsed;
 
@@ -23,6 +24,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
     this._capture,
     this._client, {
     this.maxDuration = const Duration(seconds: 15),
+    this.finalizationDeadline = spokenFormulaTotalDeadline,
     this.timerFactory = Timer.new,
     this.processingClock = _readProcessingClock,
   });
@@ -32,6 +34,7 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
   final SpeechFormulaTimerFactory timerFactory;
   final SpeechFormulaProcessingClock processingClock;
   final Duration maxDuration;
+  final Duration finalizationDeadline;
 
   int _generation = 0;
   _LocalRecognitionState _state = _LocalRecognitionState.idle;
@@ -207,7 +210,18 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
         throw const SpokenFormulaRecognitionException('没有录到有效语音，请重新说一次。');
       }
       final wav = encodePcm16MonoWav(pcm);
-      final transcript = (await _client.transcribe(wav)).trim();
+      final elapsedBeforeAsr = processingClock() - processingStartedAt;
+      final remaining = finalizationDeadline - elapsedBeforeAsr;
+      if (remaining <= Duration.zero) {
+        throw const SpokenFormulaRecognitionException('本机语音识别超时，请重新说一次。');
+      }
+      final asrTimeout = remaining < _senseVoiceRequestCap
+          ? remaining
+          : _senseVoiceRequestCap;
+      final transcript = (await _client.transcribe(
+        wav,
+        timeout: asrTimeout,
+      )).trim();
       if (!_isCurrent(generation)) return;
       if (transcript.isEmpty) {
         throw const SpokenFormulaRecognitionException('本地语音识别暂时不可用，请稍后重试。');

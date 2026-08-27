@@ -55,7 +55,7 @@ final class SpeechFormulaController extends ChangeNotifier {
     required this.recognizer,
     required this.repository,
     this.sourceLabel = '浏览器语音',
-    this.totalDeadline = const Duration(seconds: 5),
+    this.totalDeadline = spokenFormulaTotalDeadline,
   });
 
   static const _deadlineMessage = '公式解析超过 5 秒，请重新录音或使用键盘输入。';

@@ -35,7 +35,7 @@ final class SenseVoiceAsrException implements Exception {
 abstract interface class SenseVoiceAsrApi {
   Future<bool> isHealthy();
 
-  Future<String> transcribe(Uint8List wavBytes);
+  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout});
 
   /// 触发全部活动请求的 abort，并仅释放 API 自己创建的传输资源；实现必须幂等。
   /// 外部注入 transport 的物理连接生命周期仍属于调用方。
@@ -97,9 +97,11 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
 
   /// 上传 Task 3 生成的 canonical PCM16/16k/mono WAV，并返回服务端识别文本。
   @override
-  Future<String> transcribe(Uint8List wavBytes) async {
+  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout}) async {
     final operation = _beginOperation();
-    final deadline = _deadlineScheduler.schedule(timeout, () {
+    // Local 录音链路传入当前剩余时间；独立调用方仍沿用构造器默认值。
+    final requestTimeout = timeout ?? this.timeout;
+    final deadline = _deadlineScheduler.schedule(requestTimeout, () {
       operation.cancel();
     });
     try {

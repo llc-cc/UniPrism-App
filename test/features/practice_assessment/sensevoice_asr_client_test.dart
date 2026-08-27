@@ -387,6 +387,25 @@ void main() {
     },
   );
 
+  test('单次转写预算覆盖 client 默认超时', () async {
+    final scheduler = _RecordingDeadlineScheduler();
+    final asr = SenseVoiceAsrClient(
+      baseUrl: 'http://127.0.0.1:8000',
+      timeout: const Duration(seconds: 15),
+      deadlineScheduler: scheduler,
+      client: _IgnoringAbortClient(),
+    );
+
+    await _expectTimeout(
+      asr.transcribe(
+        _canonicalWav(),
+        timeout: const Duration(milliseconds: 3800),
+      ),
+    );
+
+    expect(scheduler.delays.single, const Duration(milliseconds: 3800));
+  });
+
   test(
     'pending cancel does not delay deadline result and cancel is initiated',
     () async {

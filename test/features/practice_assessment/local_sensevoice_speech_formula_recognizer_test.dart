@@ -212,6 +212,55 @@ void main() {
     expect(observed, <Duration?>[const Duration(milliseconds: 750)]);
   });
 
+  test('ASR 上传只获得 stop 后剩余预算且上限为 3.8 秒', () async {
+    var elapsed = Duration.zero;
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient(transcripts: <String>['x 的平方']);
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      processingClock: () => elapsed,
+    );
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) {},
+    );
+    capture.add(<int>[1, 2]);
+
+    final stopping = recognizer.stop();
+    elapsed = const Duration(milliseconds: 1200);
+    stopGate.complete();
+    await stopping;
+
+    expect(client.timeouts, <Duration>[const Duration(milliseconds: 3800)]);
+  });
+
+  test('stop 后总预算已耗尽时不再发起 ASR 请求', () async {
+    var elapsed = Duration.zero;
+    final stopGate = Completer<void>();
+    final capture = _FakeCapture(stopGate: stopGate);
+    final client = _FakeAsrClient(transcripts: <String>['不应使用']);
+    final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+      capture,
+      client,
+      processingClock: () => elapsed,
+    );
+    final errors = <SpokenFormulaRecognitionException>[];
+    await recognizer.listen(
+      onResult: (_, {required isFinal, processingElapsed}) => fail('不应发出结果'),
+      onError: errors.add,
+    );
+    capture.add(<int>[1, 2]);
+
+    final stopping = recognizer.stop();
+    elapsed = spokenFormulaTotalDeadline;
+    stopGate.complete();
+    await stopping;
+
+    expect(client.callCount, 0);
+    expect(errors.single.message, '本机语音识别超时，请重新说一次。');
+  });
+
   test('stop 在 pending capture.start 时也从 finalization 发起点计时', () async {
     var elapsed = Duration.zero;
     final startGate = Completer<void>();
@@ -1018,6 +1067,7 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   final List<String> _transcripts;
   final Object? transcribeError;
   final List<Uint8List> requests = <Uint8List>[];
+  final List<Duration> timeouts = <Duration>[];
   Completer<String>? transcribeGate;
   bool isHealthyResult = true;
   Object? healthError;
@@ -1034,8 +1084,9 @@ final class _FakeAsrClient implements SenseVoiceAsrApi {
   }
 
   @override
-  Future<String> transcribe(Uint8List wavBytes) async {
+  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout}) async {
     requests.add(Uint8List.fromList(wavBytes));
+    if (timeout case final value?) timeouts.add(value);
     if (transcribeError case final error?) throw error;
     if (transcribeGate case final gate?) return gate.future;
     return _transcripts.removeAt(0);

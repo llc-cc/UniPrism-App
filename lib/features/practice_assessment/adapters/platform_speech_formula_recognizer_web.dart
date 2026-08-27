@@ -50,11 +50,12 @@ SpeechFormulaRecognizer createPlatformSpeechFormulaRecognizer({
   'browser' => WebSpeechFormulaRecognizer(),
   'sensevoiceLocal' => LocalSenseVoiceSpeechFormulaRecognizer(
     audioCaptureFactory(),
-    // 1.8 秒是五秒总预算中的 ASR 上限；client 自身默认值供独立调用方继续使用。
+    // 实际上传使用 stop 后剩余预算；这里的构造器值只供独立调用回退。
     asrClientFactory(
       baseUrl: senseVoiceBaseUrl,
-      timeout: const Duration(milliseconds: 1800),
+      timeout: const Duration(seconds: 15),
     ),
+    finalizationDeadline: spokenFormulaTotalDeadline,
   ),
   _ => throw ArgumentError.value(mode, 'mode', '仅支持 browser 或 sensevoiceLocal'),
 };

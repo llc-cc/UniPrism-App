@@ -1,3 +1,6 @@
+/// 语音停止到可操作结果共用同一绝对预算，ASR 与公式解析只能消费剩余时间。
+const Duration spokenFormulaTotalDeadline = Duration(seconds: 5);
+
 /// 语音识别结果回调；本机链路用 `processingElapsed` 传递停止录音后的处理耗时。
 typedef SpeechFormulaResultCallback =
     void Function(

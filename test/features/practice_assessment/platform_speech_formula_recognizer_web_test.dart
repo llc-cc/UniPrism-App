@@ -12,7 +12,7 @@ import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.da
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('sensevoiceLocal factory 为 ASR 留出固定 1800ms 预算', () {
+  test('sensevoiceLocal factory 仅保留独立调用默认值，实际上传使用剩余预算', () {
     String? configuredBaseUrl;
     Duration? configuredTimeout;
 
@@ -29,7 +29,7 @@ void main() {
 
     expect(recognizer, isA<LocalSenseVoiceSpeechFormulaRecognizer>());
     expect(configuredBaseUrl, 'http://127.0.0.1:8765');
-    expect(configuredTimeout, const Duration(milliseconds: 1800));
+    expect(configuredTimeout, const Duration(seconds: 15));
   });
 
   test('browser initialize 失败提供 Chrome 或 Edge 的安全恢复原因', () async {
@@ -501,7 +501,8 @@ final class _NoopSenseVoiceAsrClient implements SenseVoiceAsrApi {
   Future<bool> isHealthy() async => true;
 
   @override
-  Future<String> transcribe(Uint8List wavBytes) async => 'unused';
+  Future<String> transcribe(Uint8List wavBytes, {Duration? timeout}) async =>
+      'unused';
 }
 
 final class _NoopSpeechAudioCapture implements SpeechAudioCapture {

@@ -11,7 +11,7 @@ import 'package:uniprism_app/features/practice_assessment/adapters/remote_spoken
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
 
 void main() {
-  test('远程解析只发送文字和区域，并使用调用方提供的超时', () async {
+  test('远程解析发送剩余预算，并使用同一调用方超时', () async {
     final observedTimeouts = <Duration>[];
     final repository = _remoteRepository((request) async {
       expect(request.method, 'POST');
@@ -19,6 +19,7 @@ void main() {
       expect(jsonDecode(request.body), <String, Object?>{
         'text': 'x 的平方',
         'locale': 'zh-CN',
+        'budgetMs': 4000,
       });
       return _okResponse(_resolvedFixture());
     });

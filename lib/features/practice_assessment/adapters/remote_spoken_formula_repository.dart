@@ -106,7 +106,12 @@ final class RemoteSpokenFormulaRepository
     final data = await api.request(
       'POST',
       '/api/practice/formulas/resolve-spoken-text',
-      body: <String, Object?>{'text': text, 'locale': locale},
+      // 服务端只能缩短该剩余预算，不能另起一轮完整超时。
+      body: <String, Object?>{
+        'text': text,
+        'locale': locale,
+        'budgetMs': timeout.inMilliseconds,
+      },
       requestTimeout: timeout,
     );
     return _parseResolution(data);
