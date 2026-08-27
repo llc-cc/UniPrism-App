@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
+import 'package:flutter_math_fork/tex.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:uniprism_app/features/practice_assessment/application/speech_formula_controller.dart';
 import 'package:uniprism_app/features/practice_assessment/core/spoken_formula.dart';
@@ -109,14 +110,21 @@ void main() {
       find.byKey(const ValueKey('practice-formula-voice-candidates')),
       findsOneWidget,
     );
-    for (final id in <String>['candidate-a', 'candidate-b']) {
+    for (final entry in <String, String>{
+      'candidate-a': r'(-2)^2',
+      'candidate-b': r'-2^2',
+    }.entries) {
       final card = find.byKey(
-        ValueKey<String>('practice-formula-voice-candidate-$id'),
+        ValueKey<String>('practice-formula-voice-candidate-${entry.key}'),
       );
       expect(card, findsOneWidget);
+      final mathFinder = find.descendant(of: card, matching: find.byType(Math));
+      expect(mathFinder, findsOneWidget);
+      final rendered = tester.widget<Math>(mathFinder);
+      final expected = Math.tex(entry.value);
       expect(
-        find.descendant(of: card, matching: find.byType(Math)),
-        findsOneWidget,
+        TexEncoder().convert(rendered.ast!.greenRoot),
+        TexEncoder().convert(expected.ast!.greenRoot),
       );
     }
     expect(
@@ -180,14 +188,58 @@ void main() {
       const ValueKey('practice-formula-voice-clarification'),
     );
     expect(promptFinder, findsOneWidget);
-    expect(find.text('负号是否在平方范围内？'), findsOneWidget);
-    expect(find.text('需要确认：负二的平方'), findsOneWidget);
-    expect(find.textContaining('换一种说法'), findsNothing);
-    expect(find.textContaining('语音输入失败'), findsNothing);
+    expect(
+      find.descendant(of: promptFinder, matching: find.text('负号是否在平方范围内？')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: promptFinder, matching: find.text('需要确认：负二的平方')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: promptFinder, matching: find.textContaining('换一种说法')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: promptFinder,
+        matching: find.textContaining('语音输入失败'),
+      ),
+      findsNothing,
+    );
     final decoration =
         tester.widget<Container>(promptFinder).decoration! as BoxDecoration;
-    expect(decoration.color, const Color(0xFFF2ECFF));
-    expect(decoration.border!.top.color, const Color(0xFFB8A1E8));
+    expect(_looksErrorRed(decoration.color), isFalse);
+    expect(_looksErrorRed(decoration.border!.top.color), isFalse);
+    for (final element
+        in find
+            .descendant(of: promptFinder, matching: find.byType(Text))
+            .evaluate()) {
+      expect(_looksErrorRed((element.widget as Text).style?.color), isFalse);
+    }
+    for (final element
+        in find
+            .descendant(
+              of: promptFinder,
+              matching: find.byWidgetPredicate(
+                (widget) => widget is ButtonStyleButton,
+              ),
+            )
+            .evaluate()) {
+      final button = element.widget as ButtonStyleButton;
+      expect(
+        _looksErrorRed(button.style?.foregroundColor?.resolve(<WidgetState>{})),
+        isFalse,
+      );
+      expect(
+        _looksErrorRed(button.style?.backgroundColor?.resolve(<WidgetState>{})),
+        isFalse,
+      );
+      expect(
+        _looksErrorRed(button.style?.side?.resolve(<WidgetState>{})?.color),
+        isFalse,
+      );
+    }
 
     for (final id in <String>['select-negative-outside', 'retry', 'keyboard']) {
       expect(
@@ -307,6 +359,12 @@ void main() {
     );
     expect(find.textContaining('把 y 乘以它自己再减五倍 y'), findsOneWidget);
   });
+}
+
+bool _looksErrorRed(Color? color) {
+  if (color == null || color.a == 0) return false;
+  final hsv = HSVColor.fromColor(color);
+  return hsv.saturation > 0.35 && (hsv.hue < 25 || hsv.hue > 335);
 }
 
 Widget _app(

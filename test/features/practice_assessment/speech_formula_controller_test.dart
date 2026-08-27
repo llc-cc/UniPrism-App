@@ -144,6 +144,33 @@ void main() {
     }
   });
 
+  test('infrastructureError 同帧双击 retryResolution 只发一个新请求', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _RetryRepository();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('需要重试的公式', isFinal: true);
+    await _flushAsyncWork();
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(repository.callCount, 1);
+
+    final firstRetry = controller.retryResolution();
+    final secondRetry = controller.retryResolution();
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.resolving);
+    expect(repository.callCount, 2);
+    repository.retryGate.complete(_resolved());
+    await Future.wait<void>(<Future<void>>[firstRetry, secondRetry]);
+
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(repository.callCount, 2);
+  });
+
   test('ASR 已用 4.5 秒时 repository 同时收到剩余 0.5 秒 caller timeout', () async {
     final recognizer = _FakeRecognizer();
     final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
@@ -754,6 +781,25 @@ final class _ErrorRepository implements SpokenFormulaResolutionRepository {
   }) async {
     await Future<void>.delayed(Duration.zero);
     throw error;
+  }
+}
+
+final class _RetryRepository implements SpokenFormulaResolutionRepository {
+  final Completer<SpokenFormulaResolution> retryGate =
+      Completer<SpokenFormulaResolution>();
+  int callCount = 0;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async {
+    callCount += 1;
+    if (callCount == 1) {
+      throw const SpokenFormulaResolutionException('首次请求失败');
+    }
+    return retryGate.future;
   }
 }
 

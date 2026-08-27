@@ -558,6 +558,115 @@ void main() {
     expect(speechController.state.status, SpeechFormulaStatus.idle);
   });
 
+  testWidgets('375x812 有界公式框承载三个长候选和键盘并支持双轴拖动', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final recognizer = _VoiceTestRecognizer();
+    final speechController = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _VoiceLongCandidateRepository(),
+    );
+    addTearDown(speechController.dispose);
+
+    await tester.pumpWidget(
+      _app(
+        MathAnswerField(
+          questionId: 'q-voice-long-candidates',
+          value: '',
+          enabled: true,
+          speechFormulaController: speechController,
+          onChanged: (_) {},
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('practice-math-answer-input')));
+    await tester.pump();
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-start')),
+    );
+    await tester.pump();
+    recognizer.emit('三个长候选', isFinal: true);
+    for (var index = 0; index < 5; index++) {
+      await tester.pump();
+    }
+
+    expect(
+      find.byKey(const ValueKey('practice-formula-keyboard')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-candidate-max-a')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-candidate-max-b')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-candidate-max-c')),
+      findsOneWidget,
+    );
+
+    final mathAnswerField = find.byType(MathAnswerField);
+    final localVerticalScroll = find.descendant(
+      of: mathAnswerField,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.vertical,
+      ),
+    );
+    expect(localVerticalScroll, findsOneWidget);
+    final localScrollable = find.descendant(
+      of: localVerticalScroll,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.down,
+      ),
+    );
+    final localPosition = tester
+        .state<ScrollableState>(localScrollable.first)
+        .position;
+    expect(localPosition.maxScrollExtent, greaterThan(0));
+
+    final firstCard = find.byKey(
+      const ValueKey('practice-formula-voice-candidate-max-a'),
+    );
+    final formulaScroll = find.descendant(
+      of: firstCard,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is SingleChildScrollView &&
+            widget.scrollDirection == Axis.horizontal,
+      ),
+    );
+    expect(formulaScroll, findsOneWidget);
+    final formulaScrollable = find.descendant(
+      of: formulaScroll,
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.right,
+      ),
+    );
+    final formulaPosition = tester
+        .state<ScrollableState>(formulaScrollable)
+        .position;
+    expect(formulaPosition.maxScrollExtent, greaterThan(0));
+    await tester.drag(formulaScroll, const Offset(-240, 0));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(formulaPosition.pixels, greaterThan(0));
+
+    final verticalPixelsBefore = localPosition.pixels;
+    await tester.drag(localVerticalScroll, const Offset(0, -300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(localPosition.pixels, greaterThan(verticalPixelsBefore));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('375px infrastructureError 保留转写且原公式键盘继续可用', (tester) async {
     tester.view.physicalSize = const Size(375, 812);
     tester.view.devicePixelRatio = 1;
@@ -568,6 +677,7 @@ void main() {
       recognizer: recognizer,
       repository: _VoiceFailingRepository(),
     );
+    final changes = <String>[];
     addTearDown(speechController.dispose);
 
     await tester.pumpWidget(
@@ -577,7 +687,7 @@ void main() {
           value: '',
           enabled: true,
           speechFormulaController: speechController,
-          onChanged: (_) {},
+          onChanged: changes.add,
         ),
       ),
     );
@@ -605,6 +715,13 @@ void main() {
       find.byKey(const ValueKey('practice-formula-keyboard')),
       findsOneWidget,
     );
+    final sevenKey = find.byKey(const ValueKey('practice-formula-key-7'));
+    await tester.ensureVisible(sevenKey);
+    await tester.pump();
+    await tester.tap(sevenKey);
+    await tester.pump();
+
+    expect(changes, <String>['7']);
     expect(tester.takeException(), isNull);
   });
 }
@@ -680,6 +797,48 @@ final class _VoiceTestRepository implements SpokenFormulaResolutionRepository {
     ],
     clarification: null,
     warnings: const <String>[],
+  );
+}
+
+final class _VoiceLongCandidateRepository
+    implements SpokenFormulaResolutionRepository {
+  const _VoiceLongCandidateRepository();
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async => SpokenFormulaResolution(
+    resolutionId: 'math-answer-long-candidates',
+    recognizedText: text,
+    normalizedText: text,
+    outcome: SpokenFormulaOutcome.candidates,
+    candidates: const <SpokenFormulaCandidate>[
+      SpokenFormulaCandidate(
+        id: 'max-a',
+        latex:
+            r'\frac{x_1^2+x_2^2+x_3^2+x_4^2+x_5^2+x_6^2+x_7^2+x_8^2}{\sqrt{a_1^2+a_2^2+a_3^2+a_4^2+a_5^2+a_6^2}}',
+        spokenBack:
+            '第一个候选的分子是从 x 一的平方一直加到 x 八的平方，分母是从 a 一到 a 六各自平方之和的算术平方根，分母结束，请确认全部作用域',
+      ),
+      SpokenFormulaCandidate(
+        id: 'max-b',
+        latex:
+            r'\sum_{k=1}^{50}\frac{k^5+3k^4+5k^3+7k^2+9k+11}{(k+1)(k+2)(k+3)(k+4)}',
+        spokenBack:
+            '第二个候选从 k 等于一到五十求和，主体为五次多项式整体除以四个连续因子的乘积，分母结束，求和主体结束，请确认求和上下限',
+      ),
+      SpokenFormulaCandidate(
+        id: 'max-c',
+        latex:
+            r'\int_{0}^{\pi}\frac{\sin^4x+\cos^4x+2\sin^2x\cos^2x}{\sqrt{1+x^2+x^4+x^6}}\,\mathrm{d}x',
+        spokenBack:
+            '第三个候选是从零到圆周率的定积分，分子包含正弦和余弦的四次方以及乘积项，整体除以根号内一加 x 的二次方四次方六次方，积分主体结束',
+      ),
+    ],
+    clarification: null,
+    warnings: const <String>['三个候选都需要显式选择后才能插入'],
   );
 }
 

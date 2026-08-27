@@ -164,6 +164,8 @@ final class SpeechFormulaController extends ChangeNotifier {
   }
 
   Future<void> retryResolution() async {
+    // resolving 会在首个 await 前同步写入；同帧重复点击必须复用该入口门闩，避免重复请求。
+    if (_state.status == SpeechFormulaStatus.resolving) return;
     final transcript = _state.transcript.trim();
     if (transcript.isEmpty) {
       await startListening();
