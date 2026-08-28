@@ -267,6 +267,117 @@ void main() {
     );
   });
 
+  testWidgets('clarification 显示续录入口并保留文字合并重新解析', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final repository = _SequencedRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(_clarification('二阶行列式')),
+      Future<SpokenFormulaResolution>.value(_resolved('二阶行列式，第一行 x 加一')),
+    ]);
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    final inserted = <String>[];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, inserted.add));
+    await _resolve(tester, controller, recognizer, '二阶行列式');
+
+    final continueButton = find.byKey(
+      const ValueKey('practice-formula-voice-continue-recording'),
+    );
+    expect(continueButton, findsOneWidget);
+    expect(find.text('继续补充语音'), findsOneWidget);
+    await tester.tap(continueButton);
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-transcript')),
+      findsOneWidget,
+    );
+    expect(find.text('二阶行列式'), findsOneWidget);
+    recognizer.emit('第一行 x 加一', isFinal: true, listenIndex: 1);
+    await _pumpAsync(tester);
+
+    expect(repository.texts, <String>['二阶行列式', '二阶行列式，第一行 x 加一']);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(inserted, isEmpty);
+  });
+
+  testWidgets('infrastructureError 有 transcript 可续录，无 transcript 的权限错误不显示', (
+    tester,
+  ) async {
+    final recognizer = _FakeRecognizer();
+    final repository = _FailOnceRepository(_resolved('主体，补充'));
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '主体');
+
+    final continueButton = find.byKey(
+      const ValueKey('practice-formula-voice-continue-recording'),
+    );
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(continueButton, findsOneWidget);
+    await tester.tap(continueButton);
+    await _pumpAsync(tester);
+    recognizer.emit('补充', isFinal: true, listenIndex: 1);
+    await _pumpAsync(tester);
+    expect(repository.texts, <String>['主体', '主体，补充']);
+
+    final permissionController = SpeechFormulaController(
+      recognizer: _FakeRecognizer(
+        isAvailable: false,
+        initializationError: const SpokenFormulaRecognitionException(
+          '麦克风权限不可用',
+        ),
+      ),
+      repository: const _Repository(_Outcome.resolved),
+    );
+    addTearDown(permissionController.dispose);
+    await tester.pumpWidget(_app(permissionController, (_) {}));
+    await permissionController.startListening();
+    await _pumpAsync(tester);
+
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('完成三轮续录后不再显示入口', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final repository = _SequencedRepository(<Future<SpokenFormulaResolution>>[
+      for (var index = 0; index < 4; index += 1)
+        Future<SpokenFormulaResolution>.value(_clarification('澄清 $index')),
+    ]);
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '主体');
+
+    for (var turn = 1; turn <= 3; turn += 1) {
+      await tester.tap(
+        find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      );
+      await _pumpAsync(tester);
+      recognizer.emit('补充 $turn', isFinal: true, listenIndex: turn);
+      await _pumpAsync(tester);
+    }
+
+    expect(controller.state.continuationTurn, 3);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      findsNothing,
+    );
+  });
+
   testWidgets('clarification 重录和监听取消都隔离旧 operation 的迟到 final', (tester) async {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
@@ -394,15 +505,17 @@ Future<void> _pumpAsync(WidgetTester tester) async {
 }
 
 final class _FakeRecognizer implements SpeechFormulaRecognizer {
+  _FakeRecognizer({this.isAvailable = true, this.initializationError});
+
+  final bool isAvailable;
+  @override
+  final SpokenFormulaRecognitionException? initializationError;
   final List<SpeechFormulaResultCallback> _onResults =
       <SpeechFormulaResultCallback>[];
   int listenCount = 0;
 
   @override
-  SpokenFormulaRecognitionException? get initializationError => null;
-
-  @override
-  Future<bool> initialize() async => true;
+  Future<bool> initialize() async => isAvailable;
 
   @override
   Future<void> listen({
@@ -445,6 +558,45 @@ final class _Repository implements SpokenFormulaResolutionRepository {
     _Outcome.clarification => _clarification(text),
     _Outcome.longCandidates => _longCandidates(text),
   };
+}
+
+final class _SequencedRepository implements SpokenFormulaResolutionRepository {
+  _SequencedRepository(this._responses);
+
+  final List<Future<SpokenFormulaResolution>> _responses;
+  final List<String> texts = <String>[];
+  int _callCount = 0;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) {
+    texts.add(text);
+    final response = _responses[_callCount];
+    _callCount += 1;
+    return response;
+  }
+}
+
+final class _FailOnceRepository implements SpokenFormulaResolutionRepository {
+  _FailOnceRepository(this._success);
+
+  final SpokenFormulaResolution _success;
+  final List<String> texts = <String>[];
+  var _callCount = 0;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async {
+    texts.add(text);
+    if (_callCount++ == 0) throw StateError('network internals');
+    return _success;
+  }
 }
 
 SpokenFormulaResolution _resolved(String text) => SpokenFormulaResolution(

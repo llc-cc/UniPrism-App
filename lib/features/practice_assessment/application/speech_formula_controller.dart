@@ -21,6 +21,8 @@ final class SpeechFormulaState {
   const SpeechFormulaState({
     this.status = SpeechFormulaStatus.idle,
     this.transcript = '',
+    this.accumulatedTranscript = '',
+    this.continuationTurn = 0,
     this.resolution,
     this.selectedCandidateId,
     this.errorMessage,
@@ -29,6 +31,10 @@ final class SpeechFormulaState {
 
   final SpeechFormulaStatus status;
   final String transcript;
+
+  /// 续录期间单独保留已经提交过的文字，避免 ASR partial 覆盖上一轮有效内容。
+  final String accumulatedTranscript;
+  final int continuationTurn;
   final SpokenFormulaResolution? resolution;
   final String? selectedCandidateId;
 
@@ -58,7 +64,8 @@ final class SpeechFormulaController extends ChangeNotifier {
     this.totalDeadline = spokenFormulaTotalDeadline,
   });
 
-  static const _deadlineMessage = '公式解析超过 5 秒，请重新录音或使用键盘输入。';
+  static const _deadlineMessage = '公式解析超过 5 秒，可以继续补充语音或使用键盘输入。';
+  static const _deadlineFallbackMessage = '公式解析超过 5 秒，请重新录音或使用键盘输入。';
 
   final SpeechFormulaRecognizer recognizer;
   final SpokenFormulaResolutionRepository repository;
@@ -68,6 +75,17 @@ final class SpeechFormulaController extends ChangeNotifier {
   SpeechFormulaState _state = const SpeechFormulaState();
   SpeechFormulaState get state => _state;
 
+  static const int maxContinuationTurns = 3;
+
+  bool get canContinueRecording {
+    final statusAllowsContinuation =
+        _state.status == SpeechFormulaStatus.clarifying ||
+        _state.status == SpeechFormulaStatus.infrastructureError;
+    return statusAllowsContinuation &&
+        _state.transcript.trim().isNotEmpty &&
+        _state.continuationTurn < maxContinuationTurns;
+  }
+
   int _operationId = 0;
   bool _initialized = false;
   bool _disposed = false;
@@ -75,13 +93,38 @@ final class SpeechFormulaController extends ChangeNotifier {
   int? _deadlineOperationId;
   Future<void>? _pendingCancel;
 
-  Future<void> startListening() async {
+  Future<void> startListening() => _startListening();
+
+  Future<void> continueRecording() async {
+    if (!canContinueRecording) return;
+    await _startListening(
+      accumulatedTranscript: _state.transcript.trim(),
+      continuationTurn: _state.continuationTurn,
+    );
+  }
+
+  Future<void> _startListening({
+    String accumulatedTranscript = '',
+    int continuationTurn = 0,
+  }) async {
     final previousStatus = _state.status;
+    // 续录失败时仍需回退到上一轮已审核响应；全新录音则明确丢弃旧上下文。
+    final carriedResolution = accumulatedTranscript.isEmpty
+        ? null
+        : _state.resolution;
+    final carriedCandidateId = accumulatedTranscript.isEmpty
+        ? null
+        : _state.selectedCandidateId;
     final operationId = ++_operationId;
     _cancelDeadlineWatchdog();
     _setState(
-      const SpeechFormulaState(
+      SpeechFormulaState(
         status: SpeechFormulaStatus.requestingPermission,
+        transcript: accumulatedTranscript,
+        accumulatedTranscript: accumulatedTranscript,
+        continuationTurn: continuationTurn,
+        resolution: carriedResolution,
+        selectedCandidateId: carriedCandidateId,
       ),
     );
     try {
@@ -108,7 +151,14 @@ final class SpeechFormulaController extends ChangeNotifier {
       }
       if (!_isCurrent(operationId)) return;
       _setState(
-        const SpeechFormulaState(status: SpeechFormulaStatus.listening),
+        SpeechFormulaState(
+          status: SpeechFormulaStatus.listening,
+          transcript: accumulatedTranscript,
+          accumulatedTranscript: accumulatedTranscript,
+          continuationTurn: continuationTurn,
+          resolution: carriedResolution,
+          selectedCandidateId: carriedCandidateId,
+        ),
       );
       await recognizer.listen(
         onResult: (words, {required isFinal, processingElapsed}) {
@@ -128,7 +178,7 @@ final class SpeechFormulaController extends ChangeNotifier {
       );
     } catch (_) {
       if (!_isCurrent(operationId)) return;
-      _showInfrastructureError('无法启动麦克风，请检查浏览器权限后重试。');
+      _showInfrastructureError('无法启动麦克风，请检查浏览器权限后重试。', accumulatedTranscript);
     }
   }
 
@@ -142,6 +192,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       SpeechFormulaState(
         status: SpeechFormulaStatus.transcribing,
         transcript: _state.transcript,
+        accumulatedTranscript: _state.accumulatedTranscript,
+        continuationTurn: _state.continuationTurn,
+        resolution: _state.resolution,
+        selectedCandidateId: _state.selectedCandidateId,
       ),
     );
     // 主动 stop 从 finalization 发起点占用总预算，不能等待 recognizer 自己返回后才计时。
@@ -177,6 +231,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       SpeechFormulaState(
         status: SpeechFormulaStatus.resolving,
         transcript: transcript,
+        accumulatedTranscript: transcript,
+        continuationTurn: _state.continuationTurn,
+        resolution: _state.resolution,
+        selectedCandidateId: _state.selectedCandidateId,
       ),
     );
     _armDeadlineWatchdog(operationId, totalDeadline, transcript);
@@ -196,6 +254,8 @@ final class SpeechFormulaController extends ChangeNotifier {
       SpeechFormulaState(
         status: SpeechFormulaStatus.choosingCandidate,
         transcript: _state.transcript,
+        accumulatedTranscript: _state.accumulatedTranscript,
+        continuationTurn: _state.continuationTurn,
         resolution: resolution,
         selectedCandidateId: candidateId,
       ),
@@ -234,6 +294,8 @@ final class SpeechFormulaController extends ChangeNotifier {
           SpeechFormulaState(
             status: SpeechFormulaStatus.resolved,
             transcript: _state.transcript,
+            accumulatedTranscript: _state.accumulatedTranscript,
+            continuationTurn: _state.continuationTurn,
             resolution: resolution,
             selectedCandidateId: candidateId,
           ),
@@ -291,32 +353,54 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     final transcript = words.trim();
+    final accumulatedTranscript = _state.accumulatedTranscript.trim();
+    final isContinuation = accumulatedTranscript.isNotEmpty;
     if (!isFinal) {
+      final visibleTranscript = _mergeTranscripts(
+        accumulatedTranscript,
+        transcript,
+      );
       _setState(
-        SpeechFormulaState(status: _state.status, transcript: transcript),
+        SpeechFormulaState(
+          status: _state.status,
+          transcript: visibleTranscript,
+          accumulatedTranscript: accumulatedTranscript,
+          continuationTurn: _state.continuationTurn,
+          resolution: _state.resolution,
+          selectedCandidateId: _state.selectedCandidateId,
+        ),
       );
       return;
     }
     if (transcript.isEmpty) {
-      _showInfrastructureError('没有识别到语音，请靠近麦克风后重试。');
+      _showInfrastructureError('没有识别到语音，请靠近麦克风后重试。', accumulatedTranscript);
       return;
     }
+    final mergedTranscript = _mergeTranscripts(
+      accumulatedTranscript,
+      transcript,
+    );
+    final continuationTurn = _state.continuationTurn + (isContinuation ? 1 : 0);
     // final 先切到 resolving，浏览器或插件重复回调便无法触发第二次解析。
     _setState(
       SpeechFormulaState(
         status: SpeechFormulaStatus.resolving,
-        transcript: transcript,
+        transcript: mergedTranscript,
+        accumulatedTranscript: mergedTranscript,
+        continuationTurn: continuationTurn,
+        resolution: _state.resolution,
+        selectedCandidateId: _state.selectedCandidateId,
       ),
     );
     final remaining = totalDeadline - (processingElapsed ?? Duration.zero);
     if (processingElapsed == null) {
       // Browser 没有可信 stop-origin metadata，按 ledger 从 final transcript 重新计时。
-      _armDeadlineWatchdog(operationId, totalDeadline, transcript);
+      _armDeadlineWatchdog(operationId, totalDeadline, mergedTranscript);
     } else if (_deadlineOperationId != operationId) {
       // Local 自动停止没有经过 controller.stop，需从已报告耗时恢复同一总预算。
-      _armDeadlineWatchdog(operationId, remaining, transcript);
+      _armDeadlineWatchdog(operationId, remaining, mergedTranscript);
     }
-    unawaited(_resolve(operationId, transcript, remaining));
+    unawaited(_resolve(operationId, mergedTranscript, remaining));
   }
 
   void _handleRecognitionError(
@@ -341,6 +425,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       SpeechFormulaState(
         status: SpeechFormulaStatus.transcribing,
         transcript: _state.transcript,
+        accumulatedTranscript: _state.accumulatedTranscript,
+        continuationTurn: _state.continuationTurn,
+        resolution: _state.resolution,
+        selectedCandidateId: _state.selectedCandidateId,
       ),
     );
     _armDeadlineWatchdog(operationId, totalDeadline, _state.transcript.trim());
@@ -372,6 +460,8 @@ final class SpeechFormulaController extends ChangeNotifier {
         SpeechFormulaState(
           status: status,
           transcript: transcript,
+          accumulatedTranscript: transcript,
+          continuationTurn: _state.continuationTurn,
           resolution: resolution,
           selectedCandidateId:
               resolution.outcome == SpokenFormulaOutcome.resolved
@@ -402,6 +492,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       SpeechFormulaState(
         status: SpeechFormulaStatus.infrastructureError,
         transcript: transcript,
+        accumulatedTranscript: _state.accumulatedTranscript,
+        continuationTurn: _state.continuationTurn,
+        resolution: _state.resolution,
+        selectedCandidateId: _state.selectedCandidateId,
         errorMessage: message,
         isSupported: isSupported,
       ),
@@ -438,7 +532,13 @@ final class SpeechFormulaController extends ChangeNotifier {
     // deadline 是终态边界：先失效回调并展示错误，再异步收尾，UI 不等待插件释放。
     ++_operationId;
     _cancelDeadlineWatchdog();
-    _showInfrastructureError(_deadlineMessage, transcript);
+    final canOfferContinuation =
+        transcript.trim().isNotEmpty &&
+        _state.continuationTurn < maxContinuationTurns;
+    _showInfrastructureError(
+      canOfferContinuation ? _deadlineMessage : _deadlineFallbackMessage,
+      transcript,
+    );
     unawaited(_ensureRecognizerCancelled());
   }
 
@@ -480,6 +580,13 @@ final class SpeechFormulaController extends ChangeNotifier {
       if (candidate.id == candidateId) return true;
     }
     return false;
+  }
+
+  String _mergeTranscripts(String accumulated, String current) {
+    if (accumulated.isEmpty) return current;
+    if (current.isEmpty) return accumulated;
+    // 使用稳定分隔符保留两轮语义边界，同时继续兼容现有无状态解析请求。
+    return '$accumulated，$current';
   }
 
   bool _isCurrent(int operationId) => !_disposed && operationId == _operationId;

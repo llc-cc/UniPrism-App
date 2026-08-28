@@ -85,6 +85,210 @@ void main() {
     }
   });
 
+  test('clarification 续录保留累计文字并用中文逗号合并后重新解析', () async {
+    final recognizer = _FakeRecognizer();
+    final clarification = _clarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(clarification),
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('二阶行列式', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(controller.canContinueRecording, isTrue);
+    await controller.continueRecording();
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(controller.state.transcript, '二阶行列式');
+    expect(controller.state.accumulatedTranscript, '二阶行列式');
+    expect(controller.state.continuationTurn, 0);
+    expect(controller.state.resolution, same(clarification));
+    recognizer.emit('第一行 x 加一', isFinal: true, listenIndex: 1);
+    await _flushAsyncWork();
+
+    expect(repository.texts, <String>['二阶行列式', '二阶行列式，第一行 x 加一']);
+    expect(controller.state.transcript, '二阶行列式，第一行 x 加一');
+    expect(controller.state.accumulatedTranscript, '二阶行列式，第一行 x 加一');
+    expect(controller.state.continuationTurn, 1);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+  });
+
+  test('deadline 保留 transcript 后可续录并以新 operation 合并重新解析', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit(
+      '二阶行列式',
+      isFinal: true,
+      processingElapsed: const Duration(seconds: 5),
+    );
+    await _flushAsyncWork();
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.canContinueRecording, isTrue);
+    await controller.continueRecording();
+    recognizer.emit('第一行 x 加一', isFinal: true, listenIndex: 1);
+    await _flushAsyncWork();
+
+    expect(repository.texts, <String>['二阶行列式，第一行 x 加一']);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(controller.state.continuationTurn, 1);
+  });
+
+  test('续录隔离上一 operation 的迟到 final 且空补充不发起请求', () async {
+    final recognizer = _FakeRecognizer();
+    final clarification = _clarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(clarification),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('待澄清公式', isFinal: true, listenIndex: 0);
+    await _flushAsyncWork();
+
+    await controller.continueRecording();
+    recognizer.emit('旧轮次迟到结果', isFinal: true, listenIndex: 0);
+    recognizer.emit('   ', isFinal: true, listenIndex: 1);
+    await _flushAsyncWork();
+
+    expect(repository.texts, <String>['待澄清公式']);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, '待澄清公式');
+    expect(controller.state.continuationTurn, 0);
+    expect(controller.state.resolution, same(clarification));
+  });
+
+  test('续录启动失败仍保留累计文字和上一轮安全响应', () async {
+    final recognizer = _FakeRecognizer(
+      listenErrors: <Object?>[null, StateError('listen failed')],
+    );
+    final clarification = _clarification();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(clarification),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('待澄清公式', isFinal: true);
+    await _flushAsyncWork();
+
+    await controller.continueRecording();
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, '待澄清公式');
+    expect(controller.state.accumulatedTranscript, '待澄清公式');
+    expect(controller.state.resolution, same(clarification));
+    expect(controller.canContinueRecording, isTrue);
+  });
+
+  test('无 transcript 的权限错误不可续录', () async {
+    final controller = _controller(
+      recognizer: _FakeRecognizer(
+        isAvailable: false,
+        initializationError: const SpokenFormulaRecognitionException(
+          '麦克风权限不可用',
+        ),
+      ),
+    );
+    addTearDown(controller.dispose);
+
+    await controller.startListening();
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, isEmpty);
+    expect(controller.canContinueRecording, isFalse);
+  });
+
+  test('最多完成三轮续录，整段重录会清空累计上下文', () async {
+    final recognizer = _FakeRecognizer();
+    final resolution = _clarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      for (var index = 0; index < 4; index += 1)
+        Future<SpokenFormulaResolution>.value(resolution),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('主体', isFinal: true);
+    await _flushAsyncWork();
+
+    for (var turn = 1; turn <= 3; turn += 1) {
+      expect(controller.canContinueRecording, isTrue);
+      await controller.continueRecording();
+      recognizer.emit('补充 $turn', isFinal: true, listenIndex: turn);
+      await _flushAsyncWork();
+      expect(controller.state.continuationTurn, turn);
+    }
+
+    expect(controller.canContinueRecording, isFalse);
+    await controller.continueRecording();
+    expect(recognizer.listenCount, 4);
+
+    await controller.answerClarification(resolution.clarification!.options[1]);
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(controller.state.transcript, isEmpty);
+    expect(controller.state.accumulatedTranscript, isEmpty);
+    expect(controller.state.continuationTurn, 0);
+  });
+
+  test('第三轮续录耗尽 deadline 后不再误提示可以继续补充', () async {
+    final recognizer = _FakeRecognizer();
+    final clarification = _clarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      for (var index = 0; index < 3; index += 1)
+        Future<SpokenFormulaResolution>.value(clarification),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('主体', isFinal: true);
+    await _flushAsyncWork();
+
+    for (var turn = 1; turn <= 2; turn += 1) {
+      await controller.continueRecording();
+      recognizer.emit('补充 $turn', isFinal: true, listenIndex: turn);
+      await _flushAsyncWork();
+    }
+    await controller.continueRecording();
+    recognizer.emit(
+      '补充 3',
+      isFinal: true,
+      processingElapsed: const Duration(seconds: 5),
+      listenIndex: 3,
+    );
+    await _flushAsyncWork();
+
+    expect(controller.state.continuationTurn, 3);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.canContinueRecording, isFalse);
+    expect(controller.state.errorMessage, isNot(contains('继续补充语音')));
+  });
+
   test('麦克风、ASR、网络与畸形响应统一进入 infrastructureError', () async {
     final cases = <_InfrastructureFailureCase>[
       _InfrastructureFailureCase(
@@ -214,6 +418,8 @@ void main() {
 
     expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
     expect(controller.state.errorMessage, contains('5 秒'));
+    expect(controller.state.errorMessage, contains('继续补充语音'));
+    expect(controller.canContinueRecording, isTrue);
     expect(repository.callCount, 1);
   });
 
@@ -253,6 +459,8 @@ void main() {
 
     expect(statusAtDeadline, SpeechFormulaStatus.infrastructureError);
     expect(messageAtDeadline, contains('5 秒'));
+    expect(messageAtDeadline, isNot(contains('继续补充语音')));
+    expect(controller.canContinueRecording, isFalse);
     expect(cancelCallsAtDeadline, 1);
     expect(repository.callCount, 0);
     expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
@@ -678,15 +886,18 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     this.initializationError,
     this.stopGate,
     this.disposeError,
+    List<Object?>? listenErrors,
     List<Completer<void>>? cancelGates,
     this.lifecycleEvents,
-  }) : _cancelGates = cancelGates ?? <Completer<void>>[];
+  }) : _listenErrors = listenErrors ?? <Object?>[],
+       _cancelGates = cancelGates ?? <Completer<void>>[];
 
   final bool isAvailable;
   @override
   final SpokenFormulaRecognitionException? initializationError;
   final Completer<void>? stopGate;
   final Object? disposeError;
+  final List<Object?> _listenErrors;
   final List<Completer<void>> _cancelGates;
   final List<String>? lifecycleEvents;
   final List<SpeechFormulaResultCallback> _resultCallbacks =
@@ -706,9 +917,14 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     SpeechFormulaErrorCallback? onError,
     SpeechFormulaFinalizationStartedCallback? onFinalizationStarted,
   }) async {
+    final index = listenCount;
     listenCount += 1;
     _resultCallbacks.add(onResult);
     _errorCallbacks.add(onError);
+    if (index < _listenErrors.length) {
+      final error = _listenErrors[index];
+      if (error != null) throw error;
+    }
   }
 
   void emit(
@@ -753,6 +969,7 @@ final class _QueueRepository implements SpokenFormulaResolutionRepository {
 
   final List<Future<SpokenFormulaResolution>> _responses;
   final List<Duration> timeouts = <Duration>[];
+  final List<String> texts = <String>[];
   int callCount = 0;
 
   @override
@@ -761,6 +978,7 @@ final class _QueueRepository implements SpokenFormulaResolutionRepository {
     String locale = 'zh-CN',
     required Duration timeout,
   }) {
+    texts.add(text);
     timeouts.add(timeout);
     final response = _responses[callCount];
     callCount += 1;

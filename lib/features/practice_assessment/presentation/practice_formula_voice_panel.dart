@@ -236,6 +236,21 @@ final class _ClarificationPrompt extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              if (controller.canContinueRecording)
+                OutlinedButton.icon(
+                  key: const ValueKey(
+                    'practice-formula-voice-continue-recording',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF5E35A8),
+                    side: const BorderSide(color: Color(0xFF9B7BD1)),
+                  ),
+                  onPressed: () {
+                    unawaited(controller.continueRecording());
+                  },
+                  icon: const Icon(Icons.mic_none_rounded),
+                  label: const Text('继续补充语音'),
+                ),
               for (final option in clarification.options)
                 OutlinedButton(
                   key: ValueKey<String>(
@@ -267,7 +282,7 @@ final class _InfrastructureError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       key: const ValueKey('practice-formula-voice-infrastructure-error'),
       width: double.infinity,
       child: Column(
@@ -290,6 +305,17 @@ final class _InfrastructureError extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
+              if (controller.canContinueRecording)
+                OutlinedButton.icon(
+                  key: const ValueKey(
+                    'practice-formula-voice-continue-recording',
+                  ),
+                  onPressed: () {
+                    unawaited(controller.continueRecording());
+                  },
+                  icon: const Icon(Icons.mic_none_rounded),
+                  label: const Text('继续补充语音'),
+                ),
               OutlinedButton(
                 key: const ValueKey('practice-formula-voice-retry'),
                 onPressed: state.transcript.isEmpty
