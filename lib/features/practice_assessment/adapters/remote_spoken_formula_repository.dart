@@ -181,7 +181,9 @@ final class RemoteSpokenFormulaRepository
 
   SpokenFormulaClarification _parseClarification(Object? value) {
     final data = _parseStrictObject(value, requiredKeys: _clarificationKeys);
-    final optionItems = _parseList(data['options'], minimum: 2, maximum: 3);
+    // 部分公式澄清最多包含 3 个候选选择，加上续录与键盘两个恢复动作。
+    // 上限在客户端同步执行，避免服务端异常响应把不可操作的长列表带进 UI。
+    final optionItems = _parseList(data['options'], minimum: 2, maximum: 5);
     final options = <SpokenFormulaClarificationOption>[];
     final ids = <String>{};
     for (final item in optionItems) {
@@ -241,12 +243,20 @@ final class RemoteSpokenFormulaRepository
     if (clarification == null) return;
 
     final candidateIds = candidates.map((candidate) => candidate.id).toSet();
+    final selectedCandidateIds = <String>{};
+    final recoveryActions = <SpokenFormulaClarificationAction>{};
     for (final option in clarification.options) {
       if (option.action == SpokenFormulaClarificationAction.selectCandidate) {
-        if (!candidateIds.contains(option.candidateId)) {
+        final candidateId = option.candidateId;
+        // 一个候选只能对应一个选择动作，避免重复按钮造成选择语义不唯一。
+        if (!candidateIds.contains(candidateId) ||
+            !selectedCandidateIds.add(candidateId!)) {
           throw _malformedResolution;
         }
       } else if (option.candidateId != null) {
+        throw _malformedResolution;
+      } else if (!recoveryActions.add(option.action)) {
+        // 续录、重录和键盘均是全局恢复动作，重复下发只会制造歧义。
         throw _malformedResolution;
       }
     }

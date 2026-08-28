@@ -241,7 +241,7 @@ final class _ClarificationPrompt extends StatelessWidget {
           if (resolution.candidates.isNotEmpty) ...[
             const SizedBox(height: 10),
             const Text(
-              '可先核对已经安全生成的候选：',
+              '已识别出以下公式片段，完整作用范围仍需确认',
               style: TextStyle(color: Color(0xFF655A73)),
             ),
             const SizedBox(height: 8),
@@ -269,6 +269,22 @@ final class _ClarificationPrompt extends StatelessWidget {
                   },
                   icon: const Icon(Icons.mic_none_rounded),
                   label: Text(continueOption.label),
+                ),
+              if (!controller.canContinueRecording && continueOption != null)
+                OutlinedButton.icon(
+                  key: const ValueKey(
+                    'practice-formula-voice-restart-recording',
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF5E35A8),
+                    side: const BorderSide(color: Color(0xFF9B7BD1)),
+                  ),
+                  onPressed: () {
+                    // 续录轮次耗尽后必须走全新录音入口，避免旧转写继续参与下一次解析。
+                    unawaited(controller.startListening());
+                  },
+                  icon: const Icon(Icons.replay_rounded),
+                  label: const Text('整段重录'),
                 ),
               for (final option in clarification.options)
                 if (option.action !=

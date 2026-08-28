@@ -174,6 +174,62 @@ void main() {
     expect(resolution.clarification?.options.last.candidateId, isNull);
   });
 
+  test('远程解析接受三个公式片段及其选择、续录和键盘共五个澄清动作', () async {
+    final data = _clarificationFixture();
+    data['candidates'] = <Map<String, Object?>>[
+      _candidateFixture('candidate-1'),
+      _candidateFixture('candidate-2'),
+      _candidateFixture('candidate-3'),
+    ];
+    final clarification = data['clarification']! as Map<String, Object?>;
+    clarification['options'] = <Map<String, Object?>>[
+      {
+        'id': 'select-candidate-1',
+        'label': '选择片段一',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {
+        'id': 'select-candidate-2',
+        'label': '选择片段二',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-2',
+      },
+      {
+        'id': 'select-candidate-3',
+        'label': '选择片段三',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-3',
+      },
+      {
+        'id': 'continue-recording',
+        'label': '继续补充语音',
+        'action': 'continueRecording',
+      },
+      {'id': 'use-keyboard', 'label': '使用公式键盘', 'action': 'useKeyboard'},
+    ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: '已知 x 大于零，求最小值',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates, hasLength(3));
+    expect(resolution.clarification?.options, hasLength(5));
+    expect(
+      resolution.clarification?.options
+          .where(
+            (option) =>
+                option.action ==
+                SpokenFormulaClarificationAction.selectCandidate,
+          )
+          .map((option) => option.candidateId),
+      <String>['candidate-1', 'candidate-2', 'candidate-3'],
+    );
+  });
+
   for (final fixture in <({String name, Map<String, Object?> data})>[
     (
       name: 'resolved 缺少候选',
@@ -248,6 +304,58 @@ void main() {
       {'id': 'use-keyboard', 'label': '使用公式键盘', 'action': 'useKeyboard'},
     ];
     await _expectSafeResolutionFailure(redundantCandidateId);
+  });
+
+  test('拒绝同一候选被重复选择以及重复的非选择澄清动作', () async {
+    final duplicateCandidateSelection = _clarificationFixture();
+    final duplicateSelectionClarification =
+        duplicateCandidateSelection['clarification']! as Map<String, Object?>;
+    duplicateSelectionClarification['options'] = <Map<String, Object?>>[
+      {
+        'id': 'select-candidate-first',
+        'label': '选择候选一',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {
+        'id': 'select-candidate-again',
+        'label': '再次选择候选一',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {'id': 'use-keyboard', 'label': '使用公式键盘', 'action': 'useKeyboard'},
+    ];
+    await _expectSafeResolutionFailure(duplicateCandidateSelection);
+
+    for (final duplicateAction in <String>[
+      'continueRecording',
+      'retryRecording',
+      'useKeyboard',
+    ]) {
+      final data = _clarificationFixture();
+      final clarification = data['clarification']! as Map<String, Object?>;
+      clarification['options'] = <Map<String, Object?>>[
+        {
+          'id': '$duplicateAction-first',
+          'label': '第一个恢复动作',
+          'action': duplicateAction,
+        },
+        {
+          'id': '$duplicateAction-second',
+          'label': '重复的恢复动作',
+          'action': duplicateAction,
+        },
+        {
+          'id':
+              'fallback-${duplicateAction == 'useKeyboard' ? 'retry' : 'keyboard'}',
+          'label': '另一恢复动作',
+          'action': duplicateAction == 'useKeyboard'
+              ? 'retryRecording'
+              : 'useKeyboard',
+        },
+      ];
+      await _expectSafeResolutionFailure(data);
+    }
   });
 
   test('拒绝重复候选 ID、重复选项 ID 和不足两个澄清选项', () async {

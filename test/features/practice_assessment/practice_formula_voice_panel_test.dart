@@ -278,12 +278,160 @@ void main() {
     );
   });
 
+  testWidgets('部分公式澄清展示可信片段，选择仍需显式插入', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.partialClarification),
+    );
+    final inserted = <String>[];
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, inserted.add));
+    await _resolve(tester, controller, recognizer, '已知 x 大于零，求最小值');
+
+    final prompt = find.byKey(
+      const ValueKey('practice-formula-voice-clarification'),
+    );
+    expect(
+      find.descendant(of: prompt, matching: find.text('已识别出以下公式片段，完整作用范围仍需确认')),
+      findsOneWidget,
+    );
+    for (final candidateId in <String>[
+      'fragment-function',
+      'fragment-condition',
+      'fragment-target',
+    ]) {
+      expect(
+        find.byKey(
+          ValueKey<String>('practice-formula-voice-spoken-back-$candidateId'),
+        ),
+        findsOneWidget,
+      );
+    }
+    for (final optionId in <String>[
+      'select-function',
+      'select-condition',
+      'select-target',
+      'use-keyboard',
+    ]) {
+      expect(
+        find.byKey(
+          ValueKey<String>('practice-formula-voice-clarification-$optionId'),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey('practice-formula-voice-clarification-select-function'),
+      ),
+    );
+    await tester.pump();
+
+    expect(controller.state.selectedCandidate?.id, 'fragment-function');
+    expect(inserted, isEmpty);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-insert')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('部分公式澄清的每个候选选择都精确定位且不自动插入', (tester) async {
+    for (final entry in <String, String>{
+      'select-function': 'fragment-function',
+      'select-condition': 'fragment-condition',
+      'select-target': 'fragment-target',
+    }.entries) {
+      final recognizer = _FakeRecognizer();
+      final controller = SpeechFormulaController(
+        recognizer: recognizer,
+        repository: const _Repository(_Outcome.partialClarification),
+      );
+      final inserted = <String>[];
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(_app(controller, inserted.add));
+      await _resolve(tester, controller, recognizer, '已知 x 大于零，求最小值');
+      await tester.tap(
+        find.byKey(
+          ValueKey<String>('practice-formula-voice-clarification-${entry.key}'),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.state.status, SpeechFormulaStatus.resolved);
+      expect(controller.state.selectedCandidate?.id, entry.value);
+      expect(inserted, isEmpty);
+    }
+  });
+
+  testWidgets('375px 部分公式澄清的三个候选和五个动作均可达且不溢出', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.partialClarification),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '已知 x 大于零，求 y 的最小值');
+
+    for (final candidateId in <String>[
+      'fragment-function',
+      'fragment-condition',
+      'fragment-target',
+    ]) {
+      expect(
+        find
+            .byKey(
+              ValueKey<String>(
+                'practice-formula-voice-spoken-back-$candidateId',
+              ),
+            )
+            .hitTestable(),
+        findsOneWidget,
+      );
+    }
+    for (final optionId in <String>[
+      'select-function',
+      'select-condition',
+      'select-target',
+      'use-keyboard',
+    ]) {
+      expect(
+        find
+            .byKey(
+              ValueKey<String>(
+                'practice-formula-voice-clarification-$optionId',
+              ),
+            )
+            .hitTestable(),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find
+          .byKey(const ValueKey('practice-formula-voice-continue-recording'))
+          .hitTestable(),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('clarification 显示续录入口并保留文字合并重新解析', (tester) async {
     final recognizer = _FakeRecognizer();
     final repository = _SequencedRepository(<Future<SpokenFormulaResolution>>[
-      Future<SpokenFormulaResolution>.value(
-        _clarificationWithContinue('二阶行列式'),
-      ),
+      Future<SpokenFormulaResolution>.value(_partialClarification('二阶行列式')),
       Future<SpokenFormulaResolution>.value(_resolved('二阶行列式，第一行 x 加一')),
     ]);
     final controller = SpeechFormulaController(
@@ -434,11 +582,16 @@ void main() {
     );
   });
 
-  testWidgets('完成三轮续录后不再显示入口', (tester) async {
+  testWidgets('三轮续录耗尽后改为整段重录且新转写不拼接旧上下文', (tester) async {
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final recognizer = _FakeRecognizer();
     final repository = _SequencedRepository(<Future<SpokenFormulaResolution>>[
       for (var index = 0; index < 4; index += 1)
         Future<SpokenFormulaResolution>.value(_clarification('澄清 $index')),
+      Future<SpokenFormulaResolution>.value(_resolved('全新公式')),
     ]);
     final controller = SpeechFormulaController(
       recognizer: recognizer,
@@ -449,6 +602,12 @@ void main() {
     await _resolve(tester, controller, recognizer, '主体');
 
     for (var turn = 1; turn <= 3; turn += 1) {
+      expect(
+        find
+            .byKey(const ValueKey('practice-formula-voice-continue-recording'))
+            .hitTestable(),
+        findsOneWidget,
+      );
       await tester.tap(
         find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
       );
@@ -462,6 +621,21 @@ void main() {
       find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
       findsNothing,
     );
+    final restart = find.byKey(
+      const ValueKey('practice-formula-voice-restart-recording'),
+    );
+    expect(restart.hitTestable(), findsOneWidget);
+    expect(find.text('整段重录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.tap(restart);
+    await _pumpAsync(tester);
+    recognizer.emit('全新公式', isFinal: true, listenIndex: 4);
+    await _pumpAsync(tester);
+
+    expect(repository.texts.last, '全新公式');
+    expect(controller.state.continuationTurn, 0);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
   });
 
   testWidgets('clarification 重录和监听取消都隔离旧 operation 的迟到 final', (tester) async {
@@ -630,6 +804,7 @@ enum _Outcome {
   resolved,
   candidates,
   clarification,
+  partialClarification,
   retryClarification,
   longCandidates,
 }
@@ -648,6 +823,7 @@ final class _Repository implements SpokenFormulaResolutionRepository {
     _Outcome.resolved => _resolved(text),
     _Outcome.candidates => _candidates(text),
     _Outcome.clarification => _clarification(text),
+    _Outcome.partialClarification => _partialClarification(text),
     _Outcome.retryClarification => _retryClarification(text),
     _Outcome.longCandidates => _longCandidates(text),
   };
@@ -803,6 +979,66 @@ SpokenFormulaResolution _retryClarification(String text) =>
           SpokenFormulaClarificationOption(
             id: 'keyboard',
             label: '使用键盘',
+            action: SpokenFormulaClarificationAction.useKeyboard,
+          ),
+        ],
+      ),
+      warnings: const <String>[],
+    );
+
+SpokenFormulaResolution _partialClarification(String text) =>
+    SpokenFormulaResolution(
+      resolutionId: 'voice-panel-partial-clarification',
+      recognizedText: text,
+      normalizedText: text,
+      outcome: SpokenFormulaOutcome.clarification,
+      candidates: const <SpokenFormulaCandidate>[
+        SpokenFormulaCandidate(
+          id: 'fragment-function',
+          latex: r'y=x+\frac{4}{x}',
+          spokenBack: 'y 等于 x 加四除以 x',
+        ),
+        SpokenFormulaCandidate(
+          id: 'fragment-condition',
+          latex: r'x>0',
+          spokenBack: 'x 大于零',
+        ),
+        SpokenFormulaCandidate(
+          id: 'fragment-target',
+          latex: r'\min y',
+          spokenBack: '求 y 的最小值',
+        ),
+      ],
+      clarification: SpokenFormulaClarification(
+        question: '请确认下一步。',
+        focusText: '完整作用范围',
+        options: const <SpokenFormulaClarificationOption>[
+          SpokenFormulaClarificationOption(
+            id: 'select-function',
+            label: '选择函数片段',
+            action: SpokenFormulaClarificationAction.selectCandidate,
+            candidateId: 'fragment-function',
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'select-condition',
+            label: '选择条件片段',
+            action: SpokenFormulaClarificationAction.selectCandidate,
+            candidateId: 'fragment-condition',
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'select-target',
+            label: '选择最值片段',
+            action: SpokenFormulaClarificationAction.selectCandidate,
+            candidateId: 'fragment-target',
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'continue-recording',
+            label: '继续补充语音',
+            action: SpokenFormulaClarificationAction.continueRecording,
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'use-keyboard',
+            label: '使用公式键盘',
             action: SpokenFormulaClarificationAction.useKeyboard,
           ),
         ],

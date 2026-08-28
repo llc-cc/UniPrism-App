@@ -243,6 +243,7 @@ void main() {
     final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
       for (var index = 0; index < 4; index += 1)
         Future<SpokenFormulaResolution>.value(resolution),
+      Future<SpokenFormulaResolution>.value(_resolved()),
     ]);
     final controller = _controller(
       recognizer: recognizer,
@@ -269,6 +270,13 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.listening);
     expect(controller.state.transcript, isEmpty);
     expect(controller.state.accumulatedTranscript, isEmpty);
+    expect(controller.state.continuationTurn, 0);
+
+    recognizer.emit('全新公式', isFinal: true, listenIndex: 4);
+    await _flushAsyncWork();
+
+    expect(repository.texts.last, '全新公式');
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
     expect(controller.state.continuationTurn, 0);
   });
 
