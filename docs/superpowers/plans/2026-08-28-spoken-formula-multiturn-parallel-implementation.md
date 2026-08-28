@@ -59,7 +59,7 @@ Expected: PASS。
 
 **Step 1: Write failing controller tests**
 
-覆盖：保留首轮文字、补充 final 后按中文逗号合并并重新解析、每轮使用新的 operation、迟到回调隔离、空补充不请求、整段重录清空上下文、最多 3 轮。
+覆盖：clarification 与客户端 deadline/error 两个入口都能保留首轮文字；补充 final 后按中文逗号合并并重新解析；每轮使用新的 operation；迟到回调隔离；空补充不请求；整段重录清空上下文；最多 3 轮。没有 transcript 的权限/麦克风错误不能续录。
 
 **Step 2: Run test to verify it fails**
 
@@ -88,7 +88,7 @@ Expected: PASS。
 
 **Step 1: Write failing widget tests**
 
-断言澄清卡显示“继续补充语音”，点击后保留原识别文字；达到 3 轮后按钮不可再出现；候选仍不会自动插入。
+断言澄清卡和“超时但已有识别文字”的错误卡都显示“继续补充语音”，点击后保留原识别文字；没有文字的基础设施错误不显示该按钮；达到 3 轮后按钮不可再出现；候选仍不会自动插入。
 
 **Step 2: Run test to verify it fails**
 
@@ -123,13 +123,14 @@ git commit -m "feat(practice): support spoken formula continuation"
 
 - Modify: `lib/practice-formula/resolutionContracts.ts`
 - Modify: `lib/practice-formula/localResolutionService.ts`
+- Modify: `lib/practice-formula/resolutionHttp.ts`
 - Test: `tests/unit/practiceFormulaResolutionContracts.test.ts`
 - Test: `tests/unit/practiceFormulaLocalResolutionService.test.ts`
 - Test: `tests/unit/practiceSpokenFormulaResolutionRoute.test.ts`
 
 **Step 1: Write failing tests**
 
-断言 action 合约接受 `continueRecording`；无安全候选的 clarification 返回续录和键盘；有安全候选时仍提供 `selectCandidate`，且所有 candidateId 都属于当前响应。
+断言 action 合约接受 `continueRecording`；无安全候选与 HTTP 剩余预算不足的 clarification 都返回续录和键盘；有安全候选时仍提供 `selectCandidate`，且所有 candidateId 都属于当前响应。
 
 **Step 2: Run tests to verify they fail**
 
