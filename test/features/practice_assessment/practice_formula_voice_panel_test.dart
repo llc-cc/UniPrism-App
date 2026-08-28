@@ -197,6 +197,13 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.byKey(
+        const ValueKey('practice-formula-voice-spoken-back-candidate-b'),
+      ),
+      findsOneWidget,
+    );
+    expect(inserted, isEmpty);
+    expect(
       find.descendant(of: promptFinder, matching: find.textContaining('换一种说法')),
       findsNothing,
     );
@@ -241,7 +248,7 @@ void main() {
       );
     }
 
-    for (final id in <String>['select-negative-outside', 'retry', 'keyboard']) {
+    for (final id in <String>['select-negative-outside', 'keyboard']) {
       expect(
         find.byKey(
           ValueKey<String>('practice-formula-voice-clarification-$id'),
@@ -249,6 +256,10 @@ void main() {
         findsOneWidget,
       );
     }
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      findsOneWidget,
+    );
     await tester.tap(
       find.byKey(
         const ValueKey(
@@ -270,7 +281,9 @@ void main() {
   testWidgets('clarification 显示续录入口并保留文字合并重新解析', (tester) async {
     final recognizer = _FakeRecognizer();
     final repository = _SequencedRepository(<Future<SpokenFormulaResolution>>[
-      Future<SpokenFormulaResolution>.value(_clarification('二阶行列式')),
+      Future<SpokenFormulaResolution>.value(
+        _clarificationWithContinue('二阶行列式'),
+      ),
       Future<SpokenFormulaResolution>.value(_resolved('二阶行列式，第一行 x 加一')),
     ]);
     final controller = SpeechFormulaController(
@@ -302,6 +315,79 @@ void main() {
     expect(repository.texts, <String>['二阶行列式', '二阶行列式，第一行 x 加一']);
     expect(controller.state.status, SpeechFormulaStatus.resolved);
     expect(inserted, isEmpty);
+  });
+
+  testWidgets('续录解析失败后保留上一轮安全候选并允许明确选择', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final repository = _SuccessThenFailRepository(_clarification('负二的平方'));
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    final inserted = <String>[];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, inserted.add));
+    await _resolve(tester, controller, recognizer, '负二的平方');
+
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+    );
+    await _pumpAsync(tester);
+    recognizer.emit('我指的是平方后再取负', isFinal: true, listenIndex: 1);
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-retained-resolution')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        const ValueKey('practice-formula-voice-spoken-back-candidate-b'),
+      ),
+      findsOneWidget,
+    );
+    expect(inserted, isEmpty);
+
+    await tester.tap(
+      find.byKey(
+        const ValueKey(
+          'practice-formula-voice-retained-select-select-negative-outside',
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(controller.state.selectedCandidate?.id, 'candidate-b');
+    expect(inserted, isEmpty);
+  });
+
+  testWidgets('无候选的续录解析失败后仍恢复上一轮澄清焦点', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final repository = _SuccessThenFailRepository(
+      _clarificationWithContinue('二阶行列式'),
+    );
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '二阶行列式');
+
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+    );
+    await _pumpAsync(tester);
+    recognizer.emit('第一行还没说完', isFinal: true, listenIndex: 1);
+    await _pumpAsync(tester);
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(
+      find.byKey(const ValueKey('practice-formula-voice-retained-resolution')),
+      findsOneWidget,
+    );
+    expect(find.text('需要确认：二阶行列式'), findsOneWidget);
   });
 
   testWidgets('infrastructureError 有 transcript 可续录，无 transcript 的权限错误不显示', (
@@ -382,7 +468,7 @@ void main() {
     final recognizer = _FakeRecognizer();
     final controller = SpeechFormulaController(
       recognizer: recognizer,
-      repository: const _Repository(_Outcome.clarification),
+      repository: const _Repository(_Outcome.retryClarification),
     );
     addTearDown(controller.dispose);
 
@@ -540,7 +626,13 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   Future<void> stop() async {}
 }
 
-enum _Outcome { resolved, candidates, clarification, longCandidates }
+enum _Outcome {
+  resolved,
+  candidates,
+  clarification,
+  retryClarification,
+  longCandidates,
+}
 
 final class _Repository implements SpokenFormulaResolutionRepository {
   const _Repository(this.outcome);
@@ -556,6 +648,7 @@ final class _Repository implements SpokenFormulaResolutionRepository {
     _Outcome.resolved => _resolved(text),
     _Outcome.candidates => _candidates(text),
     _Outcome.clarification => _clarification(text),
+    _Outcome.retryClarification => _retryClarification(text),
     _Outcome.longCandidates => _longCandidates(text),
   };
 }
@@ -596,6 +689,24 @@ final class _FailOnceRepository implements SpokenFormulaResolutionRepository {
     texts.add(text);
     if (_callCount++ == 0) throw StateError('network internals');
     return _success;
+  }
+}
+
+final class _SuccessThenFailRepository
+    implements SpokenFormulaResolutionRepository {
+  _SuccessThenFailRepository(this._firstResponse);
+
+  final SpokenFormulaResolution _firstResponse;
+  var _callCount = 0;
+
+  @override
+  Future<SpokenFormulaResolution> resolve({
+    required String text,
+    String locale = 'zh-CN',
+    required Duration timeout,
+  }) async {
+    if (_callCount++ == 0) return _firstResponse;
+    throw StateError('network internals');
   }
 }
 
@@ -659,9 +770,9 @@ SpokenFormulaResolution _clarification(String text) => SpokenFormulaResolution(
         candidateId: 'candidate-b',
       ),
       SpokenFormulaClarificationOption(
-        id: 'retry',
-        label: '重新说',
-        action: SpokenFormulaClarificationAction.retryRecording,
+        id: 'continue',
+        label: '继续补充语音',
+        action: SpokenFormulaClarificationAction.continueRecording,
       ),
       SpokenFormulaClarificationOption(
         id: 'keyboard',
@@ -672,6 +783,58 @@ SpokenFormulaResolution _clarification(String text) => SpokenFormulaResolution(
   ),
   warnings: const <String>[],
 );
+
+SpokenFormulaResolution _retryClarification(String text) =>
+    SpokenFormulaResolution(
+      resolutionId: 'voice-panel-retry-clarification',
+      recognizedText: text,
+      normalizedText: text,
+      outcome: SpokenFormulaOutcome.clarification,
+      candidates: const <SpokenFormulaCandidate>[],
+      clarification: SpokenFormulaClarification(
+        question: '请重新完整表达公式。',
+        focusText: text,
+        options: const <SpokenFormulaClarificationOption>[
+          SpokenFormulaClarificationOption(
+            id: 'retry',
+            label: '重新说',
+            action: SpokenFormulaClarificationAction.retryRecording,
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'keyboard',
+            label: '使用键盘',
+            action: SpokenFormulaClarificationAction.useKeyboard,
+          ),
+        ],
+      ),
+      warnings: const <String>[],
+    );
+
+SpokenFormulaResolution _clarificationWithContinue(String text) =>
+    SpokenFormulaResolution(
+      resolutionId: 'voice-panel-continuation',
+      recognizedText: text,
+      normalizedText: text,
+      outcome: SpokenFormulaOutcome.clarification,
+      candidates: const <SpokenFormulaCandidate>[],
+      clarification: SpokenFormulaClarification(
+        question: '请继续补充每一行的元素。',
+        focusText: text,
+        options: const <SpokenFormulaClarificationOption>[
+          SpokenFormulaClarificationOption(
+            id: 'continue',
+            label: '继续补充语音',
+            action: SpokenFormulaClarificationAction.continueRecording,
+          ),
+          SpokenFormulaClarificationOption(
+            id: 'keyboard',
+            label: '使用键盘',
+            action: SpokenFormulaClarificationAction.useKeyboard,
+          ),
+        ],
+      ),
+      warnings: const <String>[],
+    );
 
 SpokenFormulaResolution _longCandidates(String text) => SpokenFormulaResolution(
   resolutionId: 'voice-panel-long-candidates',

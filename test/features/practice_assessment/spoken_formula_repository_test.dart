@@ -60,10 +60,7 @@ void main() {
       return _okResponse(_resolvedFixture());
     });
 
-    await repository.resolve(
-      text: '上限测试',
-      timeout: const Duration(seconds: 6),
-    );
+    await repository.resolve(text: '上限测试', timeout: const Duration(seconds: 6));
     await repository.resolve(
       text: '较小预算',
       timeout: const Duration(milliseconds: 200),
@@ -148,9 +145,9 @@ void main() {
             'candidateId': 'candidate-1',
           },
           {
-            'id': 'retry-recording',
-            'label': '重新录音',
-            'action': 'retryRecording',
+            'id': 'continue-recording',
+            'label': '继续补充语音',
+            'action': 'continueRecording',
           },
           {'id': 'use-keyboard', 'label': '使用公式键盘', 'action': 'useKeyboard'},
         ],
@@ -169,7 +166,7 @@ void main() {
       resolution.clarification?.options.map((option) => option.action),
       <SpokenFormulaClarificationAction>[
         SpokenFormulaClarificationAction.selectCandidate,
-        SpokenFormulaClarificationAction.retryRecording,
+        SpokenFormulaClarificationAction.continueRecording,
         SpokenFormulaClarificationAction.useKeyboard,
       ],
     );

@@ -78,9 +78,18 @@ final class SpeechFormulaController extends ChangeNotifier {
   static const int maxContinuationTurns = 3;
 
   bool get canContinueRecording {
-    final statusAllowsContinuation =
-        _state.status == SpeechFormulaStatus.clarifying ||
-        _state.status == SpeechFormulaStatus.infrastructureError;
+    final statusAllowsContinuation = switch (_state.status) {
+      SpeechFormulaStatus.clarifying =>
+        _state.resolution?.clarification?.options.any(
+              (option) =>
+                  option.action ==
+                  SpokenFormulaClarificationAction.continueRecording,
+            ) ??
+            false,
+      // 客户端 deadline/error 没有服务端 action，仍由本地已识别文字决定能否补充。
+      SpeechFormulaStatus.infrastructureError => true,
+      _ => false,
+    };
     return statusAllowsContinuation &&
         _state.transcript.trim().isNotEmpty &&
         _state.continuationTurn < maxContinuationTurns;
@@ -243,8 +252,12 @@ final class SpeechFormulaController extends ChangeNotifier {
 
   void selectCandidate(String candidateId) {
     final resolution = _state.resolution;
+    final canRestoreAuditedCandidates =
+        _state.status == SpeechFormulaStatus.infrastructureError &&
+        resolution?.outcome == SpokenFormulaOutcome.candidates;
     if (resolution == null ||
-        _state.status != SpeechFormulaStatus.choosingCandidate ||
+        (_state.status != SpeechFormulaStatus.choosingCandidate &&
+            !canRestoreAuditedCandidates) ||
         !_containsCandidate(resolution, candidateId)) {
       return;
     }
@@ -267,9 +280,7 @@ final class SpeechFormulaController extends ChangeNotifier {
   ) async {
     final resolution = _state.resolution;
     final clarification = resolution?.clarification;
-    if (resolution == null ||
-        clarification == null ||
-        _state.status != SpeechFormulaStatus.clarifying) {
+    if (resolution == null || clarification == null) {
       return;
     }
     SpokenFormulaClarificationOption? currentOption;
@@ -280,6 +291,14 @@ final class SpeechFormulaController extends ChangeNotifier {
       }
     }
     if (currentOption == null) return;
+    final canAnswerRetainedCandidate =
+        _state.status == SpeechFormulaStatus.infrastructureError &&
+        currentOption.action ==
+            SpokenFormulaClarificationAction.selectCandidate;
+    if (_state.status != SpeechFormulaStatus.clarifying &&
+        !canAnswerRetainedCandidate) {
+      return;
+    }
 
     switch (currentOption.action) {
       case SpokenFormulaClarificationAction.selectCandidate:
@@ -300,6 +319,10 @@ final class SpeechFormulaController extends ChangeNotifier {
             selectedCandidateId: candidateId,
           ),
         );
+        return;
+      case SpokenFormulaClarificationAction.continueRecording:
+        // 服务端只表达有限动作；累计文字和 operation 隔离仍由控制器统一负责。
+        await continueRecording();
         return;
       case SpokenFormulaClarificationAction.retryRecording:
         final operationId = ++_operationId;

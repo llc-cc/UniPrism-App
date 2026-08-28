@@ -216,6 +216,8 @@ final class RemoteSpokenFormulaRepository
   SpokenFormulaClarificationAction _parseAction(Object? value) =>
       switch (value) {
         'selectCandidate' => SpokenFormulaClarificationAction.selectCandidate,
+        'continueRecording' =>
+          SpokenFormulaClarificationAction.continueRecording,
         'retryRecording' => SpokenFormulaClarificationAction.retryRecording,
         'useKeyboard' => SpokenFormulaClarificationAction.useKeyboard,
         _ => throw _malformedResolution,

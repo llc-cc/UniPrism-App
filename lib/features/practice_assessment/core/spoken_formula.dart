@@ -53,6 +53,7 @@ enum SpokenFormulaOutcome { resolved, candidates, clarification }
 /// 澄清选项允许 UI 执行的有限动作集合。
 enum SpokenFormulaClarificationAction {
   selectCandidate,
+  continueRecording,
   retryRecording,
   useKeyboard,
 }

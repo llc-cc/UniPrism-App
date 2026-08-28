@@ -207,6 +207,13 @@ final class _ClarificationPrompt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final clarification = resolution.clarification!;
+    SpokenFormulaClarificationOption? continueOption;
+    for (final option in clarification.options) {
+      if (option.action == SpokenFormulaClarificationAction.continueRecording) {
+        continueOption = option;
+        break;
+      }
+    }
     return Container(
       key: const ValueKey('practice-formula-voice-clarification'),
       width: double.infinity,
@@ -231,12 +238,24 @@ final class _ClarificationPrompt extends StatelessWidget {
             '需要确认：${clarification.focusText}',
             style: const TextStyle(color: Color(0xFF655A73)),
           ),
+          if (resolution.candidates.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text(
+              '可先核对已经安全生成的候选：',
+              style: TextStyle(color: Color(0xFF655A73)),
+            ),
+            const SizedBox(height: 8),
+            for (final candidate in resolution.candidates) ...[
+              _FormulaCandidateView(candidate: candidate),
+              const SizedBox(height: 8),
+            ],
+          ],
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              if (controller.canContinueRecording)
+              if (controller.canContinueRecording && continueOption != null)
                 OutlinedButton.icon(
                   key: const ValueKey(
                     'practice-formula-voice-continue-recording',
@@ -249,22 +268,24 @@ final class _ClarificationPrompt extends StatelessWidget {
                     unawaited(controller.continueRecording());
                   },
                   icon: const Icon(Icons.mic_none_rounded),
-                  label: const Text('继续补充语音'),
+                  label: Text(continueOption.label),
                 ),
               for (final option in clarification.options)
-                OutlinedButton(
-                  key: ValueKey<String>(
-                    'practice-formula-voice-clarification-${option.id}',
+                if (option.action !=
+                    SpokenFormulaClarificationAction.continueRecording)
+                  OutlinedButton(
+                    key: ValueKey<String>(
+                      'practice-formula-voice-clarification-${option.id}',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF5E35A8),
+                      side: const BorderSide(color: Color(0xFF9B7BD1)),
+                    ),
+                    onPressed: () {
+                      unawaited(controller.answerClarification(option));
+                    },
+                    child: Text(option.label),
                   ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF5E35A8),
-                    side: const BorderSide(color: Color(0xFF9B7BD1)),
-                  ),
-                  onPressed: () {
-                    unawaited(controller.answerClarification(option));
-                  },
-                  child: Text(option.label),
-                ),
             ],
           ),
         ],
@@ -273,7 +294,7 @@ final class _ClarificationPrompt extends StatelessWidget {
   }
 }
 
-/// 基础设施错误保留安全错误文案和已识别文本，供用户重试或改用键盘。
+/// 基础设施错误保留上一轮已审核响应；失败不能抹掉用户仍可选择的安全候选。
 final class _InfrastructureError extends StatelessWidget {
   const _InfrastructureError({required this.state, required this.controller});
 
@@ -300,6 +321,16 @@ final class _InfrastructureError extends StatelessWidget {
             state.errorMessage ?? '语音输入失败，请重试。',
             style: const TextStyle(color: Color(0xFF9A3412)),
           ),
+          if (state.resolution case final resolution?
+              when resolution.candidates.isNotEmpty ||
+                  resolution.clarification != null) ...[
+            const SizedBox(height: 10),
+            _RetainedResolution(
+              resolution: resolution,
+              state: state,
+              controller: controller,
+            ),
+          ],
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -330,6 +361,85 @@ final class _InfrastructureError extends StatelessWidget {
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 仅恢复服务端已经审核过的候选；错误态不会根据转写自行拼接或猜测 LaTeX。
+final class _RetainedResolution extends StatelessWidget {
+  const _RetainedResolution({
+    required this.resolution,
+    required this.state,
+    required this.controller,
+  });
+
+  final SpokenFormulaResolution resolution;
+  final SpeechFormulaState state;
+  final SpeechFormulaController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final clarification = resolution.clarification;
+    final selectOptions = clarification?.options.where(
+      (option) =>
+          option.action == SpokenFormulaClarificationAction.selectCandidate,
+    );
+    return Container(
+      key: const ValueKey('practice-formula-voice-retained-resolution'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: const Color(0xFFD9CCFA)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            resolution.candidates.isEmpty
+                ? '上一次的安全澄清信息仍已保留：'
+                : '上一次已安全生成的候选仍可使用：',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          if (clarification != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              '需要确认：${clarification.focusText}',
+              style: const TextStyle(color: Color(0xFF655A73)),
+            ),
+          ],
+          const SizedBox(height: 8),
+          for (final candidate in resolution.candidates) ...[
+            if (resolution.outcome == SpokenFormulaOutcome.candidates)
+              _SelectableFormulaCandidate(
+                candidate: candidate,
+                isSelected: state.selectedCandidateId == candidate.id,
+                onSelected: () => controller.selectCandidate(candidate.id),
+              )
+            else
+              _FormulaCandidateView(candidate: candidate),
+            const SizedBox(height: 8),
+          ],
+          if (selectOptions != null)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final option in selectOptions)
+                  OutlinedButton(
+                    key: ValueKey<String>(
+                      'practice-formula-voice-retained-select-${option.id}',
+                    ),
+                    onPressed: () {
+                      unawaited(controller.answerClarification(option));
+                    },
+                    child: Text(option.label),
+                  ),
+              ],
+            ),
         ],
       ),
     );

@@ -119,6 +119,25 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.resolved);
   });
 
+  test('clarification 未提供 continueRecording 时不可绕过服务端动作续录', () async {
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_retryClarification()),
+      ]),
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('只允许整段重录', isFinal: true);
+    await _flushAsyncWork();
+
+    expect(controller.canContinueRecording, isFalse);
+    await controller.continueRecording();
+    expect(recognizer.listenCount, 1);
+    expect(controller.state.status, SpeechFormulaStatus.clarifying);
+  });
+
   test('deadline 保留 transcript 后可续录并以新 operation 合并重新解析', () async {
     final recognizer = _FakeRecognizer();
     final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
@@ -246,7 +265,7 @@ void main() {
     await controller.continueRecording();
     expect(recognizer.listenCount, 4);
 
-    await controller.answerClarification(resolution.clarification!.options[1]);
+    await controller.startListening();
     expect(controller.state.status, SpeechFormulaStatus.listening);
     expect(controller.state.transcript, isEmpty);
     expect(controller.state.accumulatedTranscript, isEmpty);
@@ -678,9 +697,35 @@ void main() {
     expect(controller.state.errorMessage, isNull);
   });
 
+  test('clarification continueRecording 保留累计文字并启动独立续录', () async {
+    final recognizer = _FakeRecognizer();
+    final resolution = _continuationClarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(resolution),
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('二阶行列式', isFinal: true);
+    await _flushAsyncWork();
+
+    await controller.answerClarification(resolution.clarification!.options[0]);
+
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(controller.state.transcript, '二阶行列式');
+    expect(recognizer.listenCount, 2);
+    recognizer.emit('第一行一二第二行三四', isFinal: true, listenIndex: 1);
+    await _flushAsyncWork();
+    expect(repository.texts, <String>['二阶行列式', '二阶行列式，第一行一二第二行三四']);
+  });
+
   test('clarification retryRecording 开启新录音且隔离旧回调', () async {
     final recognizer = _FakeRecognizer();
-    final resolution = _clarification();
+    final resolution = _retryClarification();
     final controller = _controller(
       recognizer: recognizer,
       repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
@@ -692,7 +737,7 @@ void main() {
     recognizer.emit('待澄清', isFinal: true);
     await _flushAsyncWork();
 
-    await controller.answerClarification(resolution.clarification!.options[1]);
+    await controller.answerClarification(resolution.clarification!.options[0]);
 
     expect(controller.state.status, SpeechFormulaStatus.listening);
     expect(recognizer.listenCount, 2);
@@ -707,7 +752,7 @@ void main() {
     final recognizer = _FakeRecognizer(
       cancelGates: <Completer<void>>[oldCancelGate, newCancelGate],
     );
-    final resolution = _clarification();
+    final resolution = _retryClarification();
     final controller = _controller(
       recognizer: recognizer,
       repository: _QueueRepository(<Future<SpokenFormulaResolution>>[
@@ -720,7 +765,7 @@ void main() {
     await _flushAsyncWork();
 
     final answering = controller.answerClarification(
-      resolution.clarification!.options[1],
+      resolution.clarification!.options[0],
     );
     await _flushAsyncWork();
     final restarting = controller.startListening();
@@ -860,9 +905,59 @@ SpokenFormulaResolution _clarification() => SpokenFormulaResolution(
         candidateId: 'candidate-b',
       ),
       SpokenFormulaClarificationOption(
+        id: 'continue',
+        label: '继续补充语音',
+        action: SpokenFormulaClarificationAction.continueRecording,
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'keyboard',
+        label: '使用键盘',
+        action: SpokenFormulaClarificationAction.useKeyboard,
+      ),
+    ],
+  ),
+  warnings: const <String>[],
+);
+
+SpokenFormulaResolution _retryClarification() => SpokenFormulaResolution(
+  resolutionId: 'resolution-retry-clarification',
+  recognizedText: '负二的平方',
+  normalizedText: '负二的平方',
+  outcome: SpokenFormulaOutcome.clarification,
+  candidates: const <SpokenFormulaCandidate>[],
+  clarification: SpokenFormulaClarification(
+    question: '请重新完整表达公式。',
+    focusText: '负二的平方',
+    options: const <SpokenFormulaClarificationOption>[
+      SpokenFormulaClarificationOption(
         id: 'retry',
         label: '重新说',
         action: SpokenFormulaClarificationAction.retryRecording,
+      ),
+      SpokenFormulaClarificationOption(
+        id: 'keyboard',
+        label: '使用键盘',
+        action: SpokenFormulaClarificationAction.useKeyboard,
+      ),
+    ],
+  ),
+  warnings: const <String>[],
+);
+
+SpokenFormulaResolution _continuationClarification() => SpokenFormulaResolution(
+  resolutionId: 'resolution-continuation',
+  recognizedText: '二阶行列式',
+  normalizedText: '二阶行列式',
+  outcome: SpokenFormulaOutcome.clarification,
+  candidates: const <SpokenFormulaCandidate>[],
+  clarification: SpokenFormulaClarification(
+    question: '请继续补充每一行的元素。',
+    focusText: '二阶行列式',
+    options: const <SpokenFormulaClarificationOption>[
+      SpokenFormulaClarificationOption(
+        id: 'continue',
+        label: '继续补充语音',
+        action: SpokenFormulaClarificationAction.continueRecording,
       ),
       SpokenFormulaClarificationOption(
         id: 'keyboard',
