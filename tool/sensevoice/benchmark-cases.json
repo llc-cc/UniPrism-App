@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "cases": [
+    {"id":"polynomial","file":"01-polynomial.wav","expected":"x的平方减三x加二"},
+    {"id":"fraction","file":"02-fraction.wav","expected":"根号下x加一整体除以x减一"},
+    {"id":"relation","file":"03-relation.wav","expected":"零小于x并且x小于等于一"},
+    {"id":"ambiguity","file":"04-ambiguity.wav","expected":"负二的平方"},
+    {"id":"function","file":"05-function.wav","expected":"正弦x加余弦x"}
+  ]
+}

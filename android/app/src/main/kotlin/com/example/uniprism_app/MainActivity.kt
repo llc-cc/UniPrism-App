@@ -54,12 +54,13 @@ class MainActivity : FlutterActivity() {
                         "uniprism.messages" to preferences.getString("uniprism.messages", null),
                         "uniprism.agentChatSessions.v1" to preferences.getString("uniprism.agentChatSessions.v1", null),
                         "uniprism.privacyAcceptedVersion" to preferences.getString("uniprism.privacyAcceptedVersion", null),
+                        "uniprism.practiceParticipantToken" to preferences.getString("uniprism.practiceParticipantToken", null),
                     ),
                 )
                 "write" -> {
                     val values = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
                     val editor = preferences.edit()
-                    listOf("uniprism.token", "uniprism.user", "uniprism.anonymousId", "uniprism.anonymousCookie", "uniprism.exploreSessionId", "uniprism.messages", "uniprism.agentChatSessions.v1", "uniprism.privacyAcceptedVersion").forEach { key ->
+                    listOf("uniprism.token", "uniprism.user", "uniprism.anonymousId", "uniprism.anonymousCookie", "uniprism.exploreSessionId", "uniprism.messages", "uniprism.agentChatSessions.v1", "uniprism.privacyAcceptedVersion", "uniprism.practiceParticipantToken").forEach { key ->
                         if (!values.containsKey(key)) return@forEach
                         val value = values[key] as? String
                         if (value.isNullOrEmpty()) editor.remove(key) else editor.putString(key, value)

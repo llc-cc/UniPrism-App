@@ -1,5 +1,65 @@
 part of 'main.dart';
 
+/// 统一构造练习实验室，确保开发工具点击入口与 Web 直达路由使用同一连接模式。
+Widget _buildPracticeAssessmentLabPage() {
+  // 识别器只在进入实验页时构造一次，再与对应来源标签一起交给页面持有。
+  final speechFormulaRecognizer = createPlatformSpeechFormulaRecognizer(
+    mode: AppConfig.spokenFormulaAsrMode,
+    senseVoiceBaseUrl: AppConfig.senseVoiceBaseUrl,
+  );
+  final speechFormulaSourceLabel = switch (AppConfig.spokenFormulaAsrMode) {
+    'browser' => '浏览器语音',
+    'sensevoiceLocal' => '本机 SenseVoice',
+    final mode => throw ArgumentError.value(
+      mode,
+      'SPOKEN_FORMULA_ASR_MODE',
+      '仅支持 browser 或 sensevoiceLocal',
+    ),
+  };
+  if (AppConfig.practiceAssessmentRemote) {
+    return PracticeAssessmentLabPage.remote(
+      baseUrl: AppConfig.apiBaseUrl,
+      bearerTokenProvider: () async => AuthService.instance.token,
+      speechFormulaRecognizer: speechFormulaRecognizer,
+      speechFormulaSourceLabel: speechFormulaSourceLabel,
+    );
+  }
+  // Mock 只保留本地题目；真实麦克风转写必须始终进入共享公式后端，不能再退回固定演示映射。
+  final api = PracticeApiClient(
+    baseUrl: AppConfig.apiBaseUrl,
+    participantTokenStore: NativePracticeParticipantTokenStore(),
+    bearerTokenProvider: () async => AuthService.instance.token,
+  );
+  return PracticeAssessmentLabPage.mock(
+    spokenFormulaRepository: RemoteSpokenFormulaRepository(api),
+    speechFormulaRecognizer: speechFormulaRecognizer,
+    speechFormulaSourceLabel: speechFormulaSourceLabel,
+  );
+}
+
+/// 统一构造对话探索实验室，避免直达路由与开发工具入口的身份契约发生漂移。
+Widget _buildDialogueExplorationLabPage() {
+  return RemoteExplorationLabPage(
+    gateway: RemoteExplorationApi(
+      baseUrl: AppConfig.apiBaseUrl,
+      identityProvider: remoteIdentityProviderForPlatform(
+        isWeb: kIsWeb,
+        nativeProvider: () async {
+          final auth = AuthService.instance;
+          final exploreSessionId = auth.isLoggedIn
+              ? await auth.bindExploreSessionToCurrentUser()
+              : await auth.ensureExploreSession();
+          return RemoteExplorationIdentity(
+            exploreSessionId: exploreSessionId,
+            bearerToken: auth.token,
+            anonymousId: auth.anonymousId,
+          );
+        },
+      ),
+    ),
+  );
+}
+
 /// 汇总开发期诊断入口；生产环境不会注册或展示此页面。
 class DeveloperToolsPage extends StatelessWidget {
   const DeveloperToolsPage({
@@ -31,33 +91,20 @@ class DeveloperToolsPage extends StatelessWidget {
             ),
           ),
           _DeveloperToolEntry(
+            key: const ValueKey('developer-tool-practice-assessment'),
+            icon: Icons.fact_check_rounded,
+            title: '练习评分实验室',
+            description: AppConfig.practiceAssessmentRemote
+                ? '后端会话、规则判题与能力证据'
+                : '本地 Mock 题目 + 真实语音公式后端',
+            onTap: () => _push(context, _buildPracticeAssessmentLabPage()),
+          ),
+          _DeveloperToolEntry(
             key: const ValueKey('developer-tool-dialogue-exploration'),
             icon: Icons.account_tree_rounded,
             title: '1.2 对话探索实验室',
             description: 'Learning Entry、真实 AI 会话与实时思维树',
-            onTap: () => _push(
-              context,
-              RemoteExplorationLabPage(
-                gateway: RemoteExplorationApi(
-                  baseUrl: AppConfig.apiBaseUrl,
-                  identityProvider: remoteIdentityProviderForPlatform(
-                    isWeb: kIsWeb,
-                    nativeProvider: () async {
-                      final auth = AuthService.instance;
-                      // 原生端登录态先绑定账号，历史查询与后续写入才能由服务端按 userId 授权。
-                      final exploreSessionId = auth.isLoggedIn
-                          ? await auth.bindExploreSessionToCurrentUser()
-                          : await auth.ensureExploreSession();
-                      return RemoteExplorationIdentity(
-                        exploreSessionId: exploreSessionId,
-                        bearerToken: auth.token,
-                        anonymousId: auth.anonymousId,
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
+            onTap: () => _push(context, _buildDialogueExplorationLabPage()),
           ),
           _DeveloperToolEntry(
             key: const ValueKey('developer-tool-knowledge-map'),

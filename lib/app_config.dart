@@ -1,5 +1,12 @@
 part of 'main.dart';
 
+/// 解析开发者入口安全策略：production 永久拒绝，非 production 必须显式请求。
+/// release 优化只影响编译方式，不应覆盖明确的本地或开发部署环境。
+bool resolveDeveloperToolsEnabled({
+  required bool isProduction,
+  required bool requested,
+}) => !isProduction && requested;
+
 /// Compile-time application configuration.
 ///
 /// Production builds always disable developer-only UI, even if a caller tries
@@ -21,6 +28,18 @@ abstract final class AppConfig {
   static const agentEnabled = bool.fromEnvironment(
     'AGENT_ENABLED',
     defaultValue: false,
+  );
+  static const practiceAssessmentRemote = bool.fromEnvironment(
+    'PRACTICE_ASSESSMENT_REMOTE',
+    defaultValue: false,
+  );
+  static const spokenFormulaAsrMode = String.fromEnvironment(
+    'SPOKEN_FORMULA_ASR_MODE',
+    defaultValue: 'browser',
+  );
+  static const senseVoiceBaseUrl = String.fromEnvironment(
+    'SENSEVOICE_BASE_URL',
+    defaultValue: 'http://127.0.0.1:8000',
   );
   static const _agentMockRequested = bool.fromEnvironment(
     'AGENT_MOCK_ENABLED',
@@ -58,8 +77,10 @@ abstract final class AppConfig {
 
   static bool get isProduction => environment == 'production';
 
-  static bool get developerToolsEnabled =>
-      !kReleaseMode && !isProduction && _developerToolsRequested;
+  static bool get developerToolsEnabled => resolveDeveloperToolsEnabled(
+    isProduction: isProduction,
+    requested: _developerToolsRequested,
+  );
 
   static bool get agentMockEnabled =>
       developerToolsEnabled && _agentMockRequested && !agentEnabled;

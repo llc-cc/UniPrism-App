@@ -12,6 +12,7 @@ import 'package:reactive_mind_map/reactive_mind_map.dart';
 import 'features/dialogue_exploration/adapters/remote_exploration_api.dart';
 import 'features/dialogue_exploration/presentation/knowledge_map/high_school_math_knowledge_map_page.dart';
 import 'features/dialogue_exploration/presentation/remote_exploration_page.dart';
+import 'features/practice_assessment/practice_assessment.dart';
 
 part 'app_config.dart';
 part 'agent_experience.dart';
@@ -54,29 +55,6 @@ Future<void> main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     ReportNotificationService.instance.handlePendingLaunch();
   });
-}
-
-/// 为开发验收路由构造真实课堂入口，并保持 Web 与原生端的身份边界一致。
-Widget _buildDialogueExplorationLabPage() {
-  return RemoteExplorationLabPage(
-    gateway: RemoteExplorationApi(
-      baseUrl: AppConfig.apiBaseUrl,
-      identityProvider: remoteIdentityProviderForPlatform(
-        isWeb: kIsWeb,
-        nativeProvider: () async {
-          final auth = AuthService.instance;
-          final exploreSessionId = auth.isLoggedIn
-              ? await auth.bindExploreSessionToCurrentUser()
-              : await auth.ensureExploreSession();
-          return RemoteExplorationIdentity(
-            exploreSessionId: exploreSessionId,
-            bearerToken: auth.token,
-            anonymousId: auth.anonymousId,
-          );
-        },
-      ),
-    ),
-  );
 }
 
 class UniPrismApp extends StatelessWidget {
@@ -123,6 +101,10 @@ class UniPrismApp extends StatelessWidget {
         if (!AppConfig.isProduction && !kReleaseMode)
           '/knowledge-map-lab': (_) => const HighSchoolMathKnowledgeMapPage(),
         if (AppConfig.developerToolsEnabled) ...{
+          // 开发验收页面需要稳定 URL，避免产品负责人必须经过主业务流程才能开始测试。
+          '/developer-tools': (_) => const DeveloperToolsPage(),
+          '/practice-assessment-lab': (_) =>
+              _buildPracticeAssessmentLabPage(),
           '/content-source-test': (_) => const ZhihuContentTestPage(),
           '/github-content-source-test': (_) => const GitHubContentTestPage(),
           '/content-ingestion-preview': (_) =>

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:uniprism_app/features/practice_assessment/practice_assessment.dart';
 import 'package:uniprism_app/main.dart';
 
 Future<void> pumpAtSize(WidgetTester tester, Size size, Widget child) async {
@@ -21,6 +22,26 @@ void expectOnlyNetworkImageExceptions(WidgetTester tester) {
 }
 
 void main() {
+  test('练习实验室的远程工厂连接 HTTP repository，Mock 工厂保持内存实现', () {
+    final remote = PracticeAssessmentLabPage.remote(
+      baseUrl: 'http://localhost:3000',
+    );
+    final mock = PracticeAssessmentLabPage.mock();
+    addTearDown(remote.controller.dispose);
+    addTearDown(mock.controller.dispose);
+
+    expect(remote.controller.repository, isA<RemotePracticeRepository>());
+    expect(
+      remote.controller.repository.connectionMode,
+      PracticeConnectionMode.remote,
+    );
+    expect(mock.controller.repository, isA<MockGaokaoMathRepository>());
+    expect(
+      mock.controller.repository.connectionMode,
+      PracticeConnectionMode.mock,
+    );
+  });
+
   test('persona card snapshot parses the backend response', () {
     final snapshot = PersonaCardSnapshot.fromJson({
       'state': 'completed',
@@ -303,6 +324,65 @@ void main() {
     expect(entry, findsOneWidget);
 
     await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('1.2 AI 探索课堂'), findsOneWidget);
+  });
+
+  testWidgets('developer tools opens the independent practice assessment lab', (
+    tester,
+  ) async {
+    await pumpAtSize(tester, const Size(390, 1000), const DeveloperToolsPage());
+
+    final entry = find.byKey(
+      const ValueKey('developer-tool-practice-assessment'),
+    );
+    expect(entry, findsOneWidget);
+    expect(find.textContaining('真实语音公式后端'), findsOneWidget);
+
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    expect(find.text('练习评分实验室'), findsOneWidget);
+    final page = tester.widget<PracticeAssessmentLabPage>(
+      find.byType(PracticeAssessmentLabPage),
+    );
+    expect(
+      page.speechFormulaController?.repository,
+      isA<RemoteSpokenFormulaRepository>(),
+    );
+  });
+
+  testWidgets('developer URL opens the practice assessment lab directly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const UniPrismApp());
+    await tester.pump();
+
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .pushNamed<void>('/practice-assessment-lab');
+    await tester.pumpAndSettle();
+
+    expect(find.text('练习评分实验室'), findsOneWidget);
+    final page = tester.widget<PracticeAssessmentLabPage>(
+      find.byType(PracticeAssessmentLabPage),
+    );
+    expect(
+      page.speechFormulaController?.repository,
+      isA<RemoteSpokenFormulaRepository>(),
+    );
+  });
+
+  testWidgets('developer URL opens the dialogue exploration lab directly', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const UniPrismApp());
+    await tester.pump();
+
+    tester
+        .state<NavigatorState>(find.byType(Navigator))
+        .pushNamed<void>('/dialogue-exploration-lab');
     await tester.pumpAndSettle();
 
     expect(find.text('1.2 AI 探索课堂'), findsOneWidget);
