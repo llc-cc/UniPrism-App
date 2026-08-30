@@ -50,6 +50,9 @@ final class SpokenFormulaRecognitionException implements Exception {
 /// 韧性公式解析的三类成功结果；数学歧义不会被折叠为基础设施错误。
 enum SpokenFormulaOutcome { resolved, candidates, clarification }
 
+/// 候选覆盖完整语句还是只覆盖其中可信公式片段；旧服务响应默认视为完整候选。
+enum SpokenFormulaMatchKind { complete, partial }
+
 /// 澄清选项允许 UI 执行的有限动作集合。
 enum SpokenFormulaClarificationAction {
   selectCandidate,
@@ -64,11 +67,13 @@ final class SpokenFormulaCandidate {
     required this.id,
     required this.latex,
     required this.spokenBack,
+    this.matchKind = SpokenFormulaMatchKind.complete,
   });
 
   final String id;
   final String latex;
   final String spokenBack;
+  final SpokenFormulaMatchKind matchKind;
 }
 
 /// 澄清问题中的可点击选项；只有选择候选动作会携带候选 ID。

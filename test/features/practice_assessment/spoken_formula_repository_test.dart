@@ -52,6 +52,55 @@ void main() {
     expect(resolution.warnings, isEmpty);
   });
 
+  test('远程解析映射可选的完整/片段类型并兼容旧响应', () async {
+    final partialData = _resolvedFixture()
+      ..['outcome'] = 'clarification'
+      ..['candidates'] = <Map<String, Object?>>[
+        _candidateFixture('candidate-1')..['matchKind'] = 'partial',
+      ]
+      ..['clarification'] = <String, Object?>{
+        'question': '请选择公式片段或继续补充。',
+        'focusText': '公式片段',
+        'options': <Map<String, Object?>>[
+          {
+            'id': 'select-candidate',
+            'label': '选择候选',
+            'action': 'selectCandidate',
+            'candidateId': 'candidate-1',
+          },
+          {
+            'id': 'continue-recording',
+            'label': '继续补充语音',
+            'action': 'continueRecording',
+          },
+        ],
+      };
+    final partialRepository = _remoteRepository(
+      (_) async => _okResponse(partialData),
+    );
+    final legacyRepository = _remoteRepository(
+      (_) async => _okResponse(_resolvedFixture()),
+    );
+
+    final partial = await partialRepository.resolve(
+      text: '求函数 f x 等于 x 平方的导数',
+      timeout: const Duration(seconds: 5),
+    );
+    final legacy = await legacyRepository.resolve(
+      text: 'x 的平方',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(
+      partial.candidates.single.matchKind,
+      SpokenFormulaMatchKind.partial,
+    );
+    expect(
+      legacy.candidates.single.matchKind,
+      SpokenFormulaMatchKind.complete,
+    );
+  });
+
   test('V2 budgetMs 收敛到 1..5000 且不抬高已有的较小毫秒预算', () async {
     final budgets = <int>[];
     final repository = _remoteRepository((request) async {
@@ -273,6 +322,9 @@ void main() {
             {'id': 'use-keyboard', 'label': '使用公式键盘', 'action': 'useKeyboard'},
           ],
         },
+    );
+    await _expectSafeResolutionFailure(
+      _candidateFieldFixture('matchKind', 'approximate'),
     );
   });
 

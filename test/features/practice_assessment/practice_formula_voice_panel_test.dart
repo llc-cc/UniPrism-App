@@ -297,6 +297,10 @@ void main() {
       find.descendant(of: prompt, matching: find.text('已识别出以下公式片段，完整作用范围仍需确认')),
       findsOneWidget,
     );
+    expect(
+      find.descendant(of: prompt, matching: find.text('识别到公式片段')),
+      findsNWidgets(3),
+    );
     for (final candidateId in <String>[
       'fragment-function',
       'fragment-condition',
@@ -997,16 +1001,19 @@ SpokenFormulaResolution _partialClarification(String text) =>
           id: 'fragment-function',
           latex: r'y=x+\frac{4}{x}',
           spokenBack: 'y 等于 x 加四除以 x',
+          matchKind: SpokenFormulaMatchKind.partial,
         ),
         SpokenFormulaCandidate(
           id: 'fragment-condition',
           latex: r'x>0',
           spokenBack: 'x 大于零',
+          matchKind: SpokenFormulaMatchKind.partial,
         ),
         SpokenFormulaCandidate(
           id: 'fragment-target',
           latex: r'\min y',
           spokenBack: '求 y 的最小值',
+          matchKind: SpokenFormulaMatchKind.partial,
         ),
       ],
       clarification: SpokenFormulaClarification(

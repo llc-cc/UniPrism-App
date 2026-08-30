@@ -22,6 +22,7 @@ final class RemoteSpokenFormulaRepository
     'warnings',
   };
   static const _candidateKeys = <String>{'id', 'latex', 'spokenBack'};
+  static const _candidateOptionalKeys = <String>{'matchKind'};
   static const _clarificationKeys = <String>{
     'question',
     'focusText',
@@ -165,7 +166,11 @@ final class RemoteSpokenFormulaRepository
     final candidates = <SpokenFormulaCandidate>[];
     final ids = <String>{};
     for (final item in items) {
-      final data = _parseStrictObject(item, requiredKeys: _candidateKeys);
+      final data = _parseStrictObject(
+        item,
+        requiredKeys: _candidateKeys,
+        optionalKeys: _candidateOptionalKeys,
+      );
       final id = _parseId(data['id']);
       if (!ids.add(id)) throw _malformedResolution;
       candidates.add(
@@ -173,11 +178,18 @@ final class RemoteSpokenFormulaRepository
           id: id,
           latex: _parsePlainText(data['latex'], maximum: 512),
           spokenBack: _parseDisplayText(data['spokenBack'], maximum: 240),
+          matchKind: _parseMatchKind(data['matchKind']),
         ),
       );
     }
     return candidates;
   }
+
+  SpokenFormulaMatchKind _parseMatchKind(Object? value) => switch (value) {
+    null || 'complete' => SpokenFormulaMatchKind.complete,
+    'partial' => SpokenFormulaMatchKind.partial,
+    _ => throw _malformedResolution,
+  };
 
   SpokenFormulaClarification _parseClarification(Object? value) {
     final data = _parseStrictObject(value, requiredKeys: _clarificationKeys);

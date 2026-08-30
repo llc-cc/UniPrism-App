@@ -543,6 +543,20 @@ final class _FormulaCandidateView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (candidate.matchKind == SpokenFormulaMatchKind.partial) ...[
+              Text(
+                '识别到公式片段',
+                key: ValueKey<String>(
+                  'practice-formula-voice-partial-${candidate.id}',
+                ),
+                style: const TextStyle(
+                  color: Color(0xFF6B46A5),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
             SizedBox(
               width: double.infinity,
               child: SingleChildScrollView(
