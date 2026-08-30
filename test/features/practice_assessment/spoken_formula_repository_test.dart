@@ -20,6 +20,7 @@ void main() {
         'text': 'x 的平方',
         'locale': 'zh-CN',
         'budgetMs': 4000,
+        'candidateMetadataVersion': 1,
       });
       return _okResponse(_resolvedFixture());
     });
@@ -91,14 +92,8 @@ void main() {
       timeout: const Duration(seconds: 5),
     );
 
-    expect(
-      partial.candidates.single.matchKind,
-      SpokenFormulaMatchKind.partial,
-    );
-    expect(
-      legacy.candidates.single.matchKind,
-      SpokenFormulaMatchKind.complete,
-    );
+    expect(partial.candidates.single.matchKind, SpokenFormulaMatchKind.partial);
+    expect(legacy.candidates.single.matchKind, SpokenFormulaMatchKind.complete);
   });
 
   test('V2 budgetMs 收敛到 1..5000 且不抬高已有的较小毫秒预算', () async {
@@ -326,6 +321,93 @@ void main() {
     await _expectSafeResolutionFailure(
       _candidateFieldFixture('matchKind', 'approximate'),
     );
+  });
+
+  test('单个坏候选被隔离，其他可信候选和对应操作仍可使用', () async {
+    final data = _clarificationFixture();
+    data['candidates'] = <Map<String, Object?>>[
+      _candidateFixture('candidate-1'),
+      _candidateFixture('candidate-bad')..['matchKind'] = 'approximate',
+    ];
+    final clarification = data['clarification']! as Map<String, Object?>;
+    clarification['options'] = <Map<String, Object?>>[
+      {
+        'id': 'select-candidate-1',
+        'label': '选择可信候选',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {
+        'id': 'select-candidate-bad',
+        'label': '选择坏候选',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-bad',
+      },
+      {
+        'id': 'continue-recording',
+        'label': '继续补充语音',
+        'action': 'continueRecording',
+      },
+    ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'x 的平方以及未知片段',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates.map((candidate) => candidate.id), <String>[
+      'candidate-1',
+    ]);
+    expect(
+      resolution.clarification?.options.map((option) => option.candidateId),
+      <String?>['candidate-1', null],
+    );
+  });
+
+  test('候选池只剩一个可信项时降级为可选择澄清结果', () async {
+    final data = _resolvedFixture()
+      ..['outcome'] = 'candidates'
+      ..['candidates'] = <Map<String, Object?>>[
+        _candidateFixture('candidate-1'),
+        _candidateFixture('candidate-bad')..['spokenBack'] = r'$unsafe$',
+      ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: '可能有两个公式',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates, hasLength(1));
+    expect(
+      resolution.clarification?.options.map((option) => option.action),
+      <SpokenFormulaClarificationAction>[
+        SpokenFormulaClarificationAction.selectCandidate,
+        SpokenFormulaClarificationAction.continueRecording,
+        SpokenFormulaClarificationAction.useKeyboard,
+      ],
+    );
+  });
+
+  test('坏候选 ID 无法引用时也只淘汰该候选', () async {
+    final data = _resolvedFixture()
+      ..['outcome'] = 'candidates'
+      ..['candidates'] = <Map<String, Object?>>[
+        _candidateFixture('candidate-1'),
+        _candidateFixture('invalid id'),
+      ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: '包含无法引用的候选',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates.single.id, 'candidate-1');
   });
 
   test('拒绝澄清动作引用响应外候选或携带多余候选 ID', () async {

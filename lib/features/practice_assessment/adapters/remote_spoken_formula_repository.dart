@@ -1,6 +1,17 @@
 import '../core/spoken_formula.dart';
 import 'practice_api_client.dart';
 
+typedef _ParsedCandidates = ({
+  List<SpokenFormulaCandidate> candidates,
+  Set<String> rejectedIds,
+  int rejectedCount,
+});
+typedef _ReconciledResolutionShape = ({
+  SpokenFormulaOutcome outcome,
+  List<SpokenFormulaCandidate> candidates,
+  SpokenFormulaClarification? clarification,
+});
+
 /// 通过练习 API 解析数学口语；JSON 只在此适配器内转换为安全领域值。
 final class RemoteSpokenFormulaRepository
     implements SpokenFormulaResolutionRepository {
@@ -119,6 +130,7 @@ final class RemoteSpokenFormulaRepository
         'text': text,
         'locale': locale,
         'budgetMs': budgetMs,
+        'candidateMetadataVersion': 1,
       },
       requestTimeout: timeout,
     );
@@ -128,23 +140,38 @@ final class RemoteSpokenFormulaRepository
   SpokenFormulaResolution _parseResolution(Map<String, Object?> data) {
     try {
       _parseStrictObject(data, requiredKeys: _resolutionKeys);
-      final outcome = _parseOutcome(data['outcome']);
-      final candidates = _parseCandidates(data['candidates']);
-      final clarification = data['clarification'] == null
+      final requestedOutcome = _parseOutcome(data['outcome']);
+      final recognizedText = _parsePlainText(
+        data['recognizedText'],
+        maximum: 300,
+      );
+      final normalizedText = _parsePlainText(
+        data['normalizedText'],
+        maximum: 300,
+      );
+      final parsedCandidates = _parseCandidates(data['candidates']);
+      final parsedClarification = data['clarification'] == null
           ? null
           : _parseClarification(data['clarification']);
       final warnings = _parseList(
         data['warnings'],
         maximum: 3,
       ).map((item) => _parseDisplayText(item, maximum: 160)).toList();
-      _validateResolution(outcome, candidates, clarification);
+      final shape = _reconcileResolutionShape(
+        requestedOutcome,
+        parsedCandidates.candidates,
+        parsedCandidates.rejectedIds,
+        parsedCandidates.rejectedCount,
+        parsedClarification,
+      );
+      _validateResolution(shape.outcome, shape.candidates, shape.clarification);
       return SpokenFormulaResolution(
         resolutionId: _parseId(data['resolutionId']),
-        recognizedText: _parsePlainText(data['recognizedText'], maximum: 300),
-        normalizedText: _parsePlainText(data['normalizedText'], maximum: 300),
-        outcome: outcome,
-        candidates: candidates,
-        clarification: clarification,
+        recognizedText: recognizedText,
+        normalizedText: normalizedText,
+        outcome: shape.outcome,
+        candidates: shape.candidates,
+        clarification: shape.clarification,
         warnings: warnings,
       );
     } on SpokenFormulaResolutionException {
@@ -161,28 +188,57 @@ final class RemoteSpokenFormulaRepository
     _ => throw _malformedResolution,
   };
 
-  List<SpokenFormulaCandidate> _parseCandidates(Object? value) {
+  _ParsedCandidates _parseCandidates(Object? value) {
     final items = _parseList(value, maximum: 3);
     final candidates = <SpokenFormulaCandidate>[];
-    final ids = <String>{};
+    final observedIds = <String>{};
+    final rejectedIds = <String>{};
+    var rejectedCount = 0;
     for (final item in items) {
-      final data = _parseStrictObject(
-        item,
-        requiredKeys: _candidateKeys,
-        optionalKeys: _candidateOptionalKeys,
-      );
-      final id = _parseId(data['id']);
-      if (!ids.add(id)) throw _malformedResolution;
-      candidates.add(
-        SpokenFormulaCandidate(
-          id: id,
-          latex: _parsePlainText(data['latex'], maximum: 512),
-          spokenBack: _parseDisplayText(data['spokenBack'], maximum: 240),
-          matchKind: _parseMatchKind(data['matchKind']),
-        ),
-      );
+      final observedId = _tryParseCandidateId(item);
+      // 即使其中一个重复项本身损坏，重复 ID 仍会破坏选择引用的唯一性，不能静默修复。
+      if (observedId != null && !observedIds.add(observedId)) {
+        throw _malformedResolution;
+      }
+      try {
+        final data = _parseStrictObject(
+          item,
+          requiredKeys: _candidateKeys,
+          optionalKeys: _candidateOptionalKeys,
+        );
+        final id = _parseId(data['id']);
+        candidates.add(
+          SpokenFormulaCandidate(
+            id: id,
+            latex: _parsePlainText(data['latex'], maximum: 512),
+            spokenBack: _parseDisplayText(data['spokenBack'], maximum: 240),
+            matchKind: _parseMatchKind(data['matchKind']),
+          ),
+        );
+      } on SpokenFormulaResolutionException {
+        // 候选之间互不信任；单项坏数据只淘汰该项，后续再按剩余基数重建结果。
+        rejectedCount += 1;
+        if (observedId != null) rejectedIds.add(observedId);
+      }
     }
-    return candidates;
+    return (
+      candidates: candidates,
+      rejectedIds: rejectedIds,
+      rejectedCount: rejectedCount,
+    );
+  }
+
+  String? _tryParseCandidateId(Object? value) {
+    if (value is! Map) return null;
+    Object? rawId;
+    for (final entry in value.entries) {
+      if (entry.key == 'id') rawId = entry.value;
+    }
+    try {
+      return _parseId(rawId);
+    } on SpokenFormulaResolutionException {
+      return null;
+    }
   }
 
   SpokenFormulaMatchKind _parseMatchKind(Object? value) => switch (value) {
@@ -236,6 +292,119 @@ final class RemoteSpokenFormulaRepository
         'useKeyboard' => SpokenFormulaClarificationAction.useKeyboard,
         _ => throw _malformedResolution,
       };
+
+  _ReconciledResolutionShape _reconcileResolutionShape(
+    SpokenFormulaOutcome requestedOutcome,
+    List<SpokenFormulaCandidate> candidates,
+    Set<String> rejectedCandidateIds,
+    int rejectedCandidateCount,
+    SpokenFormulaClarification? clarification,
+  ) {
+    final reconciledClarification = clarification == null
+        ? null
+        : _withoutRejectedCandidateOptions(clarification, rejectedCandidateIds);
+    if (requestedOutcome == SpokenFormulaOutcome.resolved) {
+      if (candidates.length != 1 || reconciledClarification != null) {
+        throw _malformedResolution;
+      }
+      return (
+        outcome: SpokenFormulaOutcome.resolved,
+        candidates: candidates,
+        clarification: null,
+      );
+    }
+    if (requestedOutcome == SpokenFormulaOutcome.candidates) {
+      if (reconciledClarification != null || candidates.isEmpty) {
+        throw _malformedResolution;
+      }
+      if (candidates.length >= 2) {
+        return (
+          outcome: SpokenFormulaOutcome.candidates,
+          candidates: candidates,
+          clarification: null,
+        );
+      }
+      if (rejectedCandidateCount == 0) throw _malformedResolution;
+      // 多候选响应隔离坏项后只剩一个时，不自动插入，降级为显式选择和恢复动作。
+      return (
+        outcome: SpokenFormulaOutcome.clarification,
+        candidates: candidates,
+        clarification: _candidateRecoveryClarification(candidates),
+      );
+    }
+    if (reconciledClarification == null) throw _malformedResolution;
+    return (
+      outcome: SpokenFormulaOutcome.clarification,
+      candidates: candidates,
+      clarification: reconciledClarification,
+    );
+  }
+
+  SpokenFormulaClarification _withoutRejectedCandidateOptions(
+    SpokenFormulaClarification clarification,
+    Set<String> rejectedCandidateIds,
+  ) {
+    if (rejectedCandidateIds.isEmpty) return clarification;
+    final options = clarification.options.where((option) {
+      return option.action !=
+              SpokenFormulaClarificationAction.selectCandidate ||
+          !rejectedCandidateIds.contains(option.candidateId);
+    }).toList();
+    _ensureRecoveryOptions(options);
+    return SpokenFormulaClarification(
+      question: clarification.question,
+      focusText: clarification.focusText,
+      options: options,
+    );
+  }
+
+  SpokenFormulaClarification _candidateRecoveryClarification(
+    List<SpokenFormulaCandidate> candidates,
+  ) {
+    final options = <SpokenFormulaClarificationOption>[
+      for (final (index, candidate) in candidates.indexed)
+        SpokenFormulaClarificationOption(
+          id: 'client-select-candidate-${index + 1}',
+          label: '选择候选 ${index + 1}',
+          action: SpokenFormulaClarificationAction.selectCandidate,
+          candidateId: candidate.id,
+        ),
+    ];
+    _ensureRecoveryOptions(options, requireBoth: true);
+    return SpokenFormulaClarification(
+      question: '已保留可信公式，请选择要插入的内容或继续补充。',
+      focusText: '当前识别内容',
+      options: options,
+    );
+  }
+
+  void _ensureRecoveryOptions(
+    List<SpokenFormulaClarificationOption> options, {
+    bool requireBoth = false,
+  }) {
+    final actions = options.map((option) => option.action).toSet();
+    if ((requireBoth || options.length < 2) &&
+        !actions.contains(SpokenFormulaClarificationAction.continueRecording)) {
+      options.add(
+        const SpokenFormulaClarificationOption(
+          id: 'client-continue-recording',
+          label: '继续补充语音',
+          action: SpokenFormulaClarificationAction.continueRecording,
+        ),
+      );
+      actions.add(SpokenFormulaClarificationAction.continueRecording);
+    }
+    if ((requireBoth || options.length < 2) &&
+        !actions.contains(SpokenFormulaClarificationAction.useKeyboard)) {
+      options.add(
+        const SpokenFormulaClarificationOption(
+          id: 'client-use-keyboard',
+          label: '使用公式键盘',
+          action: SpokenFormulaClarificationAction.useKeyboard,
+        ),
+      );
+    }
+  }
 
   void _validateResolution(
     SpokenFormulaOutcome outcome,
