@@ -362,7 +362,7 @@ void main() {
     ]);
     expect(
       resolution.clarification?.options.map((option) => option.candidateId),
-      <String?>['candidate-1', null],
+      <String?>['candidate-1', null, null],
     );
   });
 
@@ -382,6 +382,31 @@ void main() {
 
     expect(resolution.outcome, SpokenFormulaOutcome.clarification);
     expect(resolution.candidates, hasLength(1));
+    expect(
+      resolution.clarification?.options.map((option) => option.action),
+      <SpokenFormulaClarificationAction>[
+        SpokenFormulaClarificationAction.selectCandidate,
+        SpokenFormulaClarificationAction.continueRecording,
+        SpokenFormulaClarificationAction.useKeyboard,
+      ],
+    );
+  });
+
+  test('resolved 响应含坏兄弟候选时保留可信项并降级为可选择澄清', () async {
+    final data = _resolvedFixture()
+      ..['candidates'] = <Map<String, Object?>>[
+        _candidateFixture('candidate-1'),
+        _candidateFixture('candidate-bad')..['matchKind'] = 'approximate',
+      ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: '一个可信公式和一个损坏候选',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates.single.id, 'candidate-1');
     expect(
       resolution.clarification?.options.map((option) => option.action),
       <SpokenFormulaClarificationAction>[
@@ -859,6 +884,88 @@ void main() {
         SpokenFormulaClarificationAction.retryRecording,
         SpokenFormulaClarificationAction.useKeyboard,
       ],
+    );
+  });
+  test('clarification rebuilds selections when a rejected candidate has an invalid ID', () async {
+    final data = _clarificationFixture();
+    data['candidates'] = <Map<String, Object?>>[
+      _candidateFixture('candidate-1'),
+      _candidateFixture('invalid id')..['matchKind'] = 'approximate',
+    ];
+    final clarification = data['clarification']! as Map<String, Object?>;
+    clarification['options'] = <Map<String, Object?>>[
+      {
+        'id': 'select-candidate-1',
+        'label': 'select trusted',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {
+        'id': 'select-invalid',
+        'label': 'select rejected',
+        'action': 'selectCandidate',
+        'candidateId': 'invalid id',
+      },
+    ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'one trusted and one malformed candidate',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates.single.id, 'candidate-1');
+    expect(
+      resolution.clarification?.options
+          .where((option) =>
+              option.action ==
+              SpokenFormulaClarificationAction.selectCandidate)
+          .map((option) => option.candidateId),
+      <String?>['candidate-1'],
+    );
+  });
+
+  test('clarification rebuilds selections when a rejected candidate has no ID', () async {
+    final data = _clarificationFixture();
+    final missingId = _candidateFixture('candidate-bad')
+      ..remove('id')
+      ..['matchKind'] = 'approximate';
+    data['candidates'] = <Map<String, Object?>>[
+      _candidateFixture('candidate-1'),
+      missingId,
+    ];
+    final clarification = data['clarification']! as Map<String, Object?>;
+    clarification['options'] = <Map<String, Object?>>[
+      {
+        'id': 'select-candidate-1',
+        'label': 'select trusted',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-1',
+      },
+      {
+        'id': 'select-missing',
+        'label': 'select rejected',
+        'action': 'selectCandidate',
+        'candidateId': 'candidate-bad',
+      },
+    ];
+    final repository = _remoteRepository((_) async => _okResponse(data));
+
+    final resolution = await repository.resolve(
+      text: 'one trusted and one candidate without an id',
+      timeout: const Duration(seconds: 5),
+    );
+
+    expect(resolution.outcome, SpokenFormulaOutcome.clarification);
+    expect(resolution.candidates.single.id, 'candidate-1');
+    expect(
+      resolution.clarification?.options
+          .where((option) =>
+              option.action ==
+              SpokenFormulaClarificationAction.selectCandidate)
+          .map((option) => option.candidateId),
+      <String?>['candidate-1'],
     );
   });
 }

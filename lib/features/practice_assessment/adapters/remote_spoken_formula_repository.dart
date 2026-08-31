@@ -150,9 +150,19 @@ final class RemoteSpokenFormulaRepository
         maximum: 300,
       );
       final parsedCandidates = _parseCandidates(data['candidates']);
+      // 候选隔离只用于保住可信兄弟项；如果全部候选都损坏，继续按成功响应展示会掩盖协议或安全错误。
+      if (parsedCandidates.rejectedCount > 0 &&
+          parsedCandidates.candidates.isEmpty) {
+        throw _malformedResolution;
+      }
       final parsedClarification = data['clarification'] == null
           ? null
-          : _parseClarification(data['clarification']);
+          : parsedCandidates.rejectedCount > 0
+              // 候选被淘汰后不再信任服务端选择引用；只按最终存活候选重建，坏 ID 无法拖垮兄弟项。
+              ? _candidateRecoveryClarification(
+                  parsedCandidates.candidates,
+                )
+              : _parseClarification(data['clarification']);
       final warnings = _parseList(
         data['warnings'],
         maximum: 3,
@@ -304,6 +314,13 @@ final class RemoteSpokenFormulaRepository
         ? null
         : _withoutRejectedCandidateOptions(clarification, rejectedCandidateIds);
     if (requestedOutcome == SpokenFormulaOutcome.resolved) {
+      if (rejectedCandidateCount > 0) {
+        return (
+          outcome: SpokenFormulaOutcome.clarification,
+          candidates: candidates,
+          clarification: _candidateRecoveryClarification(candidates),
+        );
+      }
       if (candidates.length != 1 || reconciledClarification != null) {
         throw _malformedResolution;
       }
