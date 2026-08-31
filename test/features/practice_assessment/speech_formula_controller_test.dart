@@ -402,7 +402,7 @@ void main() {
     expect(repository.callCount, 2);
   });
 
-  test('ASR 已用 4.5 秒时 repository 同时收到剩余 0.5 秒 caller timeout', () async {
+  test('5 秒总预算中 ASR 用时 4 秒时 repository 只收到预留后的 0.5 秒', () async {
     final recognizer = _FakeRecognizer();
     final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
       Future<SpokenFormulaResolution>.value(_resolved()),
@@ -418,12 +418,223 @@ void main() {
     recognizer.emit(
       'x 的平方',
       isFinal: true,
-      processingElapsed: const Duration(milliseconds: 4500),
+      processingElapsed: const Duration(seconds: 4),
     );
     await _flushAsyncWork();
 
     expect(repository.timeouts, <Duration>[const Duration(milliseconds: 500)]);
     expect(controller.state.status, SpeechFormulaStatus.resolved);
+  });
+
+  test('ASR 超过 4.5 秒时不调用 repository 并保留 final 文本可续录', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(
+      const <Future<SpokenFormulaResolution>>[],
+    );
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+
+    recognizer.emit(
+      '从负一到二的定积分',
+      isFinal: true,
+      processingElapsed: const Duration(milliseconds: 4600),
+    );
+    await _flushAsyncWork();
+
+    expect(repository.timeouts, isEmpty);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, '从负一到二的定积分');
+    expect(controller.canContinueRecording, isTrue);
+  });
+
+  test('watchdog 已启动时迟到 Browser final 使用真实剩余预算', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(_resolved()),
+    ]);
+    var fakeNow = Duration.zero;
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+      totalDeadline: const Duration(seconds: 1),
+      responseDeliveryReserve: const Duration(milliseconds: 500),
+      monotonicNow: () => fakeNow,
+    );
+    addTearDown(controller.dispose);
+    final manualTimers = <_ManualTimer>[];
+
+    await runZoned(
+      () async {
+        await controller.startListening();
+        recognizer.emitFinalizationStarted();
+        fakeNow += const Duration(milliseconds: 200);
+
+        recognizer.emit('迟到的完整公式', isFinal: true);
+        await _flushAsyncWork();
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration == const Duration(seconds: 1)) {
+            final timer = _ManualTimer(duration, callback);
+            manualTimers.add(timer);
+            return timer;
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    expect(manualTimers, hasLength(1));
+    expect(repository.timeouts, <Duration>[const Duration(milliseconds: 300)]);
+    expect(controller.state.status, SpeechFormulaStatus.resolved);
+    expect(controller.state.transcript, '迟到的完整公式');
+  });
+
+  test(
+    'Browser final 无 processingElapsed 时请求预算为 4.5 秒但 watchdog 仍为 5 秒',
+    () async {
+      final recognizer = _FakeRecognizer();
+      final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+        Future<SpokenFormulaResolution>.value(_resolved()),
+      ]);
+      final controller = _controller(
+        recognizer: recognizer,
+        repository: repository,
+      );
+      addTearDown(controller.dispose);
+      final observedTimers = <Duration>[];
+
+      await runZoned(
+        () async {
+          await controller.startListening();
+          recognizer.emit('x 的平方', isFinal: true);
+          await _flushAsyncWork();
+        },
+        zoneSpecification: ZoneSpecification(
+          createTimer: (self, parent, zone, duration, callback) {
+            if (duration > Duration.zero) observedTimers.add(duration);
+            return parent.createTimer(zone, duration, callback);
+          },
+        ),
+      );
+
+      expect(repository.timeouts, <Duration>[
+        const Duration(milliseconds: 4500),
+      ]);
+      expect(observedTimers, contains(const Duration(seconds: 5)));
+      expect(controller.state.status, SpeechFormulaStatus.resolved);
+    },
+  );
+
+  test('watchdog 从空文本启动后会绑定同 operation 的迟到 final 文本', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Completer<SpokenFormulaResolution>().future,
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    final manualTimers = <_ManualTimer>[];
+
+    await runZoned(
+      () async {
+        await controller.startListening();
+        recognizer.emitFinalizationStarted();
+        recognizer.emit(
+          '从负一到二的定积分',
+          isFinal: true,
+          processingElapsed: const Duration(seconds: 1),
+        );
+        await _flushAsyncWork();
+        manualTimers
+            .singleWhere((timer) => timer.delay == const Duration(seconds: 5))
+            .fire();
+        await _flushAsyncWork();
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration >= const Duration(seconds: 1)) {
+            final timer = _ManualTimer(duration, callback);
+            manualTimers.add(timer);
+            return timer;
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    expect(repository.callCount, 1);
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, '从负一到二的定积分');
+    expect(controller.canContinueRecording, isTrue);
+  });
+
+  test('watchdog 启动后 partial 更新也会保留为可恢复文本', () async {
+    final recognizer = _FakeRecognizer();
+    final controller = _controller(recognizer: recognizer);
+    addTearDown(controller.dispose);
+    final manualTimers = <_ManualTimer>[];
+
+    await runZoned(
+      () async {
+        await controller.startListening();
+        recognizer.emitFinalizationStarted();
+        recognizer.emit('已识别的部分公式', isFinal: false);
+        manualTimers
+            .singleWhere((timer) => timer.delay == const Duration(seconds: 5))
+            .fire();
+        await _flushAsyncWork();
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration == const Duration(seconds: 5)) {
+            final timer = _ManualTimer(duration, callback);
+            manualTimers.add(timer);
+            return timer;
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(controller.state.transcript, '已识别的部分公式');
+    expect(controller.canContinueRecording, isTrue);
+  });
+
+  test('negative responseDeliveryReserve 在运行时拒绝', () {
+    expect(
+      () => _controller(
+        responseDeliveryReserve: const Duration(milliseconds: -1),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('retryResolution 为响应交付预留 0.5 秒', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _RetryRepository();
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('需要重试的公式', isFinal: true);
+    await _flushAsyncWork();
+
+    final retrying = controller.retryResolution();
+    await _flushAsyncWork();
+
+    expect(repository.timeouts.last, const Duration(milliseconds: 4500));
+    repository.retryGate.complete(_resolved());
+    await retrying;
   });
 
   test('repository 永不完成时按注入的总 deadline 退出且只调用一次', () async {
@@ -435,6 +646,7 @@ void main() {
       recognizer: recognizer,
       repository: repository,
       totalDeadline: const Duration(milliseconds: 12),
+      responseDeliveryReserve: Duration.zero,
     );
     addTearDown(controller.dispose);
     await controller.startListening();
@@ -840,6 +1052,8 @@ SpeechFormulaController _controller({
   _FakeRecognizer? recognizer,
   SpokenFormulaResolutionRepository? repository,
   Duration totalDeadline = const Duration(seconds: 5),
+  Duration responseDeliveryReserve = spokenFormulaResponseDeliveryReserve,
+  Duration Function()? monotonicNow,
 }) => SpeechFormulaController(
   recognizer: recognizer ?? _FakeRecognizer(),
   repository:
@@ -848,6 +1062,8 @@ SpeechFormulaController _controller({
         Future<SpokenFormulaResolution>.value(_resolved()),
       ]),
   totalDeadline: totalDeadline,
+  responseDeliveryReserve: responseDeliveryReserve,
+  monotonicNow: monotonicNow,
 );
 
 SpokenFormulaResolution _resolved({
@@ -1007,6 +1223,8 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
       <SpeechFormulaResultCallback>[];
   final List<SpeechFormulaErrorCallback?> _errorCallbacks =
       <SpeechFormulaErrorCallback?>[];
+  final List<SpeechFormulaFinalizationStartedCallback?>
+  _finalizationStartedCallbacks = <SpeechFormulaFinalizationStartedCallback?>[];
   int listenCount = 0;
   int cancelCount = 0;
   int disposeCount = 0;
@@ -1024,6 +1242,7 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
     listenCount += 1;
     _resultCallbacks.add(onResult);
     _errorCallbacks.add(onError);
+    _finalizationStartedCallbacks.add(onFinalizationStarted);
     if (index < _listenErrors.length) {
       final error = _listenErrors[index];
       if (error != null) throw error;
@@ -1045,6 +1264,12 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
 
   void emitError(SpokenFormulaRecognitionException error, {int? listenIndex}) {
     _errorCallbacks[listenIndex ?? _errorCallbacks.length - 1]?.call(error);
+  }
+
+  void emitFinalizationStarted({int? listenIndex}) {
+    _finalizationStartedCallbacks[listenIndex ??
+            _finalizationStartedCallbacks.length - 1]
+        ?.call();
   }
 
   @override
@@ -1109,6 +1334,7 @@ final class _RetryRepository implements SpokenFormulaResolutionRepository {
   final Completer<SpokenFormulaResolution> retryGate =
       Completer<SpokenFormulaResolution>();
   int callCount = 0;
+  final List<Duration> timeouts = <Duration>[];
 
   @override
   Future<SpokenFormulaResolution> resolve({
@@ -1117,10 +1343,36 @@ final class _RetryRepository implements SpokenFormulaResolutionRepository {
     required Duration timeout,
   }) async {
     callCount += 1;
+    timeouts.add(timeout);
     if (callCount == 1) {
       throw const SpokenFormulaResolutionException('首次请求失败');
     }
     return retryGate.future;
+  }
+}
+
+final class _ManualTimer implements Timer {
+  _ManualTimer(this.delay, this._callback);
+
+  final Duration delay;
+  final void Function() _callback;
+  var _isActive = true;
+
+  void fire() {
+    if (!_isActive) return;
+    _isActive = false;
+    _callback();
+  }
+
+  @override
+  bool get isActive => _isActive;
+
+  @override
+  int get tick => _isActive ? 0 : 1;
+
+  @override
+  void cancel() {
+    _isActive = false;
   }
 }
 

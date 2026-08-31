@@ -62,15 +62,30 @@ final class SpeechFormulaController extends ChangeNotifier {
     required this.repository,
     this.sourceLabel = '浏览器语音',
     this.totalDeadline = spokenFormulaTotalDeadline,
-  });
+    this.responseDeliveryReserve = spokenFormulaResponseDeliveryReserve,
+    Duration Function()? monotonicNow,
+  }) : _monotonicNow = monotonicNow ?? _readMonotonicNow {
+    if (responseDeliveryReserve.isNegative) {
+      throw ArgumentError.value(
+        responseDeliveryReserve,
+        'responseDeliveryReserve',
+        '不能为负数',
+      );
+    }
+  }
 
   static const _deadlineMessage = '公式解析超过 5 秒，可以继续补充语音或使用键盘输入。';
   static const _deadlineFallbackMessage = '公式解析超过 5 秒，请重新录音或使用键盘输入。';
+  static final Stopwatch _monotonicClock = Stopwatch()..start();
+
+  static Duration _readMonotonicNow() => _monotonicClock.elapsed;
 
   final SpeechFormulaRecognizer recognizer;
   final SpokenFormulaResolutionRepository repository;
   final String sourceLabel;
   final Duration totalDeadline;
+  final Duration responseDeliveryReserve;
+  final Duration Function() _monotonicNow;
 
   SpeechFormulaState _state = const SpeechFormulaState();
   SpeechFormulaState get state => _state;
@@ -100,6 +115,8 @@ final class SpeechFormulaController extends ChangeNotifier {
   bool _disposed = false;
   Timer? _deadlineWatchdog;
   int? _deadlineOperationId;
+  String _deadlineTranscript = '';
+  Duration? _deadlineAt;
   Future<void>? _pendingCancel;
 
   Future<void> startListening() => _startListening();
@@ -383,6 +400,11 @@ final class SpeechFormulaController extends ChangeNotifier {
         accumulatedTranscript,
         transcript,
       );
+      if (_deadlineOperationId == operationId &&
+          visibleTranscript.trim().isNotEmpty) {
+        // watchdog 可在 final 前到期；持续保留同 operation 最新可恢复文本。
+        _deadlineTranscript = visibleTranscript;
+      }
       _setState(
         SpeechFormulaState(
           status: _state.status,
@@ -415,11 +437,18 @@ final class SpeechFormulaController extends ChangeNotifier {
         selectedCandidateId: _state.selectedCandidateId,
       ),
     );
-    final remaining = totalDeadline - (processingElapsed ?? Duration.zero);
-    if (processingElapsed == null) {
+    var remaining = totalDeadline - (processingElapsed ?? Duration.zero);
+    if (_deadlineOperationId == operationId) {
+      // final 可在 watchdog 启动后才到达；只更新同 operation 文本，不重置绝对截止时间。
+      _deadlineTranscript = mergedTranscript;
+      final watchdogRemaining = _readDeadlineRemaining(operationId);
+      if (watchdogRemaining != null && watchdogRemaining < remaining) {
+        remaining = watchdogRemaining;
+      }
+    } else if (processingElapsed == null) {
       // Browser 没有可信 stop-origin metadata，按 ledger 从 final transcript 重新计时。
       _armDeadlineWatchdog(operationId, totalDeadline, mergedTranscript);
-    } else if (_deadlineOperationId != operationId) {
+    } else {
       // Local 自动停止没有经过 controller.stop，需从已报告耗时恢复同一总预算。
       _armDeadlineWatchdog(operationId, remaining, mergedTranscript);
     }
@@ -462,15 +491,16 @@ final class SpeechFormulaController extends ChangeNotifier {
     String transcript,
     Duration remaining,
   ) async {
-    if (remaining <= Duration.zero) {
+    final requestBudget = remaining - responseDeliveryReserve;
+    if (requestBudget <= Duration.zero) {
       _expireOperation(operationId, transcript);
       return;
     }
     try {
-      // caller timeout 传给传输层，本地 timeout 再约束不遵守超时契约的实现。
+      // 请求与本地 timeout 共用扣除交付预留后的预算，不与 5 秒 watchdog 抢终态。
       final resolution = await repository
-          .resolve(text: transcript, timeout: remaining)
-          .timeout(remaining);
+          .resolve(text: transcript, timeout: requestBudget)
+          .timeout(requestBudget);
       if (!_isCurrent(operationId)) return;
       _cancelDeadlineWatchdog();
       final status = switch (resolution.outcome) {
@@ -536,18 +566,33 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     _deadlineOperationId = operationId;
+    _deadlineTranscript = transcript;
+    // 绝对截止点来自单调时钟，final 只能读取剩余时间，不能重启预算。
+    _deadlineAt = _monotonicNow() + remaining;
     _deadlineWatchdog = Timer(remaining, () {
       if (_deadlineOperationId != operationId) return;
       _deadlineWatchdog = null;
       _deadlineOperationId = null;
-      _expireOperation(operationId, transcript);
+      final latestTranscript = _deadlineTranscript;
+      _deadlineTranscript = '';
+      _deadlineAt = null;
+      _expireOperation(operationId, latestTranscript);
     });
+  }
+
+  Duration? _readDeadlineRemaining(int operationId) {
+    if (_deadlineOperationId != operationId) return null;
+    final deadlineAt = _deadlineAt;
+    if (deadlineAt == null) return null;
+    return deadlineAt - _monotonicNow();
   }
 
   void _cancelDeadlineWatchdog() {
     _deadlineWatchdog?.cancel();
     _deadlineWatchdog = null;
     _deadlineOperationId = null;
+    _deadlineTranscript = '';
+    _deadlineAt = null;
   }
 
   void _expireOperation(int operationId, String transcript) {

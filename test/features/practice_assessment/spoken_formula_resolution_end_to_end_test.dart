@@ -105,13 +105,13 @@ void main() {
     expect(jsonDecode(requests[0].body), <String, Object?>{
       'text': 'x 的平方加一',
       'locale': 'zh-CN',
-      'budgetMs': 5000,
+      'budgetMs': 4500,
       'candidateMetadataVersion': 1,
     });
     expect(jsonDecode(requests[1].body), <String, Object?>{
       'text': '负二的平方',
       'locale': 'zh-CN',
-      'budgetMs': 5000,
+      'budgetMs': 4500,
       'candidateMetadataVersion': 1,
     });
   });
