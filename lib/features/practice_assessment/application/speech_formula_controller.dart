@@ -16,6 +16,9 @@ enum SpeechFormulaStatus {
   infrastructureError,
 }
 
+/// 标记失败源头，确保错误态的重试操作与实际失败阶段一致。
+enum SpeechFormulaFailureStage { recognition, resolution }
+
 /// 语音公式 UI 的不可变状态；语义结果和基础设施错误使用不同字段承载。
 final class SpeechFormulaState {
   const SpeechFormulaState({
@@ -26,6 +29,7 @@ final class SpeechFormulaState {
     this.resolution,
     this.selectedCandidateId,
     this.errorMessage,
+    this.failureStage,
     this.isSupported = true,
   });
 
@@ -40,6 +44,7 @@ final class SpeechFormulaState {
 
   /// 仅 `infrastructureError` 使用，候选和澄清不得借此伪装成失败。
   final String? errorMessage;
+  final SpeechFormulaFailureStage? failureStage;
   final bool isSupported;
 
   SpokenFormulaCandidate? get selectedCandidate {
@@ -110,6 +115,11 @@ final class SpeechFormulaController extends ChangeNotifier {
         _state.continuationTurn < maxContinuationTurns;
   }
 
+  /// ASR 未交付本轮 final 时，重试必须创建新录音而不能重发保留文字。
+  bool get retryStartsNewRecording =>
+      _state.status == SpeechFormulaStatus.infrastructureError &&
+      _state.failureStage == SpeechFormulaFailureStage.recognition;
+
   int _operationId = 0;
   bool _initialized = false;
   bool _disposed = false;
@@ -168,8 +178,8 @@ final class SpeechFormulaController extends ChangeNotifier {
         if (!available) {
           _showInfrastructureError(
             recognizer.initializationError?.message ?? '语音识别暂时不可用，请稍后重试。',
-            '',
-            false,
+            transcript: '',
+            isSupported: false,
           );
           return;
         }
@@ -204,7 +214,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       );
     } catch (_) {
       if (!_isCurrent(operationId)) return;
-      _showInfrastructureError('无法启动麦克风，请检查浏览器权限后重试。', accumulatedTranscript);
+      _showInfrastructureError(
+        '无法启动麦克风，请检查浏览器权限后重试。',
+        transcript: accumulatedTranscript,
+      );
     }
   }
 
@@ -231,7 +244,10 @@ final class SpeechFormulaController extends ChangeNotifier {
     } catch (_) {
       if (_isCurrent(operationId) &&
           _state.status == SpeechFormulaStatus.transcribing) {
-        _showInfrastructureError('无法结束语音识别，请重新说一次。', _state.transcript.trim());
+        _showInfrastructureError(
+          '无法结束语音识别，请重新说一次。',
+          transcript: _state.transcript.trim(),
+        );
       }
       return;
     }
@@ -240,12 +256,19 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     // 只有 recognizer 的 final 回调能进入解析；partial 不可冒充完整结果。
-    _showInfrastructureError('没有识别到语音，请靠近麦克风后重试。', _state.transcript.trim());
+    _showInfrastructureError(
+      '没有识别到语音，请靠近麦克风后重试。',
+      transcript: _state.transcript.trim(),
+    );
   }
 
   Future<void> retryResolution() async {
     // resolving 会在首个 await 前同步写入；同帧重复点击必须复用该入口门闩，避免重复请求。
     if (_state.status == SpeechFormulaStatus.resolving) return;
+    if (retryStartsNewRecording) {
+      await startListening();
+      return;
+    }
     final transcript = _state.transcript.trim();
     if (transcript.isEmpty) {
       await startListening();
@@ -418,7 +441,10 @@ final class SpeechFormulaController extends ChangeNotifier {
       return;
     }
     if (transcript.isEmpty) {
-      _showInfrastructureError('没有识别到语音，请靠近麦克风后重试。', accumulatedTranscript);
+      _showInfrastructureError(
+        '没有识别到语音，请靠近麦克风后重试。',
+        transcript: accumulatedTranscript,
+      );
       return;
     }
     final mergedTranscript = _mergeTranscripts(
@@ -464,7 +490,11 @@ final class SpeechFormulaController extends ChangeNotifier {
             _state.status != SpeechFormulaStatus.transcribing)) {
       return;
     }
-    _showInfrastructureError(error.message, _state.transcript.trim());
+    _showInfrastructureError(
+      error.message,
+      transcript: _state.transcript.trim(),
+      failureStage: SpeechFormulaFailureStage.recognition,
+    );
   }
 
   void _handleFinalizationStarted(int operationId) {
@@ -526,20 +556,30 @@ final class SpeechFormulaController extends ChangeNotifier {
       _expireOperation(operationId, transcript);
     } on SpokenFormulaResolutionException catch (error) {
       if (_isCurrent(operationId)) {
-        _showInfrastructureError(error.message, transcript);
+        _showInfrastructureError(
+          error.message,
+          transcript: transcript,
+          failureStage: SpeechFormulaFailureStage.resolution,
+        );
       }
     } catch (_) {
       if (_isCurrent(operationId)) {
-        _showInfrastructureError('公式解析暂时不可用，请稍后重试。', transcript);
+        _showInfrastructureError(
+          '公式解析暂时不可用，请稍后重试。',
+          transcript: transcript,
+          failureStage: SpeechFormulaFailureStage.resolution,
+        );
       }
     }
   }
 
   void _showInfrastructureError(
-    String message, [
+    String message, {
     String transcript = '',
     bool isSupported = true,
-  ]) {
+    SpeechFormulaFailureStage failureStage =
+        SpeechFormulaFailureStage.recognition,
+  }) {
     _cancelDeadlineWatchdog();
     _setState(
       SpeechFormulaState(
@@ -550,6 +590,7 @@ final class SpeechFormulaController extends ChangeNotifier {
         resolution: _state.resolution,
         selectedCandidateId: _state.selectedCandidateId,
         errorMessage: message,
+        failureStage: failureStage,
         isSupported: isSupported,
       ),
     );
@@ -603,9 +644,13 @@ final class SpeechFormulaController extends ChangeNotifier {
     final canOfferContinuation =
         transcript.trim().isNotEmpty &&
         _state.continuationTurn < maxContinuationTurns;
+    final failureStage = _state.status == SpeechFormulaStatus.transcribing
+        ? SpeechFormulaFailureStage.recognition
+        : SpeechFormulaFailureStage.resolution;
     _showInfrastructureError(
       canOfferContinuation ? _deadlineMessage : _deadlineFallbackMessage,
-      transcript,
+      transcript: transcript,
+      failureStage: failureStage,
     );
     unawaited(_ensureRecognizerCancelled());
   }

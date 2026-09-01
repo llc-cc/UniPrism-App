@@ -12,6 +12,7 @@ typedef SpeechFormulaProcessingClock = Duration Function();
 
 final Stopwatch _processingStopwatch = Stopwatch()..start();
 const Duration _senseVoiceRequestCap = Duration(milliseconds: 3800);
+const Duration _minimumFormulaResolutionBudget = Duration(milliseconds: 150);
 
 Duration _readProcessingClock() => _processingStopwatch.elapsed;
 
@@ -215,8 +216,17 @@ final class LocalSenseVoiceSpeechFormulaRecognizer
       if (remaining <= Duration.zero) {
         throw const SpokenFormulaRecognitionException('本机语音识别超时，请重新说一次。');
       }
-      final asrTimeout = remaining < _senseVoiceRequestCap
-          ? remaining
+      // 文本解析实测约 84ms，预留 150ms 加上既有交付余量；ASR 仍使用绝大多数
+      // 剩余时间，避免先于可用 final 结果超时。
+      final availableAsrBudget =
+          remaining -
+          spokenFormulaResponseDeliveryReserve -
+          _minimumFormulaResolutionBudget;
+      if (availableAsrBudget <= Duration.zero) {
+        throw const SpokenFormulaRecognitionException('本机语音识别超时，请重新录音。');
+      }
+      final asrTimeout = availableAsrBudget < _senseVoiceRequestCap
+          ? availableAsrBudget
           : _senseVoiceRequestCap;
       final transcript = (await _client.transcribe(
         wav,

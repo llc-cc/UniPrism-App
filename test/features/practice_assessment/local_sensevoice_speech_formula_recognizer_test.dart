@@ -212,7 +212,7 @@ void main() {
     expect(observed, <Duration?>[const Duration(milliseconds: 750)]);
   });
 
-  test('ASR 上传只获得 stop 后剩余预算且上限为 3.8 秒', () async {
+  test('ASR 上传扣除解析与交付余量后只使用可用预算', () async {
     var elapsed = Duration.zero;
     final stopGate = Completer<void>();
     final capture = _FakeCapture(stopGate: stopGate);
@@ -232,7 +232,33 @@ void main() {
     stopGate.complete();
     await stopping;
 
-    expect(client.timeouts, <Duration>[const Duration(milliseconds: 3800)]);
+    expect(client.timeouts, <Duration>[const Duration(milliseconds: 3150)]);
+  });
+
+  test('ASR 上传在接近零处理耗时时仍不超过 3.8 秒', () async {
+    for (final elapsed in <Duration>[
+      Duration.zero,
+      const Duration(milliseconds: 549),
+    ]) {
+      var now = Duration.zero;
+      final capture = _FakeCapture();
+      final client = _FakeAsrClient(transcripts: <String>['x 的平方']);
+      final recognizer = LocalSenseVoiceSpeechFormulaRecognizer(
+        capture,
+        client,
+        processingClock: () => now,
+      );
+      await recognizer.listen(
+        onResult: (_, {required isFinal, processingElapsed}) {},
+      );
+      capture.add(<int>[1, 2]);
+
+      final stopping = recognizer.stop();
+      now = elapsed;
+      await stopping;
+
+      expect(client.timeouts, <Duration>[const Duration(milliseconds: 3800)]);
+    }
   });
 
   test('stop 后总预算已耗尽时不再发起 ASR 请求', () async {

@@ -219,6 +219,35 @@ void main() {
     expect(controller.canContinueRecording, isTrue);
   });
 
+  test('续录 ASR 失败后的重试会重新录音而不是重试旧转写解析', () async {
+    final recognizer = _FakeRecognizer();
+    final clarification = _clarification();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Future<SpokenFormulaResolution>.value(clarification),
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    await controller.startListening();
+    recognizer.emit('二阶行列式', isFinal: true);
+    await _flushAsyncWork();
+    await controller.continueRecording();
+    recognizer.emitError(
+      const SpokenFormulaRecognitionException('本机语音识别超时，请重新录音。'),
+    );
+
+    await controller.retryResolution();
+
+    expect(recognizer.listenCount, 3);
+    expect(repository.callCount, 1);
+    expect(controller.state.status, SpeechFormulaStatus.listening);
+    expect(controller.state.transcript, isEmpty);
+    expect(controller.state.accumulatedTranscript, isEmpty);
+    expect(controller.state.resolution, isNull);
+  });
+
   test('无 transcript 的权限错误不可续录', () async {
     final controller = _controller(
       recognizer: _FakeRecognizer(
@@ -1045,6 +1074,62 @@ void main() {
     expect(controller.state.status, SpeechFormulaStatus.idle);
     expect(controller.state.selectedCandidate, isNull);
     expect(controller.state.resolution, isNull);
+  });
+  test('解析内层超时与外层 watchdog 对齐时只落入一个终态', () async {
+    final recognizer = _FakeRecognizer();
+    final repository = _QueueRepository(<Future<SpokenFormulaResolution>>[
+      Completer<SpokenFormulaResolution>().future,
+    ]);
+    final controller = _controller(
+      recognizer: recognizer,
+      repository: repository,
+    );
+    addTearDown(controller.dispose);
+    final terminalStatuses = <SpeechFormulaStatus>[];
+    controller.addListener(() {
+      if (controller.state.status == SpeechFormulaStatus.infrastructureError) {
+        terminalStatuses.add(controller.state.status);
+      }
+    });
+    final timers = <_ManualTimer>[];
+
+    await runZoned(
+      () async {
+        await controller.startListening();
+        recognizer.emit(
+          '二阶行列式',
+          isFinal: true,
+          processingElapsed: Duration.zero,
+        );
+        await _flushAsyncWork();
+        timers
+            .singleWhere(
+              (timer) => timer.delay == const Duration(milliseconds: 4500),
+            )
+            .fire();
+        await _flushAsyncWork();
+        timers
+            .singleWhere((timer) => timer.delay == const Duration(seconds: 5))
+            .fire();
+        await _flushAsyncWork();
+      },
+      zoneSpecification: ZoneSpecification(
+        createTimer: (self, parent, zone, duration, callback) {
+          if (duration >= const Duration(seconds: 1)) {
+            final timer = _ManualTimer(duration, callback);
+            timers.add(timer);
+            return timer;
+          }
+          return parent.createTimer(zone, duration, callback);
+        },
+      ),
+    );
+
+    expect(controller.state.status, SpeechFormulaStatus.infrastructureError);
+    expect(terminalStatuses, <SpeechFormulaStatus>[
+      SpeechFormulaStatus.infrastructureError,
+    ]);
+    expect(repository.callCount, 1);
   });
 }
 

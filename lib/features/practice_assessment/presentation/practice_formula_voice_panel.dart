@@ -319,15 +319,50 @@ final class _InfrastructureError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currentRoundTranscript = _currentRoundTranscript();
+    final hasRetainedTranscript = state.accumulatedTranscript.isNotEmpty;
+    final hasCurrentRoundTranscript = currentRoundTranscript.isNotEmpty;
     return SizedBox(
       key: const ValueKey('practice-formula-voice-infrastructure-error'),
       width: double.infinity,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (state.transcript.isNotEmpty) ...[
+          if (state.failureStage == SpeechFormulaFailureStage.recognition &&
+              hasRetainedTranscript &&
+              !hasCurrentRoundTranscript) ...[
+            const Text(
+              '本轮未生成新的识别文字。',
+              key: ValueKey('practice-formula-voice-no-current-transcript'),
+              style: TextStyle(color: Color(0xFF5F5968)),
+            ),
+            const SizedBox(height: 6),
             Text(
-              '识别内容：${state.transcript}',
+              '已保留上一轮内容：${state.accumulatedTranscript}',
+              key: const ValueKey('practice-formula-voice-error-transcript'),
+              style: const TextStyle(color: Color(0xFF5F5968)),
+            ),
+            const SizedBox(height: 6),
+          ] else if (state.failureStage ==
+                  SpeechFormulaFailureStage.recognition &&
+              hasRetainedTranscript) ...[
+            Text(
+              '已保留上一轮内容：${state.accumulatedTranscript}',
+              key: const ValueKey('practice-formula-voice-error-transcript'),
+              style: const TextStyle(color: Color(0xFF5F5968)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '本轮临时转写：$currentRoundTranscript',
+              key: const ValueKey('practice-formula-voice-current-transcript'),
+              style: const TextStyle(color: Color(0xFF5F5968)),
+            ),
+            const SizedBox(height: 6),
+          ] else if (state.transcript.isNotEmpty) ...[
+            Text(
+              state.failureStage == SpeechFormulaFailureStage.recognition
+                  ? '本轮未完成的临时转写：${state.transcript}'
+                  : '解析输入：${state.transcript}',
               key: const ValueKey('practice-formula-voice-error-transcript'),
               style: const TextStyle(color: Color(0xFF5F5968)),
             ),
@@ -365,10 +400,10 @@ final class _InfrastructureError extends StatelessWidget {
                 ),
               OutlinedButton(
                 key: const ValueKey('practice-formula-voice-retry'),
-                onPressed: state.transcript.isEmpty
-                    ? controller.startListening
-                    : controller.retryResolution,
-                child: const Text('重试'),
+                onPressed: controller.retryResolution,
+                child: Text(
+                  controller.retryStartsNewRecording ? '重新录音' : '重试解析',
+                ),
               ),
               TextButton(
                 key: const ValueKey('practice-formula-voice-cancel'),
@@ -380,6 +415,17 @@ final class _InfrastructureError extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _currentRoundTranscript() {
+    final accumulated = state.accumulatedTranscript.trim();
+    final transcript = state.transcript.trim();
+    if (accumulated.isEmpty) return transcript;
+    if (transcript == accumulated) return '';
+    final prefix = '$accumulated，';
+    return transcript.startsWith(prefix)
+        ? transcript.substring(prefix.length).trim()
+        : transcript;
   }
 }
 

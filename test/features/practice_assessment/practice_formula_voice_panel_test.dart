@@ -734,6 +734,78 @@ void main() {
     );
     expect(find.textContaining('把 y 乘以它自己再减五倍 y'), findsOneWidget);
   });
+  testWidgets(
+    'continuation ASR failure labels retained text and restarts recording',
+    (tester) async {
+      final recognizer = _FakeRecognizer();
+      final controller = SpeechFormulaController(
+        recognizer: recognizer,
+        repository: const _Repository(_Outcome.clarification),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(_app(controller, (_) {}));
+      await _resolve(tester, controller, recognizer, '二阶行列式');
+      await tester.tap(
+        find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+      );
+      await _pumpAsync(tester);
+      recognizer.emitError(
+        const SpokenFormulaRecognitionException('本机语音识别超时，请重新录音。'),
+      );
+      await _pumpAsync(tester);
+
+      expect(
+        find.byKey(
+          const ValueKey('practice-formula-voice-no-current-transcript'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('已保留上一轮内容：二阶行列式'), findsOneWidget);
+      expect(find.text('重新录音'), findsOneWidget);
+      expect(
+        find.byKey(
+          const ValueKey('practice-formula-voice-retained-resolution'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('practice-formula-voice-retry')),
+      );
+      await _pumpAsync(tester);
+
+      expect(controller.state.status, SpeechFormulaStatus.listening);
+      expect(recognizer.listenCount, 3);
+    },
+  );
+
+  testWidgets('续录 partial 后 ASR 失败显示本轮临时转写而非空文字', (tester) async {
+    final recognizer = _FakeRecognizer();
+    final controller = SpeechFormulaController(
+      recognizer: recognizer,
+      repository: const _Repository(_Outcome.clarification),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_app(controller, (_) {}));
+    await _resolve(tester, controller, recognizer, '二阶行列式');
+    await tester.tap(
+      find.byKey(const ValueKey('practice-formula-voice-continue-recording')),
+    );
+    await _pumpAsync(tester);
+    recognizer.emit('第一行 x 加一', isFinal: false);
+    recognizer.emitError(
+      const SpokenFormulaRecognitionException('本机语音识别超时，请重新录音。'),
+    );
+    await _pumpAsync(tester);
+
+    expect(
+      find.byKey(
+        const ValueKey('practice-formula-voice-no-current-transcript'),
+      ),
+      findsNothing,
+    );
+    expect(find.text('已保留上一轮内容：二阶行列式'), findsOneWidget);
+    expect(find.text('本轮临时转写：第一行 x 加一'), findsOneWidget);
+  });
 }
 
 bool _looksErrorRed(Color? color) {
@@ -776,6 +848,8 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   final SpokenFormulaRecognitionException? initializationError;
   final List<SpeechFormulaResultCallback> _onResults =
       <SpeechFormulaResultCallback>[];
+  final List<SpeechFormulaErrorCallback?> _onErrors =
+      <SpeechFormulaErrorCallback?>[];
   int listenCount = 0;
 
   @override
@@ -789,10 +863,14 @@ final class _FakeRecognizer implements SpeechFormulaRecognizer {
   }) async {
     listenCount += 1;
     _onResults.add(onResult);
+    _onErrors.add(onError);
   }
 
   void emit(String words, {required bool isFinal, int? listenIndex}) =>
       _onResults[listenIndex ?? _onResults.length - 1](words, isFinal: isFinal);
+
+  void emitError(SpokenFormulaRecognitionException error, {int? listenIndex}) =>
+      _onErrors[listenIndex ?? _onErrors.length - 1]?.call(error);
 
   @override
   Future<void> cancel() async {}

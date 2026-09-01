@@ -35,10 +35,7 @@ final class SenseVoiceAsrException implements Exception {
 abstract interface class SenseVoiceAsrApi {
   Future<bool> isHealthy();
 
-  Future<String> transcribe(
-    Uint8List wavBytes, {
-    required Duration timeout,
-  });
+  Future<String> transcribe(Uint8List wavBytes, {required Duration timeout});
 
   /// 触发全部活动请求的 abort，并仅释放 API 自己创建的传输资源；实现必须幂等。
   /// 外部注入 transport 的物理连接生命周期仍属于调用方。
@@ -142,6 +139,8 @@ final class SenseVoiceAsrClient implements SenseVoiceAsrApi {
             abortTrigger: operation.cancelSignal,
           )
           ..fields['model'] = 'sensevoice'
+          // FunASR 会将此提示传递给模型；它只限定识别语言，不携带公式规则。
+          ..fields['language'] = 'zh'
           ..fields['response_format'] = 'json'
           ..files.add(
             http.MultipartFile.fromBytes(

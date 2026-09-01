@@ -210,7 +210,7 @@ void main() {
     await responseController.close();
   });
 
-  test('multipart 精确传递三个协议部分和原始 WAV 字节', () async {
+  test('multipart 传递中文语言提示和原始 WAV 字节', () async {
     final wav = _canonicalWav();
     final client = SenseVoiceAsrClient(
       baseUrl: 'http://127.0.0.1:8000/',
@@ -223,15 +223,17 @@ void main() {
           await bodyStream.toBytes(),
           request.headers['content-type']!,
         );
-        expect(parts, hasLength(3));
+        expect(parts, hasLength(4));
         expect(parts[0].name, 'model');
         expect(utf8.decode(parts[0].body), 'sensevoice');
-        expect(parts[1].name, 'response_format');
-        expect(utf8.decode(parts[1].body), 'json');
-        expect(parts[2].name, 'file');
-        expect(parts[2].filename, 'formula.wav');
-        expect(parts[2].contentType, 'audio/wav');
-        expect(parts[2].body, wav);
+        expect(parts[1].name, 'language');
+        expect(utf8.decode(parts[1].body), 'zh');
+        expect(parts[2].name, 'response_format');
+        expect(utf8.decode(parts[2].body), 'json');
+        expect(parts[3].name, 'file');
+        expect(parts[3].filename, 'formula.wav');
+        expect(parts[3].contentType, 'audio/wav');
+        expect(parts[3].body, wav);
         return http.StreamedResponse(
           Stream.value(utf8.encode('{"text":"ok"}')),
           200,
